@@ -23,6 +23,7 @@ pub mod demo;
 pub mod available_inis;
 pub mod start_autotune;
 pub mod get_table_data;
+pub mod load_ini;
 pub mod debug_realtime;
 pub mod realtime_get;
 pub mod annotations;
