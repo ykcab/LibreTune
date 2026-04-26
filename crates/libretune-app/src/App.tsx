@@ -28,6 +28,7 @@ import { DialogOverlays } from "./components/DialogOverlays";
 import { useBackendEventListeners } from "./hooks/useBackendEventListeners";
 import { useRealtimeStream } from "./hooks/useRealtimeStream";
 import { useTabPopout } from "./hooks/useTabPopout";
+import { useIniDefaultsLoader } from "./hooks/useIniDefaultsLoader";
 import { PinConfig } from "./components/hardware/PortEditor";
 import { useLoading } from "./components/LoadingContext";
 import { useToast } from "./components/ToastContext";
@@ -114,66 +115,6 @@ function AppContent() {
     }
   };
 
-  // Fetch INI protocol defaults when a definition is loaded
-  useEffect(() => {
-    if (!status.has_definition) {
-      setIniCapabilities(null);
-      return;
-    }
-    // Only fetch defaults when running inside Tauri
-    const inTauri = !!(window as any).__TAURI_INTERNALS__;
-    if (!inTauri) return;
-
-    (async () => {
-      try {
-        const proto = await invoke<ProtocolDefaults>('get_protocol_defaults');
-        setIniDefaults(proto);
-
-        // Auto-apply only if the user hasn't already changed values and they're still the app defaults
-        if (!baudUserSet && baudRate === 115200 && proto.default_baud_rate && proto.default_baud_rate !== 0) {
-          setBaudRate(proto.default_baud_rate);
-        }
-        if (!timeoutUserSet && timeoutMs === 2000 && proto.timeout_ms && proto.timeout_ms !== 0) {
-          setTimeoutMs(proto.timeout_ms);
-        }
-      } catch (e) {
-        // Not fatal - no definition loaded or call failed
-        console.warn('get_protocol_defaults failed:', e);
-      }
-      
-      // Fetch status bar channel defaults from INI FrontPage
-      try {
-        const defaults = await invoke<string[]>('get_status_bar_defaults');
-        if (defaults && defaults.length > 0) {
-          setStatusBarChannels(defaults);
-        }
-      } catch (e) {
-        console.warn('get_status_bar_defaults failed:', e);
-      }
-
-      // Fetch channel metadata from INI for labels/units
-      try {
-        const channels = await invoke<ChannelInfo[]>('get_available_channels');
-        const map: Record<string, ChannelInfo> = {};
-        channels.forEach((ch) => {
-          map[ch.name] = ch;
-        });
-        setChannelInfoMap(map);
-      } catch (e) {
-        console.warn('get_available_channels failed:', e);
-      }
-
-      // Fetch INI-driven capability map for feature gating
-      try {
-        const caps = await invoke<IniCapabilities>('get_ini_capabilities');
-        setIniCapabilities(caps);
-      } catch (e) {
-        console.warn('get_ini_capabilities failed:', e);
-        setIniCapabilities(null);
-      }
-    })();
-  }, [status.has_definition]);
-
   // Menu/tree state
   const [backendMenus, setBackendMenus] = useState<BackendMenu[]>([]);
   const [constantValues, setConstantValues] = useState<Record<string, number>>({});
@@ -182,6 +123,21 @@ function AppContent() {
   // Status bar channel configuration - fetched from INI FrontPage or defaults
   const [statusBarChannels, setStatusBarChannels] = useState<string[]>([]);
   const [channelInfoMap, setChannelInfoMap] = useState<Record<string, ChannelInfo>>({});
+
+  // INI-driven protocol defaults / channels / capabilities loader.
+  useIniDefaultsLoader({
+    status,
+    baudUserSet,
+    baudRate,
+    setBaudRate,
+    timeoutUserSet,
+    timeoutMs,
+    setTimeoutMs,
+    setIniDefaults,
+    setStatusBarChannels,
+    setChannelInfoMap,
+    setIniCapabilities,
+  });
 
   // Realtime data - now managed by Zustand store for efficient per-channel subscriptions
   // Components use useChannelValue() or useChannels() hooks to subscribe to specific channels
