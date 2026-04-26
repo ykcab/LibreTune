@@ -60,6 +60,8 @@ import PortEditor, { PinConfig } from "./components/hardware/PortEditor";
 import { useLoading } from "./components/LoadingContext";
 import { useToast } from "./components/ToastContext";
 import { SettingsView } from "./components/SettingsView";
+import { formatError } from "./utils/formatError";
+import { ensureRealtimeListener } from "./services/realtimeListener";
 import {
   type ConnectionStatus,
   type ConnectResult,
@@ -81,32 +83,6 @@ import {
   toCurveData,
 } from "./types/app";
 import "./styles";
-
-// ─── Module-level realtime event listener ───────────────────────────────────
-// Registered once and never unregistered.  This prevents the race condition
-// where React 18 StrictMode's mount→cleanup→mount cycle (or any effect re-run)
-// unregisters the listener and drops events.  The backend's start_realtime_stream
-// always replaces any existing task, so concurrent start calls are harmless.
-let _realtimeListenerPromise: Promise<void> | null = null;
-
-function ensureRealtimeListener(): Promise<void> {
-  if (_realtimeListenerPromise) return _realtimeListenerPromise;
-  _realtimeListenerPromise = (async () => {
-    let eventCount = 0;
-    await listen("realtime:update", (event) => {
-      eventCount++;
-      if (eventCount <= 5 || eventCount % 100 === 0) {
-        console.log(`[realtime] event #${eventCount}, keys=${Object.keys(event.payload as object).length}`);
-      }
-      useRealtimeStore.getState().updateChannels(event.payload as Record<string, number>);
-    });
-    await listen("realtime:error", (event) => {
-      console.error("Realtime error:", event.payload);
-    });
-    console.log("[realtime] Global event listener registered");
-  })();
-  return _realtimeListenerPromise;
-}
 
 function AppContent() {
   const { theme, setTheme } = useTheme();
@@ -1280,30 +1256,6 @@ function AppContent() {
     } catch (e) {
       console.error("Failed to refresh ports:", e);
     }
-  }
-
-  // Helper to format error for display
-  function formatError(e: unknown): { message: string; details: string } {
-    const errorStr = String(e);
-    // Check for panic messages (Rust panics often contain "panicked" or stack traces)
-    if (errorStr.includes("panicked") || errorStr.includes("overflow") || errorStr.includes("thread")) {
-      return {
-        message: "An internal error occurred while processing the tune file. This may indicate an incompatibility between the INI definition and the tune file.",
-        details: errorStr,
-      };
-    }
-    // Check for parse errors
-    if (errorStr.includes("parse") || errorStr.includes("Parse") || errorStr.includes("invalid")) {
-      return {
-        message: "The tune file could not be parsed. It may be corrupted or use an unsupported format.",
-        details: errorStr,
-      };
-    }
-    // Default error format
-    return {
-      message: errorStr,
-      details: "",
-    };
   }
 
   async function initializeDefaultTabs() {
