@@ -5,6 +5,7 @@
 //! `tauri::State<crate::state::AppState>`.
 
 pub mod adaptive_timing;
+pub mod cache_status;
 pub mod annotations;
 pub mod base_map;
 pub mod channels;
