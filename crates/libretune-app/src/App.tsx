@@ -26,6 +26,7 @@ import { BaseMapResult } from "./components/dialogs/BaseMapDialog";
 import { useErrorDialog } from "./components/dialogs/ErrorDetailsDialog";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import { DialogOverlays } from "./components/DialogOverlays";
+import { useBackendEventListeners } from "./hooks/useBackendEventListeners";
 import { PinConfig } from "./components/hardware/PortEditor";
 import { useLoading } from "./components/LoadingContext";
 import { useToast } from "./components/ToastContext";
@@ -530,46 +531,16 @@ function AppContent() {
     }
   }
 
-  // Listen for signature mismatch events from backend
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    
-    (async () => {
-      try {
-        unlisten = await listen<SignatureMismatchInfo>("signature:mismatch", (event) => {
-          console.log("Signature mismatch detected:", event.payload);
-          setSignatureMismatchInfo(event.payload);
-          setSignatureMismatchOpen(true);
-        });
-      } catch (e) {
-        console.error("Failed to listen for signature:mismatch events:", e);
-      }
-    })();
-    
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Listen for migration needed events from backend
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    
-    (async () => {
-      try {
-        unlisten = await listen("tune:migration_needed", () => {
-          console.log("Tune migration needed - opening dialog");
-          setMigrationReportOpen(true);
-        });
-      } catch (e) {
-        console.error("Failed to listen for tune:migration_needed events:", e);
-      }
-    })();
-    
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
+  // Backend event listeners (signature:mismatch, tune:migration_needed,
+  // definition:loaded, tune:mismatch) extracted to a dedicated hook.
+  useBackendEventListeners({
+    setSignatureMismatchInfo,
+    setSignatureMismatchOpen,
+    setMigrationReportOpen,
+    setTuneMismatchInfo,
+    setTuneMismatchOpen,
+    checkStatus,
+  });
 
   // Listen for frontend reconnect requests (dispatched by e.g., controller command flow)
   useEffect(() => {
@@ -633,51 +604,6 @@ function AppContent() {
       if (unlisten) unlisten();
     };
   }, [status.state, showLoading, hideLoading]);
-  
-  // Listen for definition:loaded event to ensure INI is ready before table operations
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    
-    (async () => {
-      try {
-        unlisten = await listen<{ signature: string; tables: number; curves: number; dialogs: number; constants: number }>(
-          'definition:loaded',
-          (event) => {
-            console.log('[App] definition:loaded event:', event.payload);
-            // Force status refresh to update has_definition
-            checkStatus();
-          }
-        );
-      } catch (e) {
-        console.error("Failed to listen for definition:loaded events:", e);
-      }
-    })();
-    
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-  
-  // Listen for tune mismatch events (after ECU sync)
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    
-    (async () => {
-      try {
-        unlisten = await listen<TuneMismatchInfo>("tune:mismatch", (event) => {
-          console.log("Tune mismatch detected:", event.payload);
-          setTuneMismatchInfo(event.payload);
-          setTuneMismatchOpen(true);
-        });
-      } catch (e) {
-        console.error("Failed to listen for tune:mismatch events:", e);
-      }
-    })();
-    
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
 
   // Listen for tune loaded events to refresh table data
   useEffect(() => {
