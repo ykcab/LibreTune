@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { Dialog, Button } from '../common';
 import './OnboardingDialog.css';
 
 interface OnboardingStep {
@@ -22,12 +23,8 @@ interface OnboardingDialogProps {
 
 /**
  * OnboardingDialog Component
- * 
- * Comprehensive first-run welcome experience with:
- * - Welcome intro
- * - Feature overview (6 key features)
- * - Quick-start guide
- * - Links to resources
+ *
+ * Comprehensive first-run welcome experience.
  */
 export default function OnboardingDialog({ isOpen, onClose, onComplete }: OnboardingDialogProps) {
   const [currentStep, setCurrentStep] = useState(0);
@@ -158,78 +155,44 @@ export default function OnboardingDialog({ isOpen, onClose, onComplete }: Onboar
   const isLastStep = currentStep === steps.length - 1;
   const isFirstStep = currentStep === 0;
 
-  if (!isOpen) return null;
+  const titleNode = (
+    <div className="onboarding-title">
+      <div className="onboarding-icon">{step.icon}</div>
+      <div className="onboarding-title-text">
+        <span className="onboarding-title-main">{step.title}</span>
+        <span className="onboarding-title-sub">{step.description}</span>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="onboarding-overlay">
-      <div className="onboarding-dialog">
-        <div className="onboarding-header">
-          <div className="onboarding-icon">{step.icon}</div>
-          <div>
-            <h2>{step.title}</h2>
-            <p>{step.description}</p>
-          </div>
-          <button className="onboarding-close" onClick={onClose} aria-label="Close onboarding">
-            ×
-          </button>
-        </div>
-
-        <div className="onboarding-content">
-          <ul>
-            {step.details.map((detail, idx) => (
-              <li key={idx}>{detail}</li>
-            ))}
-          </ul>
-        </div>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title={titleNode}
+      size="md"
+      className="onboarding-dialog-wrapper"
+    >
+      <Dialog.Body className="onboarding-content">
+        <ul>
+          {step.details.map((detail, idx) => (
+            <li key={idx}>{detail}</li>
+          ))}
+        </ul>
 
         {step.action && (
           <div className="onboarding-action">
-            <button 
-              className="onboarding-action-btn"
-              onClick={step.action.handler}
-            >
+            <Button variant="secondary" onClick={step.action.handler}>
               {step.action.label}
-            </button>
+            </Button>
           </div>
         )}
-
-        <div className="onboarding-footer">
-          <div className="onboarding-progress">
-            {steps.map((_, idx) => (
-              <div
-                key={idx}
-                className={`progress-dot ${idx === currentStep ? 'active' : ''} ${idx < currentStep ? 'completed' : ''}`}
-                onClick={() => setCurrentStep(idx)}
-                role="button"
-                tabIndex={0}
-                aria-label={`Go to step ${idx + 1}: ${steps[idx].title}`}
-              />
-            ))}
-          </div>
-
-          <div className="onboarding-controls">
-            <button
-              onClick={handlePrev}
-              disabled={isFirstStep}
-              className="onboarding-btn onboarding-btn-secondary"
-            >
-              ← Previous
-            </button>
-            <button
-              onClick={handleNext}
-              className="onboarding-btn onboarding-btn-primary"
-            >
-              {isLastStep ? 'Get Started' : 'Next →'}
-            </button>
-          </div>
-        </div>
 
         <label className="onboarding-checkbox">
           <input
             type="checkbox"
             defaultChecked={false}
             onChange={(e) => {
-              // User can re-enable onboarding later in settings
               if (!e.target.checked) {
                 localStorage.setItem('libretune-onboarding-completed', 'false');
               }
@@ -237,7 +200,31 @@ export default function OnboardingDialog({ isOpen, onClose, onComplete }: Onboar
           />
           Show this welcome on next startup
         </label>
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer className="onboarding-footer">
+        <div className="onboarding-progress">
+          {steps.map((_, idx) => (
+            <div
+              key={idx}
+              className={`progress-dot ${idx === currentStep ? 'active' : ''} ${idx < currentStep ? 'completed' : ''}`}
+              onClick={() => setCurrentStep(idx)}
+              role="button"
+              tabIndex={0}
+              aria-label={`Go to step ${idx + 1}: ${steps[idx].title}`}
+            />
+          ))}
+        </div>
+
+        <div className="onboarding-controls">
+          <Button variant="secondary" onClick={handlePrev} disabled={isFirstStep}>
+            ← Previous
+          </Button>
+          <Button variant="primary" onClick={handleNext}>
+            {isLastStep ? 'Get Started' : 'Next →'}
+          </Button>
+        </div>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

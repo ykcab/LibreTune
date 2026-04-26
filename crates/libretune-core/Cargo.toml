@@ -67,6 +67,9 @@ git2 = { version = "0.20", default-features = false, features = ["vendored-libgi
 # WebAssembly runtime for plugin system
 wasmtime = { workspace = true }
 
+# Text encoding detection (Windows-1252 fallback for legacy ECU INI files)
+encoding_rs = "0.8"
+
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tempfile = "3.24.0"

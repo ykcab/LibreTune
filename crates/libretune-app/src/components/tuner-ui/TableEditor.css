@@ -176,7 +176,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: var(--cursor-trail, #ffcc00);
+  background: var(--cursor-trail);
   opacity: calc(var(--trail-opacity, 0.3) * 0.4);
   pointer-events: none;
   border-radius: 2px;

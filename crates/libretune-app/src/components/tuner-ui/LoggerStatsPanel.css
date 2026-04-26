@@ -13,7 +13,7 @@
   align-items: center;
   justify-content: center;
   min-height: 80px;
-  color: #888;
+  color: var(--text-muted);
   font-style: italic;
 }
 
@@ -38,7 +38,7 @@
 
 .stats-subtitle {
   margin: 0;
-  color: #888;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -58,7 +58,7 @@
 
 .stat-card h4 {
   margin: 0 0 12px 0;
-  color: #00ffff;
+  color: var(--accent);
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -83,7 +83,7 @@
 }
 
 .stat-label {
-  color: #888;
+  color: var(--text-muted);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -118,7 +118,7 @@
 }
 
 .stats-table th {
-  color: #00ffff;
+  color: var(--accent);
   padding: 8px 10px;
   text-align: left;
   font-weight: 600;
@@ -142,7 +142,7 @@
 
 .stats-table td {
   padding: 8px 10px;
-  color: #ccc;
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 

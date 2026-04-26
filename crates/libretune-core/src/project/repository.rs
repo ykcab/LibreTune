@@ -138,20 +138,12 @@ impl IniRepository {
         Ok(id)
     }
 
-    /// Read an INI file, handling encoding issues
+    /// Read an INI file with encoding fallback (UTF-8 first, then Windows-1252).
+    ///
+    /// See [`crate::ini::encoding`] for why this fallback exists.
     fn read_ini_file(path: &Path) -> io::Result<String> {
-        // Try UTF-8 first
-        match fs::read_to_string(path) {
-            Ok(content) => Ok(content),
-            Err(_) => {
-                // Try reading as bytes and converting from Windows-1252
-                let bytes = fs::read(path)?;
-
-                // Use lossy conversion - replace invalid chars with ?
-                // This handles Windows-1252 and other encodings
-                Ok(String::from_utf8_lossy(&bytes).into_owned())
-            }
-        }
+        let bytes = fs::read(path)?;
+        Ok(crate::ini::encoding::decode_ini_bytes(&bytes))
     }
 
     /// Extract the content between the first pair of double quotes in a value string.

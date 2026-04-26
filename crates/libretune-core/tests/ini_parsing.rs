@@ -347,3 +347,79 @@ fn test_repository_extraction_with_comments() {
     // because IniRepository is in a different module (project).
     // Let's create a permanent test file for repository instead.
 }
+
+// ---------------------------------------------------------------------------
+// Encoding tests (issue #42 / PR #43)
+//
+// Ensure that translated INI files (commonly Windows-1252) are decoded
+// without `U+FFFD` replacement characters. Exercises the disk read path
+// in `EcuDefinition::from_file`.
+// ---------------------------------------------------------------------------
+
+fn write_temp_ini(bytes: &[u8]) -> tempfile::NamedTempFile {
+    use std::io::Write;
+    let mut f = tempfile::Builder::new()
+        .suffix(".ini")
+        .tempfile()
+        .expect("create tempfile");
+    f.write_all(bytes).expect("write tempfile");
+    f.flush().expect("flush tempfile");
+    f
+}
+
+#[test]
+fn test_parse_utf8_ini_with_accents() {
+    let content = "[MegaTune]\nsignature = \"Configurações de Ignição 90°C\"\n";
+    let file = write_temp_ini(content.as_bytes());
+
+    let result = EcuDefinition::from_file(file.path());
+    assert!(
+        result.is_ok(),
+        "Failed to parse UTF-8 INI: {:?}",
+        result.err()
+    );
+    assert_eq!(
+        result.unwrap().signature,
+        "Configurações de Ignição 90°C",
+        "UTF-8 accents must round-trip"
+    );
+}
+
+#[test]
+fn test_parse_utf8_ini_with_bom() {
+    let mut bytes: Vec<u8> = vec![0xEF, 0xBB, 0xBF];
+    bytes.extend_from_slice(b"[MegaTune]\nsignature = \"Mapa de Combust\xC3\xADvel\"\n");
+    let file = write_temp_ini(&bytes);
+
+    let result = EcuDefinition::from_file(file.path());
+    assert!(
+        result.is_ok(),
+        "Failed to parse UTF-8 INI with BOM: {:?}",
+        result.err()
+    );
+    assert_eq!(result.unwrap().signature, "Mapa de Combustível");
+}
+
+#[test]
+fn test_parse_windows_1252_ini_with_portuguese() {
+    // "Configurações" — Windows-1252: ç = 0xE7, õ = 0xF5
+    // Whole signature: Configura\xE7\xF5es de Igni\xE7\xE3o 90\xB0C
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(
+        b"[MegaTune]\nsignature = \"Configura\xE7\xF5es de Igni\xE7\xE3o 90\xB0C\"\n",
+    );
+    let file = write_temp_ini(&bytes);
+
+    let result = EcuDefinition::from_file(file.path());
+    assert!(
+        result.is_ok(),
+        "Failed to parse Windows-1252 INI: {:?}",
+        result.err()
+    );
+    let sig = result.unwrap().signature;
+    assert_eq!(sig, "Configurações de Ignição 90°C");
+    assert!(
+        !sig.contains('\u{FFFD}'),
+        "signature must not contain replacement chars: {sig:?}"
+    );
+}

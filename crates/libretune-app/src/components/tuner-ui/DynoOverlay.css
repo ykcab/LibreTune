@@ -20,7 +20,7 @@
 .dyno-header h3 {
   margin: 0;
   font-size: 14px;
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 
 .dyno-controls {
@@ -62,7 +62,7 @@
   border: none;
   border-radius: 3px;
   background: transparent;
-  color: #888;
+  color: var(--text-muted);
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -76,13 +76,13 @@
   padding: 2px 8px;
   background: transparent;
   border: none;
-  color: #888;
+  color: var(--text-muted);
   font-size: 16px;
   cursor: pointer;
 }
 
 .dyno-close-btn:hover {
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 
 .dyno-error {
@@ -109,7 +109,7 @@
   left: 50%;
   transform: translate(-50%, -50%);
   text-align: center;
-  color: #666;
+  color: var(--text-muted);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -151,20 +151,20 @@
 
 .dyno-run-name {
   font-size: 12px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-weight: 600;
 }
 
 .dyno-run-stats {
   font-size: 10px;
-  color: #888;
+  color: var(--text-muted);
 }
 
 .dyno-run-remove {
   padding: 2px 6px;
   background: transparent;
   border: none;
-  color: #666;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 14px;
 }
@@ -187,12 +187,12 @@
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 11px;
 }
 
 .dyno-compare span {
-  color: #666;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -228,7 +228,7 @@
 
 .dyno-comp-stat .label {
   font-size: 10px;
-  color: #888;
+  color: var(--text-muted);
   text-transform: uppercase;
 }
 

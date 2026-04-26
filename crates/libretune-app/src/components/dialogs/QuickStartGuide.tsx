@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Dialog, Button } from '../common';
 import './QuickStartGuide.css';
 
 interface QuickStartStep {
@@ -249,70 +250,58 @@ export default function QuickStartGuide({ isOpen, onClose }: QuickStartGuideProp
   const isFirstStep = currentStep === 0;
   const progress = ((currentStep + 1) / steps.length) * 100;
 
-  if (!isOpen) return null;
-
-  return (
-    <div className="quick-start-overlay">
-      <div className="quick-start-dialog">
-        <div className="quick-start-header">
-          <div className="quick-start-icon">{step.icon}</div>
-          <div className="quick-start-title-block">
-            <h2>{step.title}</h2>
-            <p>{step.description}</p>
-          </div>
-          <button className="quick-start-close" onClick={onClose} aria-label="Close guide">
-            ×
-          </button>
-        </div>
-
-        <div className="quick-start-progress-bar">
-          <div className="progress-fill" style={{ width: `${progress}%` }} />
-        </div>
-
-        <div className="quick-start-content">
-          <div className="instructions-section">
-            <h3>Instructions</h3>
-            <ol className="instructions-list">
-              {step.instructions.map((instruction, idx) => (
-                <li key={idx}>{instruction}</li>
-              ))}
-            </ol>
-          </div>
-
-          {step.tips && step.tips.length > 0 && (
-            <div className="tips-section">
-              <h4>💡 Tips</h4>
-              <ul className="tips-list">
-                {step.tips.map((tip, idx) => (
-                  <li key={idx}>{tip}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-
-        <div className="quick-start-footer">
-          <div className="step-indicator">
-            Step {currentStep + 1} of {steps.length}
-          </div>
-
-          <div className="quick-start-controls">
-            <button
-              onClick={handlePrev}
-              disabled={isFirstStep}
-              className="quick-start-btn quick-start-btn-secondary"
-            >
-              ← Back
-            </button>
-            <button
-              onClick={handleNext}
-              className="quick-start-btn quick-start-btn-primary"
-            >
-              {isLastStep ? 'Finish' : 'Next →'}
-            </button>
-          </div>
-        </div>
+  const titleNode = (
+    <div className="qs-title-row">
+      <div className="quick-start-icon">{step.icon}</div>
+      <div className="quick-start-title-block">
+        <span className="qs-title-main">{step.title}</span>
+        <span className="qs-title-sub">{step.description}</span>
       </div>
     </div>
+  );
+
+  return (
+    <Dialog open={isOpen} onClose={onClose} title={titleNode} size="md" className="quick-start-dialog-wrapper">
+      <div className="quick-start-progress-bar">
+        <div className="progress-fill" style={{ width: `${progress}%` }} />
+      </div>
+
+      <Dialog.Body className="quick-start-content">
+        <div className="instructions-section">
+          <h3>Instructions</h3>
+          <ol className="instructions-list">
+            {step.instructions.map((instruction, idx) => (
+              <li key={idx}>{instruction}</li>
+            ))}
+          </ol>
+        </div>
+
+        {step.tips && step.tips.length > 0 && (
+          <div className="tips-section">
+            <h4>💡 Tips</h4>
+            <ul className="tips-list">
+              {step.tips.map((tip, idx) => (
+                <li key={idx}>{tip}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Dialog.Body>
+
+      <Dialog.Footer className="quick-start-footer">
+        <div className="step-indicator">
+          Step {currentStep + 1} of {steps.length}
+        </div>
+
+        <div className="quick-start-controls">
+          <Button variant="secondary" onClick={handlePrev} disabled={isFirstStep}>
+            ← Back
+          </Button>
+          <Button variant="primary" onClick={handleNext}>
+            {isLastStep ? 'Finish' : 'Next →'}
+          </Button>
+        </div>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

@@ -37,7 +37,7 @@
 
 .mode-badge.live {
   background: rgba(255, 68, 68, 0.2);
-  color: #ff6666;
+  color: var(--error);
   border: 1px solid rgba(255, 68, 68, 0.3);
 }
 
@@ -128,7 +128,7 @@
 .toggle-label {
   font-size: 13px;
   font-weight: 500;
-  color: #888;
+  color: var(--text-muted);
   transition: all 200ms ease;
 }
 
@@ -142,7 +142,7 @@
 }
 
 .toggle-label.off {
-  color: #666;
+  color: var(--text-muted);
 }
 
 .log-button {
@@ -174,7 +174,7 @@
 }
 
 .log-button.stop:hover {
-  background: #ff4444;
+  background: var(--error);
 }
 
 .log-button.secondary {
@@ -221,7 +221,7 @@
 }
 
 .status-indicator.playback {
-  color: var(--accent, #4a9eff);
+  color: var(--accent);
 }
 
 .status-stat {
@@ -364,7 +364,7 @@
   -webkit-appearance: none;
   width: 16px;
   height: 16px;
-  background: var(--accent, #4a9eff);
+  background: var(--accent);
   border-radius: 50%;
   cursor: grab;
   transition: transform 0.1s;
@@ -382,7 +382,7 @@
 .playback-slider::-moz-range-thumb {
   width: 16px;
   height: 16px;
-  background: var(--accent, #4a9eff);
+  background: var(--accent);
   border: none;
   border-radius: 50%;
   cursor: grab;
@@ -415,7 +415,7 @@
 .stat-button:hover {
   background: rgba(0, 80, 120, 0.6);
   border-color: rgba(0, 200, 255, 0.6);
-  color: #00ffff;
+  color: var(--accent);
 }
 
 .stat-button.active {

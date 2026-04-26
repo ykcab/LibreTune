@@ -9,7 +9,12 @@ import { createFocusTrap, focusFirstElement } from '../../utils/focusManagement'
 import HotkeyEditor from '../dialogs/HotkeyEditor';
 import ThemePicker from '../dialogs/ThemePicker';
 import StatusBarChannelSelector from '../dialogs/StatusBarChannelSelector';
+import { Dialog, Button } from '../common';
 import { ThemeName } from '../../themes';
+// Static list (no runtime cost — pure data). The i18n instance itself is
+// imported dynamically inside the apply handler to avoid forcing every
+// dependent of this module to pull in the i18next bundle on first paint.
+import { SUPPORTED_LANGUAGES, LANGUAGE_STORAGE_KEY, type SupportedLanguageCode } from '../../i18n/languages';
 import './Dialogs.css';
 import ConnectionMetrics from '../layout/ConnectionMetrics';
 
@@ -118,72 +123,65 @@ export function SaveDialog({ isOpen, onClose, onSaved, autoBurnOnClose }: SaveDi
     }
   }, [onClose, onSaved, tuneInfo]);
 
-  if (!isOpen) return null;
+  if (!isOpen && !showBurnConfirm) return null;
 
   return (
     <>
-      <div className="dialog-overlay" onClick={onClose}>
-        <div className="dialog" onClick={(e) => e.stopPropagation()}>
-          <div className="dialog-header">
-            <h2>Save Tune</h2>
-            <button className="dialog-close" onClick={onClose}>×</button>
+      <Dialog
+        open={isOpen}
+        onClose={onClose}
+        title="Save Tune"
+        size="md"
+        closeOnBackdrop={!isSaving}
+      >
+        <Dialog.Body>
+          {error && <div className="dialog-error">{error}</div>}
+
+          <div className="dialog-info">
+            <p><strong>ECU:</strong> {tuneInfo?.signature || 'Unknown'}</p>
+            {tuneInfo?.path && (
+              <p><strong>Current File:</strong> {tuneInfo.path.split('/').pop()}</p>
+            )}
+            {tuneInfo?.modified && (
+              <p className="dialog-warning">⚠ Tune has unsaved changes</p>
+            )}
           </div>
 
-          <div className="dialog-content">
-            {error && <div className="dialog-error">{error}</div>}
-
-            <div className="dialog-info">
-              <p><strong>ECU:</strong> {tuneInfo?.signature || 'Unknown'}</p>
-              {tuneInfo?.path && (
-                <p><strong>Current File:</strong> {tuneInfo.path.split('/').pop()}</p>
-              )}
-              {tuneInfo?.modified && (
-                <p className="dialog-warning">⚠ Tune has unsaved changes</p>
-              )}
-            </div>
-
-            <div className="dialog-help">
-              <p>Save your tune to a file for backup or transfer.</p>
-              <p><strong>MSQ format</strong> is compatible with other ECU tuning software.</p>
-            </div>
+          <div className="dialog-help">
+            <p>Save your tune to a file for backup or transfer.</p>
+            <p><strong>MSQ format</strong> is compatible with other ECU tuning software.</p>
           </div>
+        </Dialog.Body>
 
-          <div className="dialog-footer">
-            <button onClick={onClose} disabled={isSaving}>Cancel</button>
-            <button
-              onClick={handleSaveAs}
-              disabled={isSaving}
-            >
-              Save As...
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving || !tuneInfo?.path}
-              className="dialog-primary"
-            >
-              {isSaving ? 'Saving...' : 'Save'}
-            </button>
-          </div>
-        </div>
-      </div>
+        <Dialog.Footer>
+          <Button variant="secondary" onClick={onClose} disabled={isSaving}>Cancel</Button>
+          <Button variant="secondary" onClick={handleSaveAs} disabled={isSaving}>Save As...</Button>
+          <Button
+            variant="primary"
+            onClick={handleSave}
+            disabled={isSaving || !tuneInfo?.path}
+          >
+            {isSaving ? 'Saving...' : 'Save'}
+          </Button>
+        </Dialog.Footer>
+      </Dialog>
 
-      {/* Auto-burn confirmation dialog */}
       {showBurnConfirm && (
-        <div className="dialog-overlay" onClick={(e) => e.stopPropagation()}>
-          <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="dialog-header">
-              <h2>Burn Tune to ECU?</h2>
-            </div>
-            <div className="dialog-content">
-              <p>Tune saved successfully. Would you like to burn it to the ECU now?</p>
-              <p className="dialog-warning">⚠ This will write to ECU memory and may take several seconds.</p>
-            </div>
-            <div className="dialog-footer">
-              <button onClick={handleBurnCancel}>Cancel</button>
-              <button onClick={handleBurnConfirm} className="dialog-primary">Burn to ECU</button>
-            </div>
-          </div>
-        </div>
+        <Dialog
+          open
+          onClose={handleBurnCancel}
+          title="Burn Tune to ECU?"
+          size="sm"
+        >
+          <Dialog.Body>
+            <p>Tune saved successfully. Would you like to burn it to the ECU now?</p>
+            <p className="dialog-warning">⚠ This will write to ECU memory and may take several seconds.</p>
+          </Dialog.Body>
+          <Dialog.Footer>
+            <Button variant="secondary" onClick={handleBurnCancel}>Cancel</Button>
+            <Button variant="primary" onClick={handleBurnConfirm}>Burn to ECU</Button>
+          </Dialog.Footer>
+        </Dialog>
       )}
     </>
   );
@@ -246,60 +244,57 @@ export function LoadDialog({ isOpen, onClose, onLoaded }: LoadDialogProps) {
     }
   }, [handleLoad]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog dialog-wide" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>Load Tune</h2>
-          <button className="dialog-close" onClick={onClose}>×</button>
-        </div>
-        
-        <div className="dialog-content">
-          {error && <div className="dialog-error">{error}</div>}
-          
-          <div className="dialog-file-list">
-            <div className="dialog-file-header">
-              <span>Recent Tune Files</span>
-              <button onClick={handleBrowse}>Browse...</button>
-            </div>
-            
-            {tuneFiles.length === 0 ? (
-              <div className="dialog-empty">No tune files found in projects folder</div>
-            ) : (
-              <div className="dialog-files">
-                {tuneFiles.map((file) => (
-                  <div 
-                    key={file}
-                    className={`dialog-file-item ${selectedFile === file ? 'selected' : ''}`}
-                    onClick={() => setSelectedFile(file)}
-                    onDoubleClick={() => handleLoad(file)}
-                  >
-                    <span className="dialog-file-icon">📄</span>
-                    <div className="dialog-file-info">
-                      <span className="dialog-file-name">{file.split('/').pop()}</span>
-                      <span className="dialog-file-path">{file}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="Load Tune"
+      size="lg"
+      closeOnBackdrop={!isLoading}
+    >
+      <Dialog.Body>
+        {error && <div className="dialog-error">{error}</div>}
+
+        <div className="dialog-file-list">
+          <div className="dialog-file-header">
+            <span>Recent Tune Files</span>
+            <Button variant="secondary" onClick={handleBrowse}>Browse...</Button>
           </div>
+
+          {tuneFiles.length === 0 ? (
+            <div className="dialog-empty">No tune files found in projects folder</div>
+          ) : (
+            <div className="dialog-files">
+              {tuneFiles.map((file) => (
+                <div
+                  key={file}
+                  className={`dialog-file-item ${selectedFile === file ? 'selected' : ''}`}
+                  onClick={() => setSelectedFile(file)}
+                  onDoubleClick={() => handleLoad(file)}
+                >
+                  <span className="dialog-file-icon">📄</span>
+                  <div className="dialog-file-info">
+                    <span className="dialog-file-name">{file.split('/').pop()}</span>
+                    <span className="dialog-file-path">{file}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        
-        <div className="dialog-footer">
-          <button onClick={onClose} disabled={isLoading}>Cancel</button>
-          <button 
-            onClick={() => selectedFile && handleLoad(selectedFile)}
-            disabled={isLoading || !selectedFile}
-            className="dialog-primary"
-          >
-            {isLoading ? 'Loading...' : 'Load'}
-          </button>
-        </div>
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose} disabled={isLoading}>Cancel</Button>
+        <Button
+          variant="primary"
+          onClick={() => selectedFile && handleLoad(selectedFile)}
+          disabled={isLoading || !selectedFile}
+        >
+          {isLoading ? 'Loading...' : 'Load'}
+        </Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }
 
@@ -333,45 +328,42 @@ export function BurnDialog({ isOpen, onClose, connected, onBurned }: BurnDialogP
     }
   }, [onClose, onBurned]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>Burn to ECU</h2>
-          <button className="dialog-close" onClick={onClose}>×</button>
-        </div>
-        
-        <div className="dialog-content">
-          {error && <div className="dialog-error">{error}</div>}
-          {success && <div className="dialog-success">✓ Burn completed successfully!</div>}
-          
-          {!connected ? (
-            <div className="dialog-warning">
-              ⚠ Not connected to ECU. Please connect first.
-            </div>
-          ) : (
-            <div className="dialog-info">
-              <p>This will write all changes from ECU RAM to flash memory.</p>
-              <p><strong>Warning:</strong> This operation cannot be undone.</p>
-              <p>Make sure your tune is tested before burning.</p>
-            </div>
-          )}
-        </div>
-        
-        <div className="dialog-footer">
-          <button onClick={onClose} disabled={isBurning}>Cancel</button>
-          <button 
-            onClick={handleBurn}
-            disabled={isBurning || !connected}
-            className="dialog-primary dialog-burn"
-          >
-            {isBurning ? 'Burning...' : '🔥 Burn to ECU'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="Burn to ECU"
+      size="md"
+      closeOnBackdrop={!isBurning}
+    >
+      <Dialog.Body>
+        {error && <div className="dialog-error">{error}</div>}
+        {success && <div className="dialog-success">✓ Burn completed successfully!</div>}
+
+        {!connected ? (
+          <div className="dialog-warning">
+            ⚠ Not connected to ECU. Please connect first.
+          </div>
+        ) : (
+          <div className="dialog-info">
+            <p>This will write all changes from ECU RAM to flash memory.</p>
+            <p><strong>Warning:</strong> This operation cannot be undone.</p>
+            <p>Make sure your tune is tested before burning.</p>
+          </div>
+        )}
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose} disabled={isBurning}>Cancel</Button>
+        <Button
+          variant="danger"
+          onClick={handleBurn}
+          disabled={isBurning || !connected}
+        >
+          {isBurning ? 'Burning...' : '🔥 Burn to ECU'}
+        </Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }
 
@@ -401,37 +393,30 @@ export function NewTuneDialog({ isOpen, onClose, onCreated }: NewTuneDialogProps
     }
   }, [onClose, onCreated]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>New Tune</h2>
-          <button className="dialog-close" onClick={onClose}>×</button>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="New Tune"
+      size="sm"
+      closeOnBackdrop={!isCreating}
+    >
+      <Dialog.Body>
+        {error && <div className="dialog-error">{error}</div>}
+
+        <div className="dialog-info">
+          <p>Create a new tune file for the currently loaded ECU definition.</p>
+          <p>Any unsaved changes to the current tune will be lost.</p>
         </div>
-        
-        <div className="dialog-content">
-          {error && <div className="dialog-error">{error}</div>}
-          
-          <div className="dialog-info">
-            <p>Create a new tune file for the currently loaded ECU definition.</p>
-            <p>Any unsaved changes to the current tune will be lost.</p>
-          </div>
-        </div>
-        
-        <div className="dialog-footer">
-          <button onClick={onClose} disabled={isCreating}>Cancel</button>
-          <button 
-            onClick={handleCreate}
-            disabled={isCreating}
-            className="dialog-primary"
-          >
-            {isCreating ? 'Creating...' : 'Create New Tune'}
-          </button>
-        </div>
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose} disabled={isCreating}>Cancel</Button>
+        <Button variant="primary" onClick={handleCreate} disabled={isCreating}>
+          {isCreating ? 'Creating...' : 'Create New Tune'}
+        </Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }
 
@@ -461,6 +446,13 @@ interface SettingsDialogProps extends DialogProps {
 
 export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettingsChange, currentProject }: SettingsDialogProps) {
   const [localTheme, setLocalTheme] = useState(theme);
+  const [localLanguage, setLocalLanguage] = useState<SupportedLanguageCode>(() => {
+    try {
+      const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY) as SupportedLanguageCode | null;
+      if (stored && SUPPORTED_LANGUAGES.some(l => l.code === stored)) return stored;
+    } catch { /* ignore */ }
+    return 'en';
+  });
   const [localUnits, setLocalUnits] = useState('metric');
   const [autoBurnOnClose, setAutoBurnOnClose] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
@@ -530,6 +522,12 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
     if (isOpen) {
       invoke('get_settings').then((settings: any) => {
         if (settings.units_system !== undefined) setLocalUnits(settings.units_system);
+        if (settings.language) {
+          const lang = settings.language as SupportedLanguageCode;
+          if (SUPPORTED_LANGUAGES.some(l => l.code === lang)) {
+            setLocalLanguage(lang);
+          }
+        }
         if (settings.auto_burn_on_close !== undefined) setAutoBurnOnClose(!!settings.auto_burn_on_close);
         if (settings.indicator_column_count !== undefined) setIndicatorColumnCount(settings.indicator_column_count);
         if (settings.indicator_fill_empty !== undefined) setIndicatorFillEmpty(!!settings.indicator_fill_empty);
@@ -677,6 +675,21 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
 
   const handleApply = useCallback(async () => {
     onThemeChange(localTheme);
+    // Apply language change immediately and persist it. Dynamically import the
+    // i18n instance so loading this dialog module doesn't drag in i18next on
+    // first paint of the app.
+    try {
+      const { default: i18n } = await import('../../i18n');
+      if (i18n.language !== localLanguage) {
+        await i18n.changeLanguage(localLanguage);
+      }
+    } catch (e) {
+      console.error('Failed to switch language:', e);
+    }
+    try {
+      localStorage.setItem(LANGUAGE_STORAGE_KEY, localLanguage);
+    } catch { /* ignore */ }
+    await invoke('update_setting', { key: 'language', value: localLanguage });
     // Update units setting
     if (localUnits !== 'metric' && localUnits !== 'imperial') {
       setLocalUnits('metric');
@@ -734,31 +747,17 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
     
     onSettingsChange?.({ units: localUnits, autoBurnOnClose, indicatorColumnCount, indicatorFillEmpty, indicatorTextFit, statusBarChannels, runtimePacketMode, autoSyncGaugeRanges });
     onClose();
-  }, [localTheme, localUnits, autoBurnOnClose, statusBarChannels, indicatorColumnCount, indicatorFillEmpty, indicatorTextFit, heatmapValueScheme, heatmapChangeScheme, heatmapCoverageScheme, gaugeSnapToGrid, gaugeFreeMove, gaugeLock, autoSyncGaugeRanges, autoCommitOnSave, commitMessageFormat, runtimePacketMode, autoReconnectAfterControllerCommand, autoRecordEnabled, keyOnThresholdRpm, keyOffTimeoutSec, alertLargeChangeEnabled, alertLargeChangeAbs, alertLargeChangePercent, hotkeyBindings, autoConnect, currentProject, onThemeChange, onSettingsChange, onClose]);
-
-  if (!isOpen) return null;
+  }, [localTheme, localLanguage, localUnits, autoBurnOnClose, statusBarChannels, indicatorColumnCount, indicatorFillEmpty, indicatorTextFit, heatmapValueScheme, heatmapChangeScheme, heatmapCoverageScheme, gaugeSnapToGrid, gaugeFreeMove, gaugeLock, autoSyncGaugeRanges, autoCommitOnSave, commitMessageFormat, runtimePacketMode, autoReconnectAfterControllerCommand, autoRecordEnabled, keyOnThresholdRpm, keyOffTimeoutSec, alertLargeChangeEnabled, alertLargeChangeAbs, alertLargeChangePercent, hotkeyBindings, autoConnect, currentProject, onThemeChange, onSettingsChange, onClose]);
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div 
-        className="dialog" 
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-dialog-title"
-      >
-        <div className="dialog-header">
-          <h2 id="settings-dialog-title">Settings</h2>
-          <button 
-            className="dialog-close" 
-            onClick={onClose}
-            aria-label="Close settings dialog"
-            title="Close (Escape)"
-          >
-            ×
-          </button>
-        </div>
-        
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="Settings"
+      size="xl"
+      className="settings-dialog"
+      ariaLabel="Settings dialog"
+    >
         {/* Tab Navigation */}
         <div className="dialog-tabs" role="tablist">
           <button 
@@ -806,6 +805,19 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
                   selectedTheme={localTheme as ThemeName} 
                   onChange={(theme) => setLocalTheme(theme)}
                 />
+              </div>
+
+              <div className="dialog-form-group">
+                <label htmlFor="settings-language">Language</label>
+                <select
+                  id="settings-language"
+                  value={localLanguage}
+                  onChange={(e) => setLocalLanguage(e.target.value as SupportedLanguageCode)}
+                >
+                  {SUPPORTED_LANGUAGES.map(lang => (
+                    <option key={lang.code} value={lang.code}>{lang.label}</option>
+                  ))}
+                </select>
               </div>
           
           <div className="dialog-form-group">
@@ -1352,13 +1364,12 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
             </div>
           )}
         </div>
-        
-        <div className="dialog-footer">
-          <button onClick={onClose}>Cancel</button>
-          <button onClick={handleApply} className="dialog-primary">Apply</button>
-        </div>
-      </div>
-    </div>
+
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={handleApply}>Apply</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }
 
@@ -1376,53 +1387,49 @@ export function AboutDialog({ isOpen, onClose }: DialogProps) {
       .catch(() => setBuildInfo(null));
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>About LibreTune</h2>
-          <button className="dialog-close" onClick={onClose}>×</button>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="About LibreTune"
+      size="sm"
+    >
+      <Dialog.Body className="dialog-about">
+        <div className="dialog-about-logo">🔧</div>
+        <h3>LibreTune</h3>
+        <p className="dialog-version">
+          Version {buildInfo?.version ?? 'unknown'}
+        </p>
+        <p className="dialog-build">
+          Build {buildInfo?.build_id ?? 'unknown'}
+        </p>
+
+        <p>Open-source ECU tuning software compatible with standard INI definition files.</p>
+
+        <div className="dialog-about-links">
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); openUrl('https://github.com/RallyPat/LibreTune'); }}
+          >
+            GitHub
+          </a>
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); openUrl('https://github.com/RallyPat/LibreTune/tree/main/docs'); }}
+          >
+            Documentation
+          </a>
         </div>
-        
-        <div className="dialog-content dialog-about">
-          <div className="dialog-about-logo">🔧</div>
-          <h3>LibreTune</h3>
-          <p className="dialog-version">
-            Version {buildInfo?.version ?? 'unknown'}
-          </p>
-          <p className="dialog-build">
-            Build {buildInfo?.build_id ?? 'unknown'}
-          </p>
-          
-          <p>Open-source ECU tuning software compatible with standard INI definition files.</p>
-          
-          <div className="dialog-about-links">
-            <a 
-              href="#" 
-              onClick={(e) => { e.preventDefault(); openUrl('https://github.com/RallyPat/LibreTune'); }}
-            >
-              GitHub
-            </a>
-            <a 
-              href="#" 
-              onClick={(e) => { e.preventDefault(); openUrl('https://github.com/RallyPat/LibreTune/tree/main/docs'); }}
-            >
-              Documentation
-            </a>
-          </div>
-          
-          <p className="dialog-license">
-            Licensed under GPL-2.0
-          </p>
-        </div>
-        
-        <div className="dialog-footer">
-          <button onClick={onClose} className="dialog-primary">Close</button>
-        </div>
-      </div>
-    </div>
+
+        <p className="dialog-license">
+          Licensed under GPL-2.0
+        </p>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="primary" onClick={onClose}>Close</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }
 
@@ -1506,17 +1513,15 @@ export function ConnectionDialog({
     prevConnectedRef.current = connected;
   }, [connected, connecting, onClose]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>ECU Connection</h2>
-          <button className="dialog-close" onClick={onClose}>×</button>
-        </div>
-        
-        <div className="dialog-content">
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="ECU Connection"
+      size="md"
+      closeOnBackdrop={!connecting}
+    >
+      <Dialog.Body>
           <div className="dialog-form-group">
             <label>Connection Mode</label>
             <div className="dialog-row radio-group" style={{ display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '10px' }}>
@@ -1661,25 +1666,24 @@ export function ConnectionDialog({
             <span className={`status-indicator ${connected ? 'connected' : 'disconnected'}`} />
             {statusMessage ? statusMessage : (connected ? 'Connected' : connecting ? 'Connecting...' : 'Disconnected')}
           </div>
-        </div>
-        
-        <div className="dialog-footer">
-          <button onClick={onClose}>Close</button>
-          {connected ? (
-            <button onClick={onDisconnect} className="dialog-danger">
-              Disconnect
-            </button>
-          ) : (
-            <button 
-              onClick={onConnect} 
-              disabled={connecting || !selectedPort}
-              className="dialog-primary"
-            >
-              {connecting ? 'Connecting...' : 'Connect'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose}>Close</Button>
+        {connected ? (
+          <Button variant="danger" onClick={onDisconnect}>
+            Disconnect
+          </Button>
+        ) : (
+          <Button
+            variant="primary"
+            onClick={onConnect}
+            disabled={connecting || !selectedPort}
+          >
+            {connecting ? 'Connecting...' : 'Connect'}
+          </Button>
+        )}
+      </Dialog.Footer>
+    </Dialog>
   );
 }

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { FolderOpen, FileArchive, Check, AlertTriangle, X, ArrowRight, Loader } from 'lucide-react';
+import { FolderOpen, FileArchive, Check, AlertTriangle, ArrowRight, Loader } from 'lucide-react';
+import { Dialog, Button } from '../common';
 import './ImportProjectWizard.css';
 
 interface ImportProjectWizardProps {
@@ -102,20 +103,24 @@ export default function ImportProjectWizard({
 
   if (!isOpen) return null;
 
-  return (
-    <div className="import-wizard-overlay" onClick={handleClose}>
-      <div className="import-wizard-dialog" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="import-wizard-header">
-          <FileArchive size={22} className="header-icon" />
-          <h2>Import TS Project</h2>
-          <button className="close-btn" onClick={handleClose}>
-            <X size={18} />
-          </button>
-        </div>
+  const titleNode = (
+    <>
+      <FileArchive size={18} />
+      Import TS Project
+    </>
+  );
 
-        {/* Content */}
-        <div className="import-wizard-content">
+  return (
+    <Dialog
+      open={isOpen}
+      onClose={handleClose}
+      title={titleNode}
+      size="md"
+      className="import-wizard-dialog"
+      closeOnBackdrop={!loading && !importing}
+      closeOnEscape={!loading && !importing}
+    >
+      <Dialog.Body className="import-wizard-content">
           {/* Step indicators */}
           <div className="step-indicators">
             <div className={`step-indicator ${step === 'select' ? 'active' : 'completed'}`}>
@@ -214,38 +219,29 @@ export default function ImportProjectWizard({
               </div>
             </div>
           )}
-        </div>
+      </Dialog.Body>
 
-        {/* Footer */}
-        <div className="import-wizard-footer">
-          {step === 'select' && (
-            <button className="btn-cancel" onClick={handleClose}>
-              Cancel
-            </button>
-          )}
+      <Dialog.Footer className="import-wizard-footer">
+        {step === 'select' && (
+          <Button variant="secondary" onClick={handleClose}>Cancel</Button>
+        )}
 
-          {step === 'confirm' && (
-            <>
-              <button className="btn-back" onClick={() => setStep('select')} disabled={importing}>
-                Back
-              </button>
-              <button className="btn-import" onClick={handleImport} disabled={importing}>
-                {importing ? (
-                  <>
-                    <Loader size={14} className="spinner" />
-                    Importing...
-                  </>
-                ) : (
-                  <>
-                    <FileArchive size={14} />
-                    Import Project
-                  </>
-                )}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+        {step === 'confirm' && (
+          <>
+            <Button variant="secondary" onClick={() => setStep('select')} disabled={importing}>
+              Back
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleImport}
+              disabled={importing}
+              leadingIcon={importing ? <Loader size={14} className="spinner" /> : <FileArchive size={14} />}
+            >
+              {importing ? 'Importing...' : 'Import Project'}
+            </Button>
+          </>
+        )}
+      </Dialog.Footer>
+    </Dialog>
   );
 }

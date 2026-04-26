@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Plus, Trash2, Save, X, Calculator, AlertCircle, CheckCircle } from 'lucide-react';
+import { Plus, Trash2, Save, Calculator, AlertCircle, CheckCircle } from 'lucide-react';
+import { Dialog, Button } from '../common';
 import './MathChannelsDialog.css';
 
 interface UserMathChannel {
@@ -130,15 +131,21 @@ export default function MathChannelsDialog({ onClose }: MathChannelsDialogProps)
     }
   };
 
+  const titleNode = (
+    <>
+      <Calculator size={18} /> Math Channels
+    </>
+  );
+
   return (
-    <div className="math-channels-dialog">
-      <div className="math-channels-content">
-        <div className="math-channels-header">
-          <h2><Calculator size={20} /> Math Channels</h2>
-          <button className="btn-icon" onClick={onClose}><X size={20} /></button>
-        </div>
-        
-        <div className="math-channels-body">
+    <Dialog
+      open
+      onClose={onClose}
+      title={titleNode}
+      size="xl"
+      className="math-channels-dialog"
+    >
+      <Dialog.Body className="math-channels-body">
           <div className="channels-list">
             <div className="channels-list-header">
               <h3>Defined Channels</h3>
@@ -158,7 +165,7 @@ export default function MathChannelsDialog({ onClose }: MathChannelsDialogProps)
                 </div>
               ))}
               {channels.length === 0 && (
-                <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                <div className="empty-channels">
                   No custom channels defined
                 </div>
               )}
@@ -170,7 +177,7 @@ export default function MathChannelsDialog({ onClose }: MathChannelsDialogProps)
               <div className="editor-placeholder">
                 <Calculator size={48} />
                 <p>Select a channel to edit or create a new one</p>
-                <button className="btn btn-primary" onClick={handleNew}>Create New Channel</button>
+                <Button variant="primary" onClick={handleNew}>Create New Channel</Button>
               </div>
             ) : (
               <div className="editor-form">
@@ -181,7 +188,6 @@ export default function MathChannelsDialog({ onClose }: MathChannelsDialogProps)
                       value={name} 
                       onChange={e => { setName(e.target.value); setIsDirty(true); }}
                       placeholder="e.g. Boost_PSI"
-                      // Allow rename if it's new, otherwise simplistic lock for now
                       disabled={editingId !== '__NEW__' && editingId !== name} 
                     />
                   </div>
@@ -213,23 +219,22 @@ export default function MathChannelsDialog({ onClose }: MathChannelsDialogProps)
                 )}
 
                 <div className="editor-actions">
-                  <button 
-                    className="btn btn-primary" 
+                  <Button 
+                    variant="primary"
                     onClick={handleSave} 
                     disabled={!isValid || !name || !isDirty}
+                    leadingIcon={<Save size={14} />}
                   >
-                    <Save size={16} />
                     Save Channel
-                  </button>
+                  </Button>
                   {editingId !== '__NEW__' && (
-                    <button 
-                      className="btn btn-danger" 
+                    <Button 
+                      variant="danger"
                       onClick={() => handleDelete(editingId)}
-                      style={{ marginLeft: 'auto' }}
+                      leadingIcon={<Trash2 size={14} />}
                     >
-                      <Trash2 size={16} />
                       Delete
-                    </button>
+                    </Button>
                   )}
                 </div>
                 
@@ -246,8 +251,11 @@ export default function MathChannelsDialog({ onClose }: MathChannelsDialogProps)
               </div>
             )}
           </div>
-        </div>
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose}>Close</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

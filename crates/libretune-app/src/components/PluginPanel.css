@@ -24,7 +24,7 @@
 .plugin-header h2 {
   margin: 0;
   font-size: 1.25rem;
-  color: #f1f5f9;
+  color: var(--text-primary);
   font-weight: 600;
   flex: 1;
 }
@@ -46,45 +46,45 @@
 }
 
 .plugin-button-primary {
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   color: white;
   border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
 .plugin-button-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #60a5fa, #1e40af);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent));
   box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
 }
 
 .plugin-button-secondary {
   background: rgba(100, 116, 139, 0.1);
-  color: #cbd5e1;
+  color: var(--text-secondary);
   border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .plugin-button-secondary:hover:not(:disabled) {
   background: rgba(100, 116, 139, 0.2);
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 
 .plugin-button-action {
-  background: linear-gradient(135deg, #10b981, #059669);
+  background: linear-gradient(135deg, var(--success), var(--success-bg));
   color: white;
   border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
 .plugin-button-action:hover:not(:disabled) {
-  background: linear-gradient(135deg, #34d399, #065f46);
+  background: linear-gradient(135deg, var(--success), var(--success-bg));
 }
 
 .plugin-button-danger {
-  background: linear-gradient(135deg, #ef4444, #991b1b);
+  background: linear-gradient(135deg, var(--error), var(--error-bg));
   color: white;
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
 .plugin-button-danger:hover:not(:disabled) {
-  background: linear-gradient(135deg, #f87171, #7f1d1d);
+  background: linear-gradient(135deg, var(--error), var(--error-bg));
 }
 
 .plugin-content {
@@ -136,14 +136,14 @@
 .plugin-list-header h3 {
   margin: 0 0 0.5rem 0;
   font-size: 1rem;
-  color: #cbd5e1;
+  color: var(--text-secondary);
   font-weight: 600;
 }
 
 .plugin-empty {
   text-align: center;
   padding: 2rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .plugin-empty p {
@@ -152,7 +152,7 @@
 }
 
 .plugin-empty small {
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
@@ -200,13 +200,13 @@
 .plugin-card-header h4 {
   margin: 0;
   font-size: 0.95rem;
-  color: #f1f5f9;
+  color: var(--text-primary);
   font-weight: 600;
   word-break: break-word;
 }
 
 .plugin-card-header small {
-  color: #94a3b8;
+  color: var(--text-secondary);
   font-size: 0.8rem;
 }
 
@@ -222,7 +222,7 @@
 
 .plugin-description {
   margin: 0;
-  color: #cbd5e1;
+  color: var(--text-secondary);
   font-size: 0.85rem;
   line-height: 1.4;
   display: -webkit-box;
@@ -239,7 +239,7 @@
   padding-top: 0.5rem;
   border-top: 1px solid rgba(148, 163, 184, 0.1);
   font-size: 0.8rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .plugin-executions,
@@ -273,7 +273,7 @@
 .plugin-details h3 {
   margin: 0 0 0.5rem 0;
   font-size: 1.1rem;
-  color: #f1f5f9;
+  color: var(--text-primary);
   font-weight: 600;
 }
 
@@ -284,7 +284,7 @@
 }
 
 .plugin-info-section label {
-  color: #94a3b8;
+  color: var(--text-secondary);
   font-size: 0.85rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -295,7 +295,7 @@
 }
 
 .plugin-value {
-  color: #f1f5f9;
+  color: var(--text-primary);
   font-size: 0.95rem;
   font-weight: 500;
   word-break: break-all;
@@ -320,7 +320,7 @@
 }
 
 .plugin-state-badge span:last-child {
-  color: #f1f5f9;
+  color: var(--text-primary);
   font-size: 0.8rem;
   font-weight: 600;
 }
@@ -354,14 +354,14 @@
   padding: 0.5rem 0.75rem;
   background: rgba(59, 130, 246, 0.1);
   border-left: 3px solid rgba(59, 130, 246, 0.5);
-  color: #e0e7ff;
+  color: var(--text-primary);
   font-size: 0.85rem;
   border-radius: 2px;
 }
 
 .plugin-no-perms {
   margin: 0;
-  color: #94a3b8;
+  color: var(--text-secondary);
   font-size: 0.85rem;
   font-style: italic;
 }

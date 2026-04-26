@@ -6,7 +6,8 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, Check, X, Download, RefreshCw, Globe, Wifi, WifiOff, Save, HelpCircle, FolderOpen } from "lucide-react";
+import { AlertTriangle, Check, Download, RefreshCw, Globe, Wifi, WifiOff, Save, HelpCircle, FolderOpen } from "lucide-react";
+import { Dialog, Button } from "../common";
 import "./SignatureMismatchDialog.css";
 
 export interface MatchingIniInfo {
@@ -190,8 +191,6 @@ export default function SignatureMismatchDialog({
     }
   };
 
-  if (!isOpen || !mismatchInfo) return null;
-
   const handleSelectIni = async () => {
     if (!selectedIni) return;
     
@@ -209,25 +208,30 @@ export default function SignatureMismatchDialog({
     }
   };
 
+  if (!mismatchInfo) return null;
+
   const hasExactMatch = mismatchInfo.matching_inis.some(
     (ini) => ini.match_type === "exact"
   );
 
-  return (
-    <div className="signature-mismatch-overlay" onClick={onClose}>
-      <div
-        className="signature-mismatch-dialog"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="signature-mismatch-header">
-          <AlertTriangle className="warning-icon" size={24} />
-          <h2>INI Signature Mismatch</h2>
-          <button className="close-btn" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
+  const titleNode = (
+    <>
+      <AlertTriangle className="warning-icon" size={20} />
+      INI Signature Mismatch
+    </>
+  );
 
-        <div className="signature-mismatch-content">
+  return (
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title={titleNode}
+      size="lg"
+      className="signature-mismatch-dialog"
+      closeOnBackdrop={!switching && !savingTune && downloading === null}
+      closeOnEscape={!switching && !savingTune && downloading === null}
+    >
+      <Dialog.Body className="signature-mismatch-content">
           <div className="signature-comparison">
             <div className="signature-row">
               <span className="label">ECU Signature:</span>
@@ -421,40 +425,26 @@ export default function SignatureMismatchDialog({
               )}
             </div>
           )}
-        </div>
+      </Dialog.Body>
 
-        <div className="signature-mismatch-actions">
-          {selectedIni && !showOnlineSearch && (
-            <button
-              className="action-btn primary"
-              onClick={handleSelectIni}
-              disabled={switching}
-            >
-              {switching ? (
-                <>
-                  <RefreshCw size={16} className="spinning" />
-                  Switching...
-                </>
-              ) : (
-                <>
-                  <Check size={16} />
-                  Use Selected INI
-                </>
-              )}
-            </button>
-          )}
-          <button 
-            className="action-btn secondary" 
-            onClick={onContinue}
-            title="Continue with current INI despite mismatch (not recommended)"
+      <Dialog.Footer>
+        {selectedIni && !showOnlineSearch && (
+          <Button
+            variant="primary"
+            onClick={handleSelectIni}
+            disabled={switching}
+            leadingIcon={switching ? <RefreshCw size={14} className="spinning" /> : <Check size={14} />}
           >
-            Continue Anyway
-          </button>
-          <button className="action-btn cancel" onClick={onClose}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+            {switching ? "Switching..." : "Use Selected INI"}
+          </Button>
+        )}
+        <Button variant="secondary" onClick={onContinue}>
+          Continue Anyway
+        </Button>
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

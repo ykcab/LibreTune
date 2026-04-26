@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Dialog, Button } from '../common';
 import './TuneMismatchDialog.css';
 
 export interface TuneMismatchInfo {
@@ -56,59 +57,58 @@ export default function TuneMismatchDialog({
   };
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog tune-mismatch-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>Tune Mismatch Detected</h2>
-          <button className="dialog-close" onClick={onClose}>×</button>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="Tune Mismatch Detected"
+      size="md"
+      className="tune-mismatch-dialog"
+      closeOnBackdrop={!isLoading}
+      closeOnEscape={!isLoading}
+    >
+      <Dialog.Body>
+        <div className="tune-mismatch-warning">
+          <p>
+            <strong>The tune on the ECU differs from the tune in your project.</strong>
+          </p>
+          <p>
+            The ECU has {mismatchInfo.ecu_pages.length} page(s) loaded, while your project has{' '}
+            {mismatchInfo.project_pages.length} page(s).
+            {mismatchInfo.diff_pages.length > 0 && (
+              <> {mismatchInfo.diff_pages.length} page(s) have differences.</>
+            )}
+          </p>
         </div>
 
-        <div className="dialog-content">
-          <div className="tune-mismatch-warning">
+        <div className="tune-mismatch-options">
+          <div className="tune-option">
+            <h3>Use Project Tune</h3>
             <p>
-              <strong>The tune on the ECU differs from the tune in your project.</strong>
+              Load the tune from your project file. This will overwrite the ECU tune with your
+              saved project data.
             </p>
-            <p>
-              The ECU has {mismatchInfo.ecu_pages.length} page(s) loaded, while your project has {mismatchInfo.project_pages.length} page(s).
-              {mismatchInfo.diff_pages.length > 0 && (
-                <> {mismatchInfo.diff_pages.length} page(s) have differences.</>
-              )}
-            </p>
+            <Button variant="primary" onClick={handleUseProject} disabled={isLoading}>
+              {isLoading ? 'Loading...' : 'Use Project Tune'}
+            </Button>
           </div>
 
-          <div className="tune-mismatch-options">
-            <div className="tune-option">
-              <h3>Use Project Tune</h3>
-              <p>Load the tune from your project file. This will overwrite the ECU tune with your saved project data.</p>
-              <button
-                onClick={handleUseProject}
-                disabled={isLoading}
-                className="dialog-primary"
-              >
-                {isLoading ? 'Loading...' : 'Use Project Tune'}
-              </button>
-            </div>
-
-            <div className="tune-option">
-              <h3>Use ECU Tune</h3>
-              <p>Keep the tune currently on the ECU. Your project will be updated to match the ECU.</p>
-              <button
-                onClick={handleUseECU}
-                disabled={isLoading}
-              >
-                {isLoading ? 'Loading...' : 'Use ECU Tune'}
-              </button>
-            </div>
+          <div className="tune-option">
+            <h3>Use ECU Tune</h3>
+            <p>
+              Keep the tune currently on the ECU. Your project will be updated to match the ECU.
+            </p>
+            <Button variant="secondary" onClick={handleUseECU} disabled={isLoading}>
+              {isLoading ? 'Loading...' : 'Use ECU Tune'}
+            </Button>
           </div>
         </div>
+      </Dialog.Body>
 
-        <div className="dialog-footer">
-          <button onClick={onClose} disabled={isLoading}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose} disabled={isLoading}>
+          Cancel
+        </Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }
-

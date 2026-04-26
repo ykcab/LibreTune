@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Dialog, Button } from "../common";
 import "./OpenTuneDialog.css";
 
 interface MsqInfo {
@@ -125,9 +126,16 @@ export default function OpenTuneDialog({
   const canCreate = projectName.trim() && selectedIni && tunePath;
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="open-tune-dialog" onClick={(e) => e.stopPropagation()}>
-        <h2 className="dialog-title">Open Tune File</h2>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="Open Tune File"
+      size="md"
+      className="open-tune-dialog"
+      closeOnBackdrop={!loading}
+      closeOnEscape={!loading}
+    >
+      <Dialog.Body className="open-tune-content">
         <p className="dialog-subtitle">
           Select a tune file (.msq) and an ECU definition to create a project.
         </p>
@@ -248,19 +256,12 @@ export default function OpenTuneDialog({
         )}
 
         {/* Actions */}
-        <div className="dialog-actions">
-          <button className="cancel-btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className={`create-btn ${canCreate ? "" : "disabled"}`}
-            onClick={handleCreate}
-            disabled={!canCreate}
-          >
-            Open
-          </button>
-        </div>
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={handleCreate} disabled={!canCreate}>Open</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

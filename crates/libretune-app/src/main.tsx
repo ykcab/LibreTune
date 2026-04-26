@@ -5,6 +5,9 @@ import PopOutWindow from "./PopOutWindow";
 import { LoadingProvider } from "./components/LoadingContext";
 import { ToastProvider } from "./components/ToastContext";
 import { UnitPreferencesProvider } from "./utils/useUnitPreferences";
+// Initialize i18next (side-effect: configures the global i18n instance).
+// Must be imported before any component that calls `useTranslation()`.
+import "./i18n";
 
 /**
  * Root component that determines whether to render App or PopOutWindow

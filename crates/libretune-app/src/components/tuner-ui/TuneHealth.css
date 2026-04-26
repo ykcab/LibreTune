@@ -5,7 +5,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   padding: 16px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 13px;
   display: flex;
   flex-direction: column;
@@ -16,11 +16,11 @@
 .tune-health-error {
   text-align: center;
   padding: 24px;
-  color: #999;
+  color: var(--text-secondary);
 }
 
 .tune-health-error {
-  color: #f44336;
+  color: var(--error);
 }
 
 /* Header with grade circle */
@@ -51,7 +51,7 @@
 
 .grade-score {
   font-size: 10px;
-  color: #999;
+  color: var(--text-secondary);
   margin-top: 2px;
 }
 
@@ -63,13 +63,13 @@
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .coverage-text {
   margin: 2px 0 6px;
   font-size: 12px;
-  color: #aaa;
+  color: var(--text-secondary);
 }
 
 .health-badges {
@@ -88,7 +88,7 @@
 
 .anomaly-badge {
   background: rgba(244, 67, 54, 0.2);
-  color: #f44336;
+  color: var(--error);
   border: 1px solid rgba(244, 67, 54, 0.3);
 }
 
@@ -98,7 +98,7 @@
 
 .prediction-badge {
   background: rgba(33, 150, 243, 0.2);
-  color: #2196f3;
+  color: var(--info);
   border: 1px solid rgba(33, 150, 243, 0.3);
 }
 
@@ -110,7 +110,7 @@
   background: none;
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 6px;
-  color: #aaa;
+  color: var(--text-secondary);
   font-size: 18px;
   cursor: pointer;
   padding: 4px 8px;
@@ -118,7 +118,7 @@
 }
 
 .refresh-btn:hover {
-  color: #fff;
+  color: var(--text-primary);
   border-color: rgba(255, 255, 255, 0.3);
   background: rgba(255, 255, 255, 0.05);
 }
@@ -133,7 +133,7 @@
 .health-tab {
   background: none;
   border: none;
-  color: #888;
+  color: var(--text-muted);
   font-size: 12px;
   padding: 6px 12px;
   cursor: pointer;
@@ -142,12 +142,12 @@
 }
 
 .health-tab:hover {
-  color: #ccc;
+  color: var(--text-primary);
 }
 
 .health-tab.active {
-  color: #00d9ff;
-  border-bottom-color: #00d9ff;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 /* Tab content */
@@ -183,18 +183,18 @@
 .region-name {
   font-weight: 600;
   font-size: 13px;
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .region-score {
   font-size: 18px;
   font-weight: 700;
-  color: #00d9ff;
+  color: var(--accent);
 }
 
 .region-info {
   font-size: 11px;
-  color: #777;
+  color: var(--text-muted);
   margin-top: 4px;
 }
 
@@ -209,7 +209,7 @@
 .score-bar-label {
   width: 80px;
   font-size: 11px;
-  color: #999;
+  color: var(--text-secondary);
 }
 
 .score-bar-track {
@@ -230,7 +230,7 @@
   width: 24px;
   text-align: right;
   font-size: 11px;
-  color: #ccc;
+  color: var(--text-primary);
 }
 
 /* Recommendations */
@@ -239,13 +239,13 @@
   padding: 10px;
   background: rgba(255, 152, 0, 0.08);
   border-radius: 8px;
-  border-left: 3px solid #ff9800;
+  border-left: 3px solid var(--warning);
 }
 
 .recommendations h4 {
   margin: 0 0 6px;
   font-size: 12px;
-  color: #ff9800;
+  color: var(--warning);
 }
 
 .recommendations ul {
@@ -255,7 +255,7 @@
 
 .recommendations li {
   font-size: 12px;
-  color: #ddd;
+  color: var(--text-primary);
   margin-bottom: 4px;
   line-height: 1.4;
 }
@@ -271,7 +271,7 @@
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.02);
   border-radius: 6px;
-  border-left: 3px solid #ff9800;
+  border-left: 3px solid var(--warning);
 }
 
 .anomaly-header {
@@ -284,12 +284,12 @@
 .anomaly-type {
   font-weight: 600;
   font-size: 12px;
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .anomaly-cell {
   font-size: 11px;
-  color: #888;
+  color: var(--text-muted);
   font-family: monospace;
 }
 
@@ -301,7 +301,7 @@
 
 .anomaly-desc {
   font-size: 11px;
-  color: #aaa;
+  color: var(--text-secondary);
   line-height: 1.4;
 }
 
@@ -316,7 +316,7 @@
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.02);
   border-radius: 6px;
-  border-left: 3px solid #2196f3;
+  border-left: 3px solid var(--info);
 }
 
 .prediction-header {
@@ -329,12 +329,12 @@
 .prediction-cell {
   font-family: monospace;
   font-size: 11px;
-  color: #888;
+  color: var(--text-muted);
 }
 
 .prediction-method {
   font-size: 11px;
-  color: #2196f3;
+  color: var(--info);
   background: rgba(33, 150, 243, 0.1);
   padding: 1px 6px;
   border-radius: 4px;
@@ -343,7 +343,7 @@
 .prediction-confidence {
   margin-left: auto;
   font-size: 11px;
-  color: #4caf50;
+  color: var(--success);
 }
 
 .prediction-values {
@@ -354,34 +354,34 @@
 }
 
 .current-val {
-  color: #999;
+  color: var(--text-secondary);
 }
 
 .arrow {
-  color: #555;
+  color: var(--text-muted);
 }
 
 .predicted-val {
-  color: #00d9ff;
+  color: var(--accent);
   font-weight: 600;
 }
 
 .delta {
   font-size: 11px;
-  color: #888;
+  color: var(--text-muted);
 }
 
 /* Empty state */
 .empty-state {
   text-align: center;
   padding: 24px;
-  color: #777;
+  color: var(--text-muted);
   font-style: italic;
 }
 
 .more-items {
   text-align: center;
   padding: 8px;
-  color: #666;
+  color: var(--text-muted);
   font-size: 12px;
 }

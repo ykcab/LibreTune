@@ -6,6 +6,8 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { GitCompare, FolderOpen, GitMerge } from 'lucide-react';
+import { Dialog, Button } from '../common';
 import './TuneFileDiffDialog.css';
 
 interface TuneValue {
@@ -35,7 +37,6 @@ interface TuneDiff {
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  /** Path to currently loaded tune (tune A / base) */
   currentTunePath?: string;
 }
 
@@ -89,10 +90,7 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
     setMergeResult(null);
 
     try {
-      const result = await invoke<TuneDiff>('compare_tune_files', {
-        pathA,
-        pathB,
-      });
+      const result = await invoke<TuneDiff>('compare_tune_files', { pathA, pathB });
       setDiff(result);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -116,50 +114,10 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
     } catch (_e) { /* user cancelled */ }
   }, []);
 
-  const handleMerge = useCallback(async () => {
-    if (selected.size === 0) return;
-    setMerging(true);
-    setMergeResult(null);
-
-    try {
-      const merged = await invoke<number>('merge_from_tune', {
-        sourcePath: pathB,
-        constantNames: Array.from(selected),
-      });
-      setMergeResult(`Successfully merged ${merged} constants`);
-      // Refresh diff
-      handleCompare();
-    } catch (e) {
-      setMergeResult(`Merge failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMerging(false);
-    }
-  }, [selected, pathB, handleCompare]);
-
-  const toggleSelect = useCallback((name: string) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }, []);
-
-  const selectAll = useCallback(() => {
-    if (!diff) return;
-    const filtered = getFilteredDiffs();
-    if (selected.size === filtered.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(filtered.map(d => d.name)));
-    }
-  }, [diff, selected, search, filter]);
-
   const getFilteredDiffs = useCallback((): TuneDifference[] => {
     if (!diff) return [];
     let items = diff.differences;
 
-    // Filter
     switch (filter) {
       case 'scalar':
         items = items.filter(d => d.numeric_diff !== null);
@@ -172,13 +130,11 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
         break;
     }
 
-    // Search
     if (search) {
       const q = search.toLowerCase();
       items = items.filter(d => d.name.toLowerCase().includes(q));
     }
 
-    // Sort
     items = [...items].sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
@@ -198,23 +154,65 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
     return items;
   }, [diff, filter, search, sortField, sortAsc]);
 
+  const handleMerge = useCallback(async () => {
+    if (selected.size === 0) return;
+    setMerging(true);
+    setMergeResult(null);
+
+    try {
+      const merged = await invoke<number>('merge_from_tune', {
+        sourcePath: pathB,
+        constantNames: Array.from(selected),
+      });
+      setMergeResult(`Successfully merged ${merged} constants`);
+      handleCompare();
+    } catch (e) {
+      setMergeResult(`Merge failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMerging(false);
+    }
+  }, [selected, pathB, handleCompare]);
+
+  const toggleSelect = useCallback((name: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const filtered = getFilteredDiffs();
+
+  const selectAll = useCallback(() => {
+    if (!diff) return;
+    if (selected.size === filtered.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(filtered.map(d => d.name)));
+    }
+  }, [diff, selected, filtered]);
+
   const handleSort = (field: SortField) => {
     if (sortField === field) setSortAsc(!sortAsc);
     else { setSortField(field); setSortAsc(true); }
   };
 
-  if (!isOpen) return null;
-
-  const filtered = getFilteredDiffs();
+  const titleNode = (
+    <>
+      <GitCompare size={18} /> Compare Tune Files
+    </>
+  );
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="tune-diff-dialog" onClick={e => e.stopPropagation()}>
-        <div className="tune-diff-header">
-          <h2>Compare Tune Files</h2>
-          <button className="dialog-close" onClick={onClose}>×</button>
-        </div>
-
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title={titleNode}
+      size="xl"
+      closeOnBackdrop={!loading && !merging}
+    >
+      <Dialog.Body className="tune-diff-content">
         <div className="tune-diff-files">
           <div className="tune-diff-file-row">
             <label>Base Tune (A):</label>
@@ -224,7 +222,13 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
               onChange={e => setPathA(e.target.value)}
               placeholder="Path to base tune..."
             />
-            <button onClick={() => handleBrowse(setPathA)}>Browse...</button>
+            <Button
+              variant="secondary"
+              onClick={() => handleBrowse(setPathA)}
+              leadingIcon={<FolderOpen size={14} />}
+            >
+              Browse...
+            </Button>
           </div>
           <div className="tune-diff-file-row">
             <label>Compare Tune (B):</label>
@@ -234,22 +238,27 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
               onChange={e => setPathB(e.target.value)}
               placeholder="Path to comparison tune..."
             />
-            <button onClick={() => handleBrowse(setPathB)}>Browse...</button>
+            <Button
+              variant="secondary"
+              onClick={() => handleBrowse(setPathB)}
+              leadingIcon={<FolderOpen size={14} />}
+            >
+              Browse...
+            </Button>
           </div>
-          <button
-            className="tune-diff-compare-btn"
+          <Button
+            variant="primary"
             onClick={handleCompare}
             disabled={!pathA || !pathB || loading}
           >
             {loading ? 'Comparing...' : 'Compare'}
-          </button>
+          </Button>
         </div>
 
         {error && <div className="tune-diff-error">{error}</div>}
 
         {diff && (
           <div className="tune-diff-results">
-            {/* Summary */}
             <div className="tune-diff-summary">
               <div className="tune-diff-stat">
                 <span className="stat-label">Signature Match</span>
@@ -275,7 +284,6 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
               <div className="tune-diff-identical">Tunes are identical!</div>
             ) : (
               <>
-                {/* Toolbar */}
                 <div className="tune-diff-toolbar">
                   <div className="tune-diff-filters">
                     {(['all', 'scalar', 'added', 'removed'] as FilterMode[]).map(f => (
@@ -297,7 +305,6 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
                   />
                 </div>
 
-                {/* Diff table */}
                 <div className="tune-diff-table-container">
                   <table className="tune-diff-table">
                     <thead>
@@ -351,30 +358,35 @@ export default function TuneFileDiffDialog({ isOpen, onClose, currentTunePath }:
                     </div>
                   )}
                 </div>
-
-                {/* Merge controls */}
-                <div className="tune-diff-merge">
-                  <span className="merge-info">
-                    {selected.size} constant{selected.size !== 1 ? 's' : ''} selected
-                  </span>
-                  <button
-                    className="merge-btn"
-                    disabled={selected.size === 0 || merging}
-                    onClick={handleMerge}
-                  >
-                    {merging ? 'Merging...' : `Merge ${selected.size} from B → Current`}
-                  </button>
-                  {mergeResult && (
-                    <span className={`merge-result ${mergeResult.includes('failed') ? 'error' : 'success'}`}>
-                      {mergeResult}
-                    </span>
-                  )}
-                </div>
               </>
             )}
           </div>
         )}
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer className="tune-diff-footer">
+        {diff && diff.differences.length > 0 && (
+          <>
+            <span className="merge-info">
+              {selected.size} constant{selected.size !== 1 ? 's' : ''} selected
+            </span>
+            <Button
+              variant="primary"
+              onClick={handleMerge}
+              disabled={selected.size === 0 || merging}
+              leadingIcon={<GitMerge size={14} />}
+            >
+              {merging ? 'Merging...' : `Merge ${selected.size} from B → Current`}
+            </Button>
+            {mergeResult && (
+              <span className={`merge-result ${mergeResult.includes('failed') ? 'error' : 'success'}`}>
+                {mergeResult}
+              </span>
+            )}
+          </>
+        )}
+        <Button variant="secondary" onClick={onClose}>Close</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

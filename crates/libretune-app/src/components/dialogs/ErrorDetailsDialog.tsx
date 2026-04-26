@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { Dialog, Button } from '../common';
 import './ErrorDetailsDialog.css';
 
 interface ErrorDetailsDialogProps {
@@ -39,45 +40,50 @@ UserAgent: ${navigator.userAgent}
     }
   }, [title, message, details]);
 
-  if (!isOpen) return null;
+  const titleNode = (
+    <>
+      <span className="error-icon" aria-hidden="true">⚠</span>
+      {title}
+    </>
+  );
 
   return (
-    <div className="error-dialog-overlay" onClick={onClose}>
-      <div className="error-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="error-dialog-header">
-          <span className="error-icon">⚠</span>
-          <h2>{title}</h2>
-          <button className="error-close-btn" onClick={onClose}>×</button>
-        </div>
-        
-        <div className="error-dialog-content">
-          <p className="error-message">{message}</p>
-          
-          {details && (
-            <div className="error-details">
-              <div className="error-details-header">
-                <span>Error Details</span>
-                <button 
-                  className="copy-btn" 
-                  onClick={handleCopy}
-                  title="Copy error details for bug report"
-                >
-                  {copied ? '✓ Copied!' : '📋 Copy for Bug Report'}
-                </button>
-              </div>
-              <pre className="error-details-content">{details}</pre>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title={titleNode}
+      size="md"
+      className="error-dialog"
+    >
+      <Dialog.Body className="error-dialog-body">
+        <p className="error-message">{message}</p>
+
+        {details && (
+          <div className="error-details">
+            <div className="error-details-header">
+              <span>Error Details</span>
+              <button
+                type="button"
+                className="error-copy-btn"
+                onClick={handleCopy}
+                title="Copy error details for bug report"
+              >
+                {copied ? '✓ Copied!' : '📋 Copy for Bug Report'}
+              </button>
             </div>
-          )}
-        </div>
-        
-        <div className="error-dialog-footer">
-          <p className="error-help-text">
-            If this error persists, please file a bug report with the error details above.
-          </p>
-          <button className="error-ok-btn" onClick={onClose}>OK</button>
-        </div>
-      </div>
-    </div>
+            <pre className="error-details-content">{details}</pre>
+          </div>
+        )}
+
+        <p className="error-help-text">
+          If this error persists, please file a bug report with the error details above.
+        </p>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="primary" onClick={onClose}>OK</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }
 

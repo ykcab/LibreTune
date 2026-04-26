@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Dialog, Button } from "../common";
 import "./NewProjectDialog.css";
 
 interface IniEntry {
@@ -122,14 +123,22 @@ export default function NewProjectDialog({
   if (!isOpen) return null;
 
   const canCreate = projectName.trim() && selectedIni;
+  const title = step === "select-ini" ? "New Project" : "Project Created";
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="new-project-dialog" onClick={(e) => e.stopPropagation()}>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title={title}
+      size="md"
+      className="new-project-dialog"
+      closeOnBackdrop={!creating && !browsing}
+      closeOnEscape={!creating && !browsing}
+    >
+      <Dialog.Body className="new-project-content">
 
         {step === "select-ini" && (
           <>
-            <h2 className="dialog-title">New Project</h2>
             <p className="dialog-subtitle">
               Select an ECU definition (INI) and name your project.
             </p>
@@ -180,23 +189,11 @@ export default function NewProjectDialog({
             </div>
 
             {error && <div className="error-msg">{error}</div>}
-
-            <div className="dialog-actions">
-              <button className="cancel-btn" onClick={onClose}>Cancel</button>
-              <button
-                className={`create-btn ${canCreate && !creating ? "" : "disabled"}`}
-                onClick={handleCreate}
-                disabled={!canCreate || creating}
-              >
-                {creating ? "Creating..." : "Create Project"}
-              </button>
-            </div>
           </>
         )}
 
         {step === "choose-tune" && (
           <>
-            <h2 className="dialog-title">Project Created</h2>
             <p className="dialog-subtitle">
               How would you like to start your tune?
             </p>
@@ -218,15 +215,24 @@ export default function NewProjectDialog({
                 </span>
               </button>
             </div>
-
-            <div className="dialog-actions">
-              <button className="skip-btn" onClick={handleSkip}>
-                Skip — start with default values
-              </button>
-            </div>
           </>
         )}
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        {step === "select-ini" ? (
+          <>
+            <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button variant="primary" onClick={handleCreate} disabled={!canCreate || creating}>
+              {creating ? "Creating..." : "Create Project"}
+            </Button>
+          </>
+        ) : (
+          <Button variant="secondary" onClick={handleSkip}>
+            Skip — start with default values
+          </Button>
+        )}
+      </Dialog.Footer>
+    </Dialog>
   );
 }

@@ -6,8 +6,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-primary, #1a1a2e);
-  color: var(--text-primary, #e0e0e0);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   padding: 16px;
   gap: 16px;
 }
@@ -42,17 +42,17 @@
 }
 
 .capture-btn {
-  background: linear-gradient(135deg, #10b981, #059669);
+  background: linear-gradient(135deg, var(--success), var(--success-bg));
   color: white;
 }
 
 .capture-btn:hover {
-  background: linear-gradient(135deg, #059669, #047857);
+  background: linear-gradient(135deg, var(--success-bg), var(--success-bg));
   transform: translateY(-1px);
 }
 
 .capture-btn.capturing {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
+  background: linear-gradient(135deg, var(--error), var(--error-bg));
   animation: pulse 1s infinite;
 }
 
@@ -62,23 +62,23 @@
 }
 
 .export-btn {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   color: white;
 }
 
 .export-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent-hover));
 }
 
 .export-btn:disabled {
-  background: #444;
-  color: #888;
+  background: var(--bg-hover);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
 .close-btn {
   background: rgba(255, 255, 255, 0.1);
-  color: #888;
+  color: var(--text-muted);
   width: 32px;
   height: 32px;
   padding: 0;
@@ -89,13 +89,13 @@
 
 .close-btn:hover {
   background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .tooth-logger-error {
   background: rgba(239, 68, 68, 0.2);
   border: 1px solid rgba(239, 68, 68, 0.5);
-  color: #fca5a5;
+  color: var(--error);
   padding: 12px;
   border-radius: 8px;
 }
@@ -117,7 +117,7 @@
 
 .stat-label {
   font-size: 11px;
-  color: #888;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -129,11 +129,11 @@
 }
 
 .stat-value.warning {
-  color: #fbbf24;
+  color: var(--warning);
 }
 
 .stat.missing-tooth .stat-value {
-  color: #ef4444;
+  color: var(--error);
 }
 
 .tooth-logger-canvas-container {
@@ -158,7 +158,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #666;
+  color: var(--text-muted);
   text-align: center;
   gap: 8px;
 }

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Dialog, Button } from '../common';
 import './CellEditDialog.css';
 
 export interface CellEditDialogProps {
@@ -34,33 +36,26 @@ export default function CellEditDialog({
   maxValue,
   decimals = 2,
 }: CellEditDialogProps) {
+  const { t } = useTranslation(['dialog', 'common']);
   const [inputValue, setInputValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Reset when dialog opens
   useEffect(() => {
     if (isOpen) {
       setInputValue(currentValue.toFixed(decimals));
       setError(null);
-      // Focus input after dialog opens
       setTimeout(() => inputRef.current?.select(), 50);
     }
   }, [isOpen, currentValue, decimals]);
 
-  if (!isOpen) return null;
-
   const validate = (value: string): string | null => {
     const num = parseFloat(value);
-    if (isNaN(num)) {
-      return 'Please enter a valid number';
-    }
-    if (minValue !== undefined && num < minValue) {
-      return `Value must be at least ${minValue}`;
-    }
-    if (maxValue !== undefined && num > maxValue) {
-      return `Value must be at most ${maxValue}`;
-    }
+    if (isNaN(num)) return t('cellEdit.validNumber', { ns: 'dialog' });
+    if (minValue !== undefined && num < minValue)
+      return t('cellEdit.valueAtLeast', { ns: 'dialog', min: minValue });
+    if (maxValue !== undefined && num > maxValue)
+      return t('cellEdit.valueAtMost', { ns: 'dialog', max: maxValue });
     return null;
   };
 
@@ -75,17 +70,12 @@ export default function CellEditDialog({
       setError(validationError);
       return;
     }
-    const numValue = parseFloat(inputValue);
-    onApply(numValue);
+    onApply(parseFloat(inputValue));
     onClose();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleApply();
-    } else if (e.key === 'Escape') {
-      onClose();
-    }
+    if (e.key === 'Enter') handleApply();
   };
 
   const handleIncrement = (amount: number) => {
@@ -96,15 +86,18 @@ export default function CellEditDialog({
   };
 
   return (
-    <div className="cell-edit-overlay" onClick={onClose}>
-      <div className="cell-edit-dialog glass-card" onClick={e => e.stopPropagation()}>
-        <div className="cell-edit-header">
-          <h3>Edit Cell Value</h3>
-          <span className="cell-location">
-            [{cellCol}, {cellRow}]
-          </span>
-        </div>
-
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      size="sm"
+      title={t('cellEdit.title', { ns: 'dialog' })}
+      titleAdornment={
+        <span className="cell-location">
+          [{cellCol}, {cellRow}]
+        </span>
+      }
+    >
+      <Dialog.Body>
         <div className="cell-edit-info">
           <div className="info-row">
             <span className="info-label">{xAxisName}:</span>
@@ -118,17 +111,17 @@ export default function CellEditDialog({
 
         <div className="cell-edit-input-section">
           <div className="input-with-buttons">
-            <button 
-              className="adjust-btn" 
+            <button
+              className="adjust-btn"
               onClick={() => handleIncrement(-1)}
-              title="Decrease by 1"
+              title={t('cellEdit.decreaseBy1', { ns: 'dialog' })}
             >
               −1
             </button>
-            <button 
-              className="adjust-btn" 
+            <button
+              className="adjust-btn"
               onClick={() => handleIncrement(-0.1)}
-              title="Decrease by 0.1"
+              title={t('cellEdit.decreaseByPoint1', { ns: 'dialog' })}
             >
               −.1
             </button>
@@ -141,17 +134,17 @@ export default function CellEditDialog({
               step="any"
               className={`cell-value-input ${error ? 'error' : ''}`}
             />
-            <button 
-              className="adjust-btn" 
+            <button
+              className="adjust-btn"
               onClick={() => handleIncrement(0.1)}
-              title="Increase by 0.1"
+              title={t('cellEdit.increaseByPoint1', { ns: 'dialog' })}
             >
               +.1
             </button>
-            <button 
-              className="adjust-btn" 
+            <button
+              className="adjust-btn"
               onClick={() => handleIncrement(1)}
-              title="Increase by 1"
+              title={t('cellEdit.increaseBy1', { ns: 'dialog' })}
             >
               +1
             </button>
@@ -163,26 +156,26 @@ export default function CellEditDialog({
 
         <div className="cell-edit-range">
           {minValue !== undefined && (
-            <span>Min: {minValue}</span>
+            <span>
+              {t('labels.min', { ns: 'common' })}: {minValue}
+            </span>
           )}
           {maxValue !== undefined && (
-            <span>Max: {maxValue}</span>
+            <span>
+              {t('labels.max', { ns: 'common' })}: {maxValue}
+            </span>
           )}
         </div>
+      </Dialog.Body>
 
-        <div className="cell-edit-actions">
-          <button className="secondary-btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button 
-            className="primary-btn" 
-            onClick={handleApply}
-            disabled={!!error}
-          >
-            Apply
-          </button>
-        </div>
-      </div>
-    </div>
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose}>
+          {t('actions.cancel', { ns: 'common' })}
+        </Button>
+        <Button variant="primary" onClick={handleApply} disabled={!!error}>
+          {t('actions.apply', { ns: 'common' })}
+        </Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

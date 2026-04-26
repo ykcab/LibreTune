@@ -126,7 +126,7 @@
   color: var(--text-primary);
 }
 
-/* ========== TableEditor3DNew (react-three-fiber) styles ========== */
+/* ========== TableEditor3D (react-three-fiber) styles ========== */
 
 .table3d-header {
   display: flex;

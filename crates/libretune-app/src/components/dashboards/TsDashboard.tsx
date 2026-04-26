@@ -22,6 +22,7 @@ import TsIndicator from '../gauges/TsIndicator';
 import GaugeContextMenu, { ContextMenuState } from './GaugeContextMenu';
 import ImportDashboardDialog from '../dialogs/ImportDashboardDialog';
 import DashboardDesigner from './DashboardDesigner';
+import { Dialog, Button } from '../common';
 import './TsDashboard.css';
 
 /**
@@ -1120,81 +1121,73 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
       />
 
       {/* New Dashboard Dialog */}
-      {showNewDialog && (
-        <div className="ts-dashboard-dialog-overlay" onClick={() => setShowNewDialog(false)}>
-          <div className="ts-dashboard-dialog" onClick={e => e.stopPropagation()}>
-            <h3>New Dashboard</h3>
-            <div className="ts-dashboard-dialog-content">
-              <label>Dashboard Name:</label>
-              <input
-                type="text"
-                value={newDashName}
-                onChange={(e) => setNewDashName(e.target.value)}
-                placeholder="My Dashboard"
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && handleNewDashboard()}
-              />
-            </div>
-            <div className="ts-dashboard-dialog-buttons">
-              <button onClick={() => setShowNewDialog(false)}>Cancel</button>
-              <button 
-                className="primary" 
-                onClick={handleNewDashboard}
-                disabled={!newDashName.trim()}
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog
+        open={showNewDialog}
+        onClose={() => setShowNewDialog(false)}
+        title="New Dashboard"
+        size="sm"
+      >
+        <Dialog.Body>
+          <label>Dashboard Name:</label>
+          <input
+            type="text"
+            value={newDashName}
+            onChange={(e) => setNewDashName(e.target.value)}
+            placeholder="My Dashboard"
+            autoFocus
+            onKeyDown={(e) => e.key === 'Enter' && handleNewDashboard()}
+          />
+        </Dialog.Body>
+        <Dialog.Footer>
+          <Button variant="secondary" onClick={() => setShowNewDialog(false)}>Cancel</Button>
+          <Button variant="primary" onClick={handleNewDashboard} disabled={!newDashName.trim()}>
+            Create
+          </Button>
+        </Dialog.Footer>
+      </Dialog>
 
       {/* Rename Dashboard Dialog */}
-      {showRenameDialog && (
-        <div className="ts-dashboard-dialog-overlay" onClick={() => setShowRenameDialog(false)}>
-          <div className="ts-dashboard-dialog" onClick={e => e.stopPropagation()}>
-            <h3>Rename Dashboard</h3>
-            <div className="ts-dashboard-dialog-content">
-              <label>New Name:</label>
-              <input
-                type="text"
-                value={renameName}
-                onChange={(e) => setRenameName(e.target.value)}
-                placeholder="Dashboard Name"
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && handleRenameDashboard()}
-              />
-            </div>
-            <div className="ts-dashboard-dialog-buttons">
-              <button onClick={() => setShowRenameDialog(false)}>Cancel</button>
-              <button 
-                className="primary" 
-                onClick={handleRenameDashboard}
-                disabled={!renameName.trim()}
-              >
-                Rename
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog
+        open={showRenameDialog}
+        onClose={() => setShowRenameDialog(false)}
+        title="Rename Dashboard"
+        size="sm"
+      >
+        <Dialog.Body>
+          <label>New Name:</label>
+          <input
+            type="text"
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            placeholder="Dashboard Name"
+            autoFocus
+            onKeyDown={(e) => e.key === 'Enter' && handleRenameDashboard()}
+          />
+        </Dialog.Body>
+        <Dialog.Footer>
+          <Button variant="secondary" onClick={() => setShowRenameDialog(false)}>Cancel</Button>
+          <Button variant="primary" onClick={handleRenameDashboard} disabled={!renameName.trim()}>
+            Rename
+          </Button>
+        </Dialog.Footer>
+      </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      {showDeleteConfirm && (
-        <div className="ts-dashboard-dialog-overlay" onClick={() => setShowDeleteConfirm(false)}>
-          <div className="ts-dashboard-dialog" onClick={e => e.stopPropagation()}>
-            <h3>Delete Dashboard?</h3>
-            <div className="ts-dashboard-dialog-content">
-              <p>Are you sure you want to delete "{selectedPath.split('/').pop()?.replace(/\.(ltdash\.xml|dash)$/i, '')}"?</p>
-              <p className="warning">This action cannot be undone.</p>
-            </div>
-            <div className="ts-dashboard-dialog-buttons">
-              <button onClick={() => setShowDeleteConfirm(false)}>Cancel</button>
-              <button className="danger" onClick={handleDeleteDashboard}>Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete Dashboard?"
+        size="sm"
+      >
+        <Dialog.Body>
+          <p>Are you sure you want to delete "{selectedPath.split('/').pop()?.replace(/\.(ltdash\.xml|dash)$/i, '')}"?</p>
+          <p className="warning">This action cannot be undone.</p>
+        </Dialog.Body>
+        <Dialog.Footer>
+          <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+          <Button variant="danger" onClick={handleDeleteDashboard}>Delete</Button>
+        </Dialog.Footer>
+      </Dialog>
 
       {/* Designer Mode - full screen editor */}
       {designerMode && dashFile ? (

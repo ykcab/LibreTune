@@ -1,0 +1,54 @@
+{
+  "file": {
+    "title": "&File",
+    "newProject": "New Project…",
+    "importProject": "Import TS Project…",
+    "closeProject": "Close Project",
+    "saveTune": "Save Tune",
+    "saveTuneAs": "Save Tune As…",
+    "loadTune": "Load Tune…",
+    "createRestorePoint": "Create Restore Point",
+    "restorePoints": "Restore Points…",
+    "tuneHistory": "Tune History…",
+    "burnToEcu": "Burn to ECU",
+    "exit": "Exit",
+    "settings": "Settings…"
+  },
+  "edit": {
+    "title": "&Edit",
+    "undo": "Undo",
+    "redo": "Redo",
+    "cut": "Cut",
+    "copy": "Copy",
+    "paste": "Paste",
+    "resetToDefaults": "Reset to Defaults"
+  },
+  "view": {
+    "title": "&View",
+    "dashboard": "Dashboard",
+    "toggleSidebar": "Toggle Sidebar",
+    "theme": "Theme"
+  },
+  "tools": {
+    "title": "&Tools",
+    "autotune": "AutoTune",
+    "dataLogging": "Data Logging",
+    "outputChannelStatus": "Output Channel Status",
+    "toothLogger": "Tooth Logger",
+    "compositeLogger": "Composite Logger",
+    "ecuConsole": "ECU Console",
+    "tableCompare": "Table Compare",
+    "tuneFileDiff": "Tune File Diff…",
+    "dynoData": "Dyno Data…",
+    "mathChannels": "Math Channels…",
+    "generateBaseMap": "Generate Base Map…",
+    "plugins": "Plugins…",
+    "ecuConnection": "ECU Connection…"
+  },
+  "help": {
+    "title": "&Help",
+    "userManual": "&User Manual",
+    "keyboardShortcuts": "&Keyboard Shortcuts",
+    "about": "&About LibreTune"
+  }
+}

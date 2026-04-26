@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect, KeyboardEvent, useMemo } from
 import { useChannels } from '../../stores/realtimeStore';
 import { useHeatmapSettings } from '../../utils/useHeatmapSettings';
 import './TableEditor.css';
-import TableEditor3DNew from '../tables/TableEditor3DNew';
+import TableEditor3D from '../tables/TableEditor3D';
 
 export interface TableData {
   name: string;
@@ -847,7 +847,7 @@ export function TableEditor({
 
       {/* 3D View */}
       {show3D && (
-        <TableEditor3DNew
+        <TableEditor3D
           title={data.name}
           x_bins={data.xAxis}
           y_bins={data.yAxis}

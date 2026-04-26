@@ -1,109 +1,30 @@
-/* Restore Points Dialog Styles */
+/* RestorePointsDialog — only the bits the shared Dialog/Button primitives don't cover. */
 
-.restore-points-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  backdrop-filter: blur(2px);
-}
-
-.restore-points-dialog {
-  background: var(--surface-dark, #1e1e1e);
-  border: 1px solid var(--border-color, #3c3c3c);
-  border-radius: 12px;
-  width: 90%;
-  max-width: 520px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  animation: restore-dialog-appear 0.2s ease-out;
-}
-
-@keyframes restore-dialog-appear {
-  from {
-    opacity: 0;
-    transform: scale(0.95) translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
-/* Header */
-.restore-points-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color, #3c3c3c);
-}
-
-.restore-points-header h2 {
-  margin: 0;
-  flex: 1;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary, #ffffff);
-}
-
-.restore-points-header .header-icon {
-  color: var(--accent, #4a9eff);
-}
-
-.restore-points-header .close-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-secondary, #888);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, color 0.15s;
-}
-
-.restore-points-header .close-btn:hover {
-  background: var(--hover-bg, #333);
-  color: var(--text-primary, #fff);
-}
-
-/* Content */
+/* Body wrapper */
 .restore-points-content {
-  padding: 16px 20px;
-  overflow-y: auto;
-  flex: 1;
   min-height: 200px;
 }
 
+/* Status messages */
 .restore-points-error {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px;
-  background: rgba(220, 53, 69, 0.15);
-  border: 1px solid rgba(220, 53, 69, 0.3);
-  border-radius: 6px;
-  color: #f88;
-  margin-bottom: 12px;
-  font-size: 13px;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--state-error-bg);
+  border: 1px solid var(--state-error-border);
+  border-radius: var(--radius-sm);
+  color: var(--state-error);
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-sm);
 }
 
 .restore-points-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px;
-  color: var(--text-secondary, #888);
+  padding: var(--space-4);
+  color: var(--text-secondary);
 }
 
 .restore-points-empty {
@@ -111,85 +32,81 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
+  padding: var(--space-4);
   text-align: center;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .restore-points-empty svg {
   opacity: 0.3;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-3);
 }
 
 .restore-points-empty p {
-  margin: 0 0 8px 0;
-  font-size: 16px;
-  color: var(--text-primary, #fff);
+  margin: 0 0 var(--space-2) 0;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
 }
 
 .restore-points-empty span {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 
-/* Confirmation dialogs */
+/* Inline confirmation card */
 .restore-points-confirm {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--state-warning-bg);
+  border: 1px solid var(--state-warning-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
 }
 
 .restore-points-confirm .warning-icon {
-  color: #f59e0b;
-}
-
-.restore-points-confirm .confirm-message {
-  flex: 1;
+  color: var(--state-warning);
 }
 
 .restore-points-confirm .confirm-message strong {
   display: block;
-  color: var(--text-primary, #fff);
-  margin-bottom: 4px;
+  color: var(--text-primary);
+  margin-bottom: var(--space-1);
 }
 
 .restore-points-confirm .confirm-message p {
   margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary, #888);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
 }
 
 .restore-points-confirm .confirm-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   justify-content: flex-end;
 }
 
-/* List */
+/* Restore-point list */
 .restore-points-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .restore-point-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
-  background: var(--surface-darker, #161616);
-  border: 1px solid var(--border-color, #3c3c3c);
-  border-radius: 8px;
-  transition: border-color 0.15s, background 0.15s;
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease;
 }
 
 .restore-point-item:hover {
-  border-color: var(--accent, #4a9eff);
-  background: rgba(74, 158, 255, 0.05);
+  border-color: var(--accent-primary);
+  background: var(--bg-hover);
 }
 
 .restore-point-item.loading {
@@ -203,169 +120,126 @@
 }
 
 .restore-point-name {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
-  color: var(--text-primary, #fff);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
 }
 
 .restore-point-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 12px;
-  color: var(--text-secondary, #888);
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
 }
 
 .restore-point-date {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .restore-point-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: 12px;
+  gap: var(--space-2);
+  margin-left: var(--space-3);
 }
 
-/* Buttons */
+/* Per-row buttons (inline, can't easily use shared <Button> in tight rows) */
 .btn-load {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  background: var(--accent, #4a9eff);
+  gap: var(--space-1);
+  padding: 4px 10px;
+  background: var(--accent-primary);
   border: none;
-  border-radius: 4px;
-  color: #fff;
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  color: var(--accent-text);
+  font-size: var(--font-size-xs);
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--motion-fast) ease;
 }
 
 .btn-load:hover:not(:disabled) {
-  background: #3a8eef;
+  background: var(--accent-hover);
 }
 
-.btn-load:disabled {
+.btn-load:disabled,
+.btn-delete:disabled,
+.btn-cancel:disabled,
+.btn-danger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 .btn-delete {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 8px;
+  padding: 4px 6px;
   background: transparent;
-  border: 1px solid var(--border-color, #3c3c3c);
-  border-radius: 4px;
-  color: var(--text-secondary, #888);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease;
 }
 
 .btn-delete:hover:not(:disabled) {
-  background: rgba(220, 53, 69, 0.15);
-  border-color: rgba(220, 53, 69, 0.5);
-  color: #dc3545;
-}
-
-.btn-delete:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  background: var(--state-error-bg);
+  border-color: var(--state-error);
+  color: var(--state-error);
 }
 
 .btn-cancel {
-  padding: 6px 12px;
+  padding: 4px 10px;
   background: transparent;
-  border: 1px solid var(--border-color, #3c3c3c);
-  border-radius: 4px;
-  color: var(--text-primary, #fff);
-  font-size: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--motion-fast) ease;
 }
 
 .btn-cancel:hover {
-  background: var(--hover-bg, #333);
+  background: var(--bg-hover);
 }
 
 .btn-danger {
-  padding: 6px 12px;
-  background: #dc3545;
+  padding: 4px 10px;
+  background: var(--state-error);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: filter var(--motion-fast) ease;
 }
 
 .btn-danger:hover {
-  background: #c82333;
+  filter: brightness(0.9);
 }
 
 /* Footer */
 .restore-points-footer {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
-  border-top: 1px solid var(--border-color, #3c3c3c);
-  background: var(--surface-darker, #161616);
-  border-radius: 0 0 12px 12px;
 }
 
 .restore-points-count {
-  font-size: 12px;
-  color: var(--text-secondary, #888);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
 }
 
 .footer-actions {
   display: flex;
-  gap: 8px;
-}
-
-.btn-create {
-  padding: 8px 14px;
-  background: var(--accent, #4a9eff);
-  border: none;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.btn-create:hover:not(:disabled) {
-  background: #3a8eef;
-}
-
-.btn-create:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-close {
-  padding: 8px 14px;
-  background: transparent;
-  border: 1px solid var(--border-color, #3c3c3c);
-  border-radius: 6px;
-  color: var(--text-primary, #fff);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.btn-close:hover {
-  background: var(--hover-bg, #333);
+  gap: var(--space-2);
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { Dialog, Button } from '../common';
 import './ImportDashboardDialog.css';
 
 interface DashConflictInfo {
@@ -266,14 +267,16 @@ export const ImportDashboardDialog: React.FC<ImportDashboardDialogProps> = ({
   const successCount = files.filter(f => f.status === 'success').length;
 
   return (
-    <div className="import-dashboard-overlay" onClick={handleClose}>
-      <div className="import-dashboard-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="import-dashboard-header">
-          <h2>Import Dashboards</h2>
-          <button className="close-btn" onClick={handleClose}>×</button>
-        </div>
-
-        <div className="import-dashboard-content">
+    <Dialog
+      open={isOpen}
+      onClose={handleClose}
+      title="Import Dashboards"
+      size="lg"
+      className="import-dashboard-dialog"
+      closeOnBackdrop={!isImporting}
+      closeOnEscape={!isImporting}
+    >
+      <Dialog.Body className="import-dashboard-content">
           {/* File selection area */}
           <div className="file-selection-area">
             <button className="select-files-btn" onClick={handleSelectFiles}>
@@ -374,37 +377,36 @@ export const ImportDashboardDialog: React.FC<ImportDashboardDialogProps> = ({
               <p className="hint">They will be copied to your dashboards folder and available for selection.</p>
             </div>
           )}
-        </div>
+      </Dialog.Body>
 
-        <div className="import-dashboard-footer">
-          <div className="status-summary">
-            {successCount > 0 && (
-              <span className="success-count">✅ {successCount} imported</span>
-            )}
-            {readyCount > 0 && (
-              <span className="ready-count">✓ {readyCount} ready</span>
-            )}
-            {conflictCount > 0 && (
-              <span className="conflict-count">⚠️ {conflictCount} conflicts</span>
-            )}
-          </div>
-          <div className="footer-buttons">
-            <button className="cancel-btn" onClick={handleClose}>
-              {successCount > 0 ? 'Done' : 'Cancel'}
-            </button>
-            {readyCount > 0 && (
-              <button
-                className="import-btn"
-                onClick={handleImport}
-                disabled={isImporting}
-              >
-                {isImporting ? 'Importing...' : `Import ${readyCount} File${readyCount !== 1 ? 's' : ''}`}
-              </button>
-            )}
-          </div>
+      <Dialog.Footer className="import-dashboard-footer">
+        <div className="status-summary">
+          {successCount > 0 && (
+            <span className="success-count">✅ {successCount} imported</span>
+          )}
+          {readyCount > 0 && (
+            <span className="ready-count">✓ {readyCount} ready</span>
+          )}
+          {conflictCount > 0 && (
+            <span className="conflict-count">⚠️ {conflictCount} conflicts</span>
+          )}
         </div>
-      </div>
-    </div>
+        <div className="footer-buttons">
+          <Button variant="secondary" onClick={handleClose}>
+            {successCount > 0 ? 'Done' : 'Cancel'}
+          </Button>
+          {readyCount > 0 && (
+            <Button
+              variant="primary"
+              onClick={handleImport}
+              disabled={isImporting}
+            >
+              {isImporting ? 'Importing...' : `Import ${readyCount} File${readyCount !== 1 ? 's' : ''}`}
+            </Button>
+          )}
+        </div>
+      </Dialog.Footer>
+    </Dialog>
   );
 };
 

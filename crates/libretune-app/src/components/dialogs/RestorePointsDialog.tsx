@@ -5,7 +5,8 @@
 
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Clock, Trash2, RotateCcw, X, AlertTriangle, FileArchive } from "lucide-react";
+import { Clock, Trash2, RotateCcw, AlertTriangle, FileArchive } from "lucide-react";
+import { Dialog, Button } from '../common';
 import "./RestorePointsDialog.css";
 
 export interface RestorePointInfo {
@@ -142,20 +143,24 @@ export default function RestorePointsDialog({
 
   if (!isOpen) return null;
 
-  return (
-    <div className="restore-points-overlay" onClick={onClose}>
-      <div className="restore-points-dialog" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="restore-points-header">
-          <FileArchive className="header-icon" size={20} />
-          <h2>Restore Points</h2>
-          <button className="close-btn" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
+  const titleNode = (
+    <>
+      <FileArchive size={18} />
+      Restore Points
+    </>
+  );
 
-        {/* Content */}
-        <div className="restore-points-content">
+  return (
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title={titleNode}
+      size="md"
+      className="restore-points-dialog"
+      closeOnBackdrop={actionInProgress === null}
+      closeOnEscape={actionInProgress === null}
+    >
+      <Dialog.Body className="restore-points-content">
           {error && (
             <div className="restore-points-error">
               <AlertTriangle size={16} />
@@ -249,27 +254,26 @@ export default function RestorePointsDialog({
               ))}
             </div>
           )}
-        </div>
+      </Dialog.Body>
 
-        {/* Footer */}
-        <div className="restore-points-footer">
-          <span className="restore-points-count">
-            {restorePoints.length} restore point{restorePoints.length !== 1 ? "s" : ""}
-          </span>
-          <div className="footer-actions">
-            <button
-              className="btn-create"
-              onClick={handleCreateRestorePoint}
-              disabled={actionInProgress !== null}
-            >
-              {actionInProgress === "creating" ? "Creating..." : "Create Restore Point"}
-            </button>
-            <button className="btn-close" onClick={onClose}>
-              Close
-            </button>
-          </div>
+      {/* Footer */}
+      <Dialog.Footer className="restore-points-footer">
+        <span className="restore-points-count">
+          {restorePoints.length} restore point{restorePoints.length !== 1 ? "s" : ""}
+        </span>
+        <div className="footer-actions">
+          <Button
+            variant="primary"
+            onClick={handleCreateRestorePoint}
+            disabled={actionInProgress !== null}
+          >
+            {actionInProgress === "creating" ? "Creating..." : "Create Restore Point"}
+          </Button>
+          <Button variant="secondary" onClick={onClose}>
+            Close
+          </Button>
         </div>
-      </div>
-    </div>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

@@ -1,0 +1,54 @@
+{
+  "file": {
+    "title": "&Arquivo",
+    "newProject": "Novo Projeto…",
+    "importProject": "Importar Projeto TS…",
+    "closeProject": "Fechar Projeto",
+    "saveTune": "Salvar Tune",
+    "saveTuneAs": "Salvar Tune Como…",
+    "loadTune": "Carregar Tune…",
+    "createRestorePoint": "Criar Ponto de Restauração",
+    "restorePoints": "Pontos de Restauração…",
+    "tuneHistory": "Histórico do Tune…",
+    "burnToEcu": "Gravar na ECU",
+    "exit": "Sair",
+    "settings": "Configurações…"
+  },
+  "edit": {
+    "title": "&Editar",
+    "undo": "Desfazer",
+    "redo": "Refazer",
+    "cut": "Recortar",
+    "copy": "Copiar",
+    "paste": "Colar",
+    "resetToDefaults": "Restaurar Padrões"
+  },
+  "view": {
+    "title": "&Visualizar",
+    "dashboard": "Painel",
+    "toggleSidebar": "Alternar Barra Lateral",
+    "theme": "Tema"
+  },
+  "tools": {
+    "title": "&Ferramentas",
+    "autotune": "AutoTune",
+    "dataLogging": "Registro de Dados",
+    "outputChannelStatus": "Status dos Canais de Saída",
+    "toothLogger": "Registro de Dentes",
+    "compositeLogger": "Registro Composto",
+    "ecuConsole": "Console da ECU",
+    "tableCompare": "Comparar Tabelas",
+    "tuneFileDiff": "Diferenças de Tune…",
+    "dynoData": "Dados de Dinamômetro…",
+    "mathChannels": "Canais Matemáticos…",
+    "generateBaseMap": "Gerar Mapa Base…",
+    "plugins": "Plugins…",
+    "ecuConnection": "Conexão com ECU…"
+  },
+  "help": {
+    "title": "Aj&uda",
+    "userManual": "&Manual do Usuário",
+    "keyboardShortcuts": "&Atalhos de Teclado",
+    "about": "&Sobre o LibreTune"
+  }
+}

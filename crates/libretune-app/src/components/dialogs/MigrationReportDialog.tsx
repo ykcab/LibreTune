@@ -8,7 +8,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
-  X,
   Info,
   Plus,
   Minus,
@@ -18,6 +17,7 @@ import {
   ChevronRight,
   Check,
 } from "lucide-react";
+import { Dialog, Button } from "../common";
 import "./MigrationReportDialog.css";
 
 // Match the Rust MigrationReport struct
@@ -159,28 +159,19 @@ export default function MigrationReportDialog({
   };
 
   return (
-    <div className="migration-overlay" onClick={handleDismiss}>
-      <div
-        className={`migration-dialog ${getSeverityClass()}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="migration-header">
-          <div className={`header-icon ${getSeverityClass()}`}>
-            {report?.severity === "high" ? (
-              <AlertTriangle size={24} />
-            ) : (
-              <Info size={24} />
-            )}
-          </div>
-          <h2>INI Version Migration</h2>
-          <button className="close-btn" onClick={handleDismiss} title="Dismiss">
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="migration-content">
+    <Dialog
+      open={isOpen}
+      onClose={handleDismiss}
+      title={(
+        <>
+          {report?.severity === "high" ? <AlertTriangle size={20} /> : <Info size={20} />}
+          INI Version Migration
+        </>
+      )}
+      size="lg"
+      className={`migration-dialog ${getSeverityClass()}`}
+    >
+      <Dialog.Body className="migration-content">
           {loading && (
             <div className="migration-loading">Loading migration report...</div>
           )}
@@ -345,27 +336,22 @@ export default function MigrationReportDialog({
               )}
             </>
           )}
-        </div>
+      </Dialog.Body>
 
-        {/* Footer */}
-        <div className="migration-footer">
-          {report?.requires_user_review && (
-            <div className="review-warning">
-              <AlertTriangle size={14} />
-              <span>Review type changes before burning to ECU</span>
-            </div>
-          )}
-          <div className="footer-buttons">
-            <button className="btn-secondary" onClick={handleDismiss}>
-              Dismiss
-            </button>
-            <button className="btn-primary" onClick={handleProceed}>
-              <Check size={16} />
-              Continue with Tune
-            </button>
+      <Dialog.Footer className="migration-footer">
+        {report?.requires_user_review && (
+          <div className="review-warning">
+            <AlertTriangle size={14} />
+            <span>Review type changes before burning to ECU</span>
           </div>
+        )}
+        <div className="footer-buttons">
+          <Button variant="secondary" onClick={handleDismiss}>Dismiss</Button>
+          <Button variant="primary" onClick={handleProceed} leadingIcon={<Check size={14} />}>
+            Continue with Tune
+          </Button>
         </div>
-      </div>
-    </div>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

@@ -6,7 +6,7 @@
   position: fixed;
   z-index: 10000;
   background: #2a2a2e;
-  border: 1px solid #444;
+  border: 1px solid var(--bg-hover);
   border-radius: 4px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   min-width: 200px;
@@ -52,7 +52,7 @@
 
 .menu-separator {
   height: 1px;
-  background: #444;
+  background: var(--bg-hover);
   margin: 4px 0;
 }
 
@@ -61,7 +61,7 @@
   left: 100%;
   top: 0;
   background: #2a2a2e;
-  border: 1px solid #444;
+  border: 1px solid var(--bg-hover);
   border-radius: 4px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   min-width: 180px;

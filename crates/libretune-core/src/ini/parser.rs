@@ -89,20 +89,17 @@ pub fn parse_ini_from_path(path: &Path) -> Result<EcuDefinition, IniError> {
     parse_ini_internal(&content, &mut ctx)
 }
 
-/// Read an INI file with encoding fallback (UTF-8 first, then lossy)
+/// Read an INI file with encoding fallback (UTF-8 first, then Windows-1252).
+///
+/// Many translated ECU INI files use Windows-1252 rather than UTF-8;
+/// see [`crate::ini::encoding`] for details.
 fn read_ini_file(path: &Path) -> Result<String, IniError> {
-    match std::fs::read_to_string(path) {
-        Ok(content) => Ok(content),
-        Err(e) => {
-            if e.kind() == std::io::ErrorKind::InvalidData {
-                let bytes = std::fs::read(path).map_err(|e| IniError::IoError(e.to_string()))?;
-                Ok(String::from_utf8_lossy(&bytes).into_owned())
-            } else if e.kind() == std::io::ErrorKind::NotFound {
-                Err(IniError::IncludeNotFound(path.display().to_string()))
-            } else {
-                Err(IniError::IoError(e.to_string()))
-            }
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(crate::ini::encoding::decode_ini_bytes(&bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(IniError::IncludeNotFound(path.display().to_string()))
         }
+        Err(e) => Err(IniError::IoError(e.to_string())),
     }
 }
 

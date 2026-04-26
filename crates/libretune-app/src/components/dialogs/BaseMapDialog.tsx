@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Dialog, Button } from "../common";
 import "./BaseMapDialog.css";
 
 interface BaseMapDialogProps {
@@ -101,21 +102,25 @@ export default function BaseMapDialog({
     }
   }
 
-  if (!isOpen) return null;
-
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="basemap-dialog" onClick={(e) => e.stopPropagation()}>
-        <h2 className="dialog-title">Generate Base Map</h2>
-        <p className="dialog-subtitle">
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="Generate Base Map"
+      size="lg"
+      className="basemap-dialog"
+      closeOnBackdrop={!generating}
+      closeOnEscape={!generating}
+    >
+      <Dialog.Body className="basemap-body">
+        <p className="basemap-subtitle">
           Create a safe, driveable starting tune from your engine specifications.
         </p>
 
         {!result ? (
-          /* Engine spec form */
           <div className="basemap-form">
-            <div className="form-grid">
-              <div className="form-field">
+            <div className="basemap-grid">
+              <div className="basemap-field">
                 <label>Cylinders</label>
                 <select value={cylinders} onChange={(e) => setCylinders(parseInt(e.target.value))}>
                   {[1, 2, 3, 4, 5, 6, 8, 10, 12].map((n) => (
@@ -124,7 +129,7 @@ export default function BaseMapDialog({
                 </select>
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Displacement (cc)</label>
                 <input
                   type="number"
@@ -135,7 +140,7 @@ export default function BaseMapDialog({
                 />
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Injector Size (cc/min)</label>
                 <input
                   type="number"
@@ -146,7 +151,7 @@ export default function BaseMapDialog({
                 />
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Fuel Type</label>
                 <select value={fuelType} onChange={(e) => setFuelType(e.target.value)}>
                   <option value="Gasoline">Gasoline</option>
@@ -157,7 +162,7 @@ export default function BaseMapDialog({
                 </select>
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Aspiration</label>
                 <select value={aspiration} onChange={(e) => setAspiration(e.target.value)}>
                   <option value="NA">Naturally Aspirated</option>
@@ -166,7 +171,7 @@ export default function BaseMapDialog({
                 </select>
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Stroke Type</label>
                 <select value={strokeType} onChange={(e) => setStrokeType(e.target.value)}>
                   <option value="four_stroke">4-Stroke</option>
@@ -174,7 +179,7 @@ export default function BaseMapDialog({
                 </select>
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Injection Mode</label>
                 <select value={injectionMode} onChange={(e) => setInjectionMode(e.target.value)}>
                   <option value="Sequential">Sequential</option>
@@ -184,7 +189,7 @@ export default function BaseMapDialog({
                 </select>
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Ignition Mode</label>
                 <select value={ignitionMode} onChange={(e) => setIgnitionMode(e.target.value)}>
                   <option value="wasted_spark">Wasted Spark</option>
@@ -193,7 +198,7 @@ export default function BaseMapDialog({
                 </select>
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Idle RPM</label>
                 <input
                   type="number"
@@ -204,7 +209,7 @@ export default function BaseMapDialog({
                 />
               </div>
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Redline RPM</label>
                 <input
                   type="number"
@@ -216,7 +221,7 @@ export default function BaseMapDialog({
               </div>
 
               {isBoosted && (
-                <div className="form-field">
+                <div className="basemap-field">
                   <label>Boost Target (kPa absolute)</label>
                   <input
                     type="number"
@@ -225,13 +230,13 @@ export default function BaseMapDialog({
                     min={120}
                     max={400}
                   />
-                  <span className="field-hint">
+                  <span className="basemap-hint">
                     {((boostTarget - 101.325) / 100).toFixed(1)} bar / {((boostTarget - 101.325) * 0.145).toFixed(1)} psi gauge
                   </span>
                 </div>
               )}
 
-              <div className="form-field">
+              <div className="basemap-field">
                 <label>Target WOT AFR (optional)</label>
                 <input
                   type="number"
@@ -243,21 +248,9 @@ export default function BaseMapDialog({
               </div>
             </div>
 
-            {error && <div className="error-msg">{error}</div>}
-
-            <div className="dialog-actions">
-              <button className="cancel-btn" onClick={onClose}>Cancel</button>
-              <button
-                className="generate-btn"
-                onClick={handleGenerate}
-                disabled={generating || displacement < 50 || injectorSize < 50}
-              >
-                {generating ? "Generating..." : "Generate Base Map"}
-              </button>
-            </div>
+            {error && <div className="basemap-error">{error}</div>}
           </div>
         ) : (
-          /* Preview */
           <div className="basemap-preview">
             <div className="preview-summary">
               <span>reqFuel: <b>{result.req_fuel.toFixed(1)} ms</b></span>
@@ -309,22 +302,33 @@ export default function BaseMapDialog({
                 </div>
               )}
             </div>
-
-            <div className="dialog-actions">
-              <button className="cancel-btn" onClick={() => setResult(null)}>
-                ← Edit Specs
-              </button>
-              <button className="cancel-btn" onClick={onClose}>
-                Cancel
-              </button>
-              <button className="generate-btn" onClick={handleApply}>
-                {hasProject ? "Apply to Current Tune" : "Use as Starting Tune"}
-              </button>
-            </div>
           </div>
         )}
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        {!result ? (
+          <>
+            <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button
+              variant="primary"
+              onClick={handleGenerate}
+              disabled={generating || displacement < 50 || injectorSize < 50}
+            >
+              {generating ? "Generating..." : "Generate Base Map"}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={() => setResult(null)}>← Edit Specs</Button>
+            <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button variant="primary" onClick={handleApply}>
+              {hasProject ? "Apply to Current Tune" : "Use as Starting Tune"}
+            </Button>
+          </>
+        )}
+      </Dialog.Footer>
+    </Dialog>
   );
 }
 
@@ -340,7 +344,6 @@ function TablePreview({
   loads: number[];
   unit: string;
 }) {
-  // Show every other row/col if table is large
   const step = table.length > 12 ? 2 : 1;
   const rowIndices = Array.from({ length: Math.ceil(table.length / step) }, (_, i) => i * step);
   const colIndices = Array.from({ length: Math.ceil(rpms.length / step) }, (_, i) => i * step);

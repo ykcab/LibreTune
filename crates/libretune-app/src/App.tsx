@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -6,6 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ThemeProvider, useTheme, ThemeName, THEME_INFO } from "./themes";
 import { initializeHotkeyManager } from "./services/hotkeyService";
 import { useRealtimeStore } from "./stores/realtimeStore";
+import { LANGUAGE_STORAGE_KEY } from "./i18n/languages";
 import {
   TunerLayout,
   MenuItem as TunerMenuItem,
@@ -271,6 +273,7 @@ interface TabContent {
 
 function AppContent() {
   const { theme, setTheme } = useTheme();
+  const { t } = useTranslation('menu');
   const { showLoading, hideLoading } = useLoading();
   const { showToast } = useToast();
   const { isOpen: errorDialogOpen, errorInfo, showError, hideError } = useErrorDialog();
@@ -553,6 +556,23 @@ function AppContent() {
         if (settings.units_system) setUnitsSystem(settings.units_system as 'metric' | 'imperial');
         if (settings.auto_burn_on_close !== undefined) setAutoBurnOnClose(settings.auto_burn_on_close);
         if (settings.status_bar_channels) setStatusBarChannels(settings.status_bar_channels);
+        // Honor saved UI language preference (mirror to localStorage so the
+        // i18n LanguageDetector picks it up on next app start, and switch live now).
+        if (settings.language && typeof settings.language === 'string') {
+          try {
+            const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+            if (stored !== settings.language) {
+              localStorage.setItem(LANGUAGE_STORAGE_KEY, settings.language);
+            }
+          } catch { /* ignore */ }
+          // Lazy-load the i18n instance to avoid pulling i18next into the
+          // initial app bundle path.
+          void import('./i18n').then(({ default: i18n }) => {
+            if (i18n.language !== settings.language) {
+              void i18n.changeLanguage(settings.language);
+            }
+          });
+        }
       } catch (e) {
         console.warn("Failed to load settings:", e);
       }
@@ -2134,14 +2154,14 @@ function AppContent() {
 
     const fileMenu: TunerMenuItem = {
       id: "file",
-      label: "&File",
+      label: t('file.title'),
       items: fileMenuItems,
     };
 
     // View menu is always available
     const viewMenu: TunerMenuItem = {
       id: "view",
-      label: "&View",
+      label: t('view.title'),
       items: [
         { id: "dashboard", label: "&Dashboard", onClick: () => {
           // If dashboard tab doesn't exist, re-add it
@@ -2169,7 +2189,7 @@ function AppContent() {
     // Edit menu with table editing actions (stubs for global undo/redo)
     const editMenu: TunerMenuItem = {
       id: "edit",
-      label: "&Edit",
+      label: t('edit.title'),
       items: [
         { id: "undo", label: "&Undo\tCtrl+Z", onClick: () => showToast("Undo - use table-specific controls", "info"), disabled: !currentProject },
         { id: "redo", label: "&Redo\tCtrl+Y", onClick: () => showToast("Redo - use table-specific controls", "info"), disabled: !currentProject },
@@ -2275,29 +2295,28 @@ function AppContent() {
     toolItems.push({ id: "base-map", label: "Generate &Base Map...", onClick: () => setBaseMapDialogOpen(true), disabled: !currentProject });
     toolItems.push({ id: "sep4", label: "", separator: true });
     toolItems.push(
-      // { id: "plugins", label: "&Plugins...", onClick: () => setPluginPanelOpen(true) },
-      // Plugins disabled (Deprecated) - see DEPRECATION_NOTICE.md
+      { id: "plugins", label: "&Plugins...", onClick: () => setPluginPanelOpen(true) },
       { id: "connection", label: "&ECU Connection...", onClick: () => setConnectionDialogOpen(true) },
       { id: "settings", label: "&Settings...", onClick: () => setSettingsDialogOpen(true) }
     );
 
     const toolsMenu: TunerMenuItem = {
       id: "tools",
-      label: "&Tools",
+      label: t('tools.title'),
       items: toolItems,
     };
 
     const helpMenu: TunerMenuItem = {
       id: "help",
-      label: "&Help",
+      label: t('help.title'),
       items: [
-        { id: "docs", label: "&User Manual", onClick: () => setUserManualOpen(true) },
-        { id: "shortcuts", label: "&Keyboard Shortcuts", onClick: () => {
+        { id: "docs", label: t('help.userManual'), onClick: () => setUserManualOpen(true) },
+        { id: "shortcuts", label: t('help.keyboardShortcuts'), onClick: () => {
           setUserManualSection('reference/shortcuts');
           setUserManualOpen(true);
         }},
         { id: "sep1", label: "", separator: true },
-        { id: "about", label: "&About LibreTune", onClick: () => setAboutDialogOpen(true) },
+        { id: "about", label: t('help.about'), onClick: () => setAboutDialogOpen(true) },
       ],
     };
 
@@ -2307,7 +2326,7 @@ function AppContent() {
     } else {
       return [fileMenu, viewMenu, helpMenu];
     }
-  }, [backendMenus, theme, sidebarVisible, status.state, ecuType, iniCapabilities, openTarget, handleStdTarget, openHelpTopic, currentProject, showToast]);
+  }, [backendMenus, theme, sidebarVisible, status.state, ecuType, iniCapabilities, openTarget, handleStdTarget, openHelpTopic, currentProject, showToast, t]);
 
   // Toolbar items
   const toolbarItems: ToolbarItem[] = useMemo(() => {

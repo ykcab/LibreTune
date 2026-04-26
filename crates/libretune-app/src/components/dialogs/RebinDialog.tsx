@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Plus, Minus, RotateCcw } from 'lucide-react';
+import { Dialog, Button } from '../common';
 import './RebinDialog.css';
 
 export interface RebinDialogProps {
@@ -25,7 +26,6 @@ export default function RebinDialog({
   const [newYBins, setNewYBins] = useState<number[]>([]);
   const [interpolateZ, setInterpolateZ] = useState(true);
 
-  // Reset bins when dialog opens
   useEffect(() => {
     if (isOpen) {
       setNewXBins([...currentXBins]);
@@ -33,8 +33,6 @@ export default function RebinDialog({
       setInterpolateZ(true);
     }
   }, [isOpen, currentXBins, currentYBins]);
-
-  if (!isOpen) return null;
 
   const handleXBinChange = (index: number, value: string) => {
     const numValue = parseFloat(value);
@@ -56,26 +54,28 @@ export default function RebinDialog({
 
   const addXBin = () => {
     const lastValue = newXBins[newXBins.length - 1] || 0;
-    const step = newXBins.length > 1 ? newXBins[newXBins.length - 1] - newXBins[newXBins.length - 2] : 100;
+    const step =
+      newXBins.length > 1
+        ? newXBins[newXBins.length - 1] - newXBins[newXBins.length - 2]
+        : 100;
     setNewXBins([...newXBins, lastValue + step]);
   };
 
   const removeXBin = () => {
-    if (newXBins.length > 1) {
-      setNewXBins(newXBins.slice(0, -1));
-    }
+    if (newXBins.length > 1) setNewXBins(newXBins.slice(0, -1));
   };
 
   const addYBin = () => {
     const lastValue = newYBins[newYBins.length - 1] || 0;
-    const step = newYBins.length > 1 ? newYBins[newYBins.length - 1] - newYBins[newYBins.length - 2] : 10;
+    const step =
+      newYBins.length > 1
+        ? newYBins[newYBins.length - 1] - newYBins[newYBins.length - 2]
+        : 10;
     setNewYBins([...newYBins, lastValue + step]);
   };
 
   const removeYBin = () => {
-    if (newYBins.length > 1) {
-      setNewYBins(newYBins.slice(0, -1));
-    }
+    if (newYBins.length > 1) setNewYBins(newYBins.slice(0, -1));
   };
 
   const resetToOriginal = () => {
@@ -105,122 +105,171 @@ export default function RebinDialog({
   };
 
   const handleApply = () => {
-    // Sort bins before applying
     const sortedX = [...newXBins].sort((a, b) => a - b);
     const sortedY = [...newYBins].sort((a, b) => a - b);
     onApply(sortedX, sortedY, interpolateZ);
     onClose();
   };
 
+  const titleAdornment = (
+    <button
+      type="button"
+      className="rebin-reset-btn"
+      onClick={resetToOriginal}
+      title="Reset to original bins"
+      aria-label="Reset to original bins"
+    >
+      <RotateCcw size={16} />
+    </button>
+  );
+
   return (
-    <div className="rebin-dialog-overlay" onClick={onClose}>
-      <div className="rebin-dialog glass-card" onClick={e => e.stopPropagation()}>
-        <div className="rebin-dialog-header">
-          <h2>Re-bin Table</h2>
-          <button className="reset-btn" onClick={resetToOriginal} title="Reset to original bins">
-            <RotateCcw size={16} />
-          </button>
-        </div>
-
-        <div className="rebin-dialog-content">
-          {/* X Axis Section */}
-          <div className="rebin-section">
-            <div className="rebin-section-header">
-              <h3>{xAxisName} Bins ({newXBins.length})</h3>
-              <div className="rebin-section-actions">
-                <button className="icon-btn" onClick={handleGenerateX} title="Generate linear spacing">
-                  Linear
-                </button>
-                <button className="icon-btn" onClick={removeXBin} disabled={newXBins.length <= 1}>
-                  <Minus size={14} />
-                </button>
-                <button className="icon-btn" onClick={addXBin}>
-                  <Plus size={14} />
-                </button>
-              </div>
-            </div>
-            <div className="rebin-bins-grid">
-              {newXBins.map((val, i) => (
-                <input
-                  key={`x-${i}`}
-                  type="number"
-                  value={val}
-                  step="any"
-                  onChange={e => handleXBinChange(i, e.target.value)}
-                  className="bin-input"
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* Y Axis Section */}
-          <div className="rebin-section">
-            <div className="rebin-section-header">
-              <h3>{yAxisName} Bins ({newYBins.length})</h3>
-              <div className="rebin-section-actions">
-                <button className="icon-btn" onClick={handleGenerateY} title="Generate linear spacing">
-                  Linear
-                </button>
-                <button className="icon-btn" onClick={removeYBin} disabled={newYBins.length <= 1}>
-                  <Minus size={14} />
-                </button>
-                <button className="icon-btn" onClick={addYBin}>
-                  <Plus size={14} />
-                </button>
-              </div>
-            </div>
-            <div className="rebin-bins-grid">
-              {newYBins.map((val, i) => (
-                <input
-                  key={`y-${i}`}
-                  type="number"
-                  value={val}
-                  step="any"
-                  onChange={e => handleYBinChange(i, e.target.value)}
-                  className="bin-input"
-                />
-              ))}
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title="Re-bin Table"
+      titleAdornment={titleAdornment}
+      size="lg"
+      className="rebin-dialog"
+    >
+      <Dialog.Body className="rebin-dialog-content">
+        {/* X Axis Section */}
+        <section className="rebin-section">
+          <div className="rebin-section-header">
+            <h3>
+              {xAxisName} Bins ({newXBins.length})
+            </h3>
+            <div className="rebin-section-actions">
+              <button
+                type="button"
+                className="rebin-icon-btn"
+                onClick={handleGenerateX}
+                title="Generate linear spacing"
+              >
+                Linear
+              </button>
+              <button
+                type="button"
+                className="rebin-icon-btn"
+                onClick={removeXBin}
+                disabled={newXBins.length <= 1}
+                aria-label="Remove last X bin"
+              >
+                <Minus size={14} />
+              </button>
+              <button
+                type="button"
+                className="rebin-icon-btn"
+                onClick={addXBin}
+                aria-label="Add X bin"
+              >
+                <Plus size={14} />
+              </button>
             </div>
           </div>
-
-          {/* Options */}
-          <div className="rebin-options">
-            <label className="checkbox-label">
+          <div className="rebin-bins-grid">
+            {newXBins.map((val, i) => (
               <input
-                type="checkbox"
-                checked={interpolateZ}
-                onChange={e => setInterpolateZ(e.target.checked)}
+                key={`x-${i}`}
+                type="number"
+                value={val}
+                step="any"
+                onChange={(e) => handleXBinChange(i, e.target.value)}
+                className="rebin-bin-input"
               />
-              Interpolate Z values (recommended)
-            </label>
-            <p className="option-hint">
-              When enabled, existing values will be bilinearly interpolated to the new bin locations.
-              When disabled, new cells will be initialized to zero.
-            </p>
+            ))}
           </div>
+        </section>
 
-          {/* Preview Info */}
-          <div className="rebin-preview">
-            <div className="preview-item">
-              <span className="preview-label">Original Size:</span>
-              <span className="preview-value">{currentXBins.length} × {currentYBins.length}</span>
-            </div>
-            <div className="preview-item">
-              <span className="preview-label">New Size:</span>
-              <span className="preview-value">{newXBins.length} × {newYBins.length}</span>
+        {/* Y Axis Section */}
+        <section className="rebin-section">
+          <div className="rebin-section-header">
+            <h3>
+              {yAxisName} Bins ({newYBins.length})
+            </h3>
+            <div className="rebin-section-actions">
+              <button
+                type="button"
+                className="rebin-icon-btn"
+                onClick={handleGenerateY}
+                title="Generate linear spacing"
+              >
+                Linear
+              </button>
+              <button
+                type="button"
+                className="rebin-icon-btn"
+                onClick={removeYBin}
+                disabled={newYBins.length <= 1}
+                aria-label="Remove last Y bin"
+              >
+                <Minus size={14} />
+              </button>
+              <button
+                type="button"
+                className="rebin-icon-btn"
+                onClick={addYBin}
+                aria-label="Add Y bin"
+              >
+                <Plus size={14} />
+              </button>
             </div>
           </div>
+          <div className="rebin-bins-grid">
+            {newYBins.map((val, i) => (
+              <input
+                key={`y-${i}`}
+                type="number"
+                value={val}
+                step="any"
+                onChange={(e) => handleYBinChange(i, e.target.value)}
+                className="rebin-bin-input"
+              />
+            ))}
+          </div>
+        </section>
+
+        {/* Options */}
+        <div className="rebin-options">
+          <label className="rebin-checkbox-label">
+            <input
+              type="checkbox"
+              checked={interpolateZ}
+              onChange={(e) => setInterpolateZ(e.target.checked)}
+            />
+            Interpolate Z values (recommended)
+          </label>
+          <p className="rebin-option-hint">
+            When enabled, existing values will be bilinearly interpolated to the new bin
+            locations. When disabled, new cells will be initialized to zero.
+          </p>
         </div>
 
-        <div className="rebin-dialog-actions">
-          <button className="secondary-btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="primary-btn" onClick={handleApply}>
-            Apply Re-bin
-          </button>
+        {/* Preview Info */}
+        <div className="rebin-preview">
+          <div className="rebin-preview-item">
+            <span className="rebin-preview-label">Original Size:</span>
+            <span className="rebin-preview-value">
+              {currentXBins.length} × {currentYBins.length}
+            </span>
+          </div>
+          <div className="rebin-preview-item">
+            <span className="rebin-preview-label">New Size:</span>
+            <span className="rebin-preview-value">
+              {newXBins.length} × {newYBins.length}
+            </span>
+          </div>
         </div>
-      </div>
-    </div>
+      </Dialog.Body>
+
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button variant="primary" onClick={handleApply}>
+          Apply Re-bin
+        </Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

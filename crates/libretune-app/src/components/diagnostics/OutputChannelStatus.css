@@ -9,7 +9,7 @@
   margin: 0 auto;
   height: 100%;
   overflow-y: auto;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .och-status-loading,
@@ -19,12 +19,12 @@
   justify-content: center;
   gap: 0.75rem;
   padding: 3rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 0.95rem;
 }
 
 .och-status-error {
-  color: #ff6b6b;
+  color: var(--error);
 }
 
 .och-error-icon {
@@ -44,7 +44,7 @@
   margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .och-status-badge {
@@ -97,7 +97,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
 }
 
 .och-card-wide {
@@ -125,30 +125,30 @@
 
 .och-stat-label {
   font-size: 0.85rem;
-  color: var(--text-secondary, #bbb);
+  color: var(--text-secondary);
 }
 
 .och-stat-value {
   font-size: 0.9rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .och-stat-detail {
   font-size: 0.75rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-weight: 400;
 }
 
 .och-mode {
-  color: #00d9ff;
+  color: var(--accent);
 }
 
 .och-reason {
   font-weight: 400;
   font-style: italic;
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
   font-size: 0.82rem;
 }
 
@@ -170,18 +170,18 @@
   font-size: 1.4rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .och-live-unit {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 
 .och-highlight {
-  color: #00d9ff;
+  color: var(--accent);
 }
 
 .och-success {
@@ -193,7 +193,7 @@
 }
 
 .och-error {
-  color: #ff6b6b;
+  color: var(--error);
 }
 
 /* Responsive */

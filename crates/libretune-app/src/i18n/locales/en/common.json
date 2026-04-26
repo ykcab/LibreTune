@@ -1,0 +1,52 @@
+{
+  "actions": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "apply": "Apply",
+    "save": "Save",
+    "load": "Load",
+    "close": "Close",
+    "delete": "Delete",
+    "remove": "Remove",
+    "add": "Add",
+    "edit": "Edit",
+    "open": "Open",
+    "browse": "Browse…",
+    "reset": "Reset",
+    "refresh": "Refresh",
+    "yes": "Yes",
+    "no": "No",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "finish": "Finish",
+    "retry": "Retry"
+  },
+  "state": {
+    "loading": "Loading…",
+    "saving": "Saving…",
+    "ready": "Ready",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "connecting": "Connecting…",
+    "burning": "Burning…",
+    "syncing": "Syncing…",
+    "partialSync": "Partial sync ({{done}}/{{total}})",
+    "noSelection": "No selection",
+    "empty": "Nothing here yet",
+    "logging": "Logging",
+    "notLogging": "Not Logging"
+  },
+  "labels": {
+    "language": "Language",
+    "value": "Value",
+    "min": "Min",
+    "max": "Max",
+    "units": "Units",
+    "name": "Name",
+    "type": "Type",
+    "size": "Size",
+    "modified": "Modified",
+    "search": "Search"
+  }
+}

@@ -47,14 +47,14 @@
   background: rgba(255, 255, 255, 0.1);
   border: none;
   border-radius: 6px;
-  color: #ccc;
+  color: var(--text-primary);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .curve-editor-header .back-button:hover {
   background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .curve-editor-header .curve-title {
@@ -62,7 +62,7 @@
   margin: 0;
   font-size: 16px;
   font-weight: 500;
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .curve-toolbar {
@@ -79,7 +79,7 @@
   background: rgba(255, 255, 255, 0.1);
   border: none;
   border-radius: 6px;
-  color: #ccc;
+  color: var(--text-primary);
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -96,7 +96,7 @@
 
 .toolbar-btn:disabled:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: #ccc;
+  color: var(--text-primary);
 }
 
 .toolbar-separator {
@@ -112,7 +112,7 @@
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 500;
-  color: #ddd;
+  color: var(--text-primary);
   background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
@@ -198,14 +198,14 @@
   padding: 6px 8px;
   text-align: center;
   font-weight: 500;
-  color: #aaa;
+  color: var(--text-secondary);
   border-bottom: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .curve-data-table td {
   padding: 4px 8px;
   text-align: center;
-  color: #ddd;
+  color: var(--text-primary);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
@@ -223,11 +223,11 @@
 }
 
 .curve-data-table tr.selected td {
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .curve-data-table .x-cell {
-  color: #888;
+  color: var(--text-muted);
   background: rgba(0, 0, 0, 0.2);
 }
 
@@ -242,7 +242,7 @@
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid #4a9eff;
   border-radius: 3px;
-  color: #fff;
+  color: var(--text-primary);
   font-family: inherit;
   font-size: inherit;
   text-align: center;

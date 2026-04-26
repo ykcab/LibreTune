@@ -264,7 +264,7 @@
   position: absolute;
   top: -2px;
   left: -2px;
-  background: var(--primary, #4a9eff);
+  background: var(--primary);
   color: white;
   font-size: 8px;
   font-weight: 600;
@@ -403,7 +403,7 @@
 :root {
   --cell-locked: #555;
   --cell-neutral: #666;
-  --cell-default: #444;
+  --cell-default: var(--bg-hover);
 }
 
 [data-theme="light"] {

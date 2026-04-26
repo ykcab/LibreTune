@@ -324,7 +324,7 @@
 }
 
 .change-deleted td:first-child {
-  color: #f44336;
+  color: var(--error);
 }
 
 .change-modified td:first-child {

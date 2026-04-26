@@ -83,16 +83,16 @@
 
 /* Light theme specific */
 :root[data-theme="light"] .tooltip {
-  background: #ffffff;
+  background: var(--text-primary);
   color: #1a1a1a;
-  border-color: #ddd;
+  border-color: var(--text-primary);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15),
               inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 :root[data-theme="light"] .tooltip::before {
-  background: #ffffff;
-  border-color: #ddd;
+  background: var(--text-primary);
+  border-color: var(--text-primary);
 }
 
 /* Responsive */

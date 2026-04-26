@@ -7,7 +7,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X, GitCompare, ArrowRight, ArrowLeft } from "lucide-react";
+import { GitCompare, ArrowRight, ArrowLeft } from "lucide-react";
+import { Dialog, Button } from "../common";
 import "./TableComparisonDialog.css";
 
 interface TableInfo {
@@ -119,20 +120,24 @@ export default function TableComparisonDialog({ isOpen, onClose }: Props) {
 
   if (!isOpen) return null;
 
-  return (
-    <div className="table-comparison-overlay" onClick={onClose}>
-      <div className="table-comparison-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="table-comparison-header">
-          <h2>
-            <GitCompare size={20} />
-            Table Comparison
-          </h2>
-          <button className="close-btn" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
+  const titleNode = (
+    <>
+      <GitCompare size={18} />
+      Table Comparison
+    </>
+  );
 
-        <div className="table-comparison-content">
+  return (
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title={titleNode}
+      size="lg"
+      className="table-comparison-dialog"
+      closeOnBackdrop={!comparing}
+      closeOnEscape={!comparing}
+    >
+      <Dialog.Body className="table-comparison-content">
           {/* Table Selection */}
           <div className="table-selection">
             <div className="table-select-group">
@@ -173,13 +178,13 @@ export default function TableComparisonDialog({ isOpen, onClose }: Props) {
             <div className="comparison-error">{error}</div>
           )}
 
-          <button 
-            className="compare-btn" 
+          <Button
+            variant="primary"
             onClick={handleCompare}
             disabled={!tableA || !tableB || comparing}
           >
             {comparing ? "Comparing..." : "Compare Tables"}
-          </button>
+          </Button>
 
           {/* Results */}
           {result && (
@@ -265,12 +270,11 @@ export default function TableComparisonDialog({ isOpen, onClose }: Props) {
               )}
             </div>
           )}
-        </div>
+      </Dialog.Body>
 
-        <div className="table-comparison-footer">
-          <button className="cancel-btn" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose}>Close</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

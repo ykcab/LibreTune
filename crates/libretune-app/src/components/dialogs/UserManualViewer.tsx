@@ -15,9 +15,10 @@
  */
 
 import { MouseEvent, useEffect, useState } from 'react';
-import { X, ExternalLink, ChevronLeft, ChevronRight, Home, Book } from 'lucide-react';
+import { ExternalLink, ChevronLeft, ChevronRight, Home, Book } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { marked } from 'marked';
+import { Dialog } from '../common';
 import './UserManualViewer.css';
 
 /** Props for UserManualViewer component */
@@ -288,26 +289,21 @@ export default function UserManualViewer({ section = 'introduction', onClose }: 
     }
   };
 
-  return (
-    <div className="manual-viewer-overlay" onClick={onClose}>
-      <div className="manual-viewer-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="manual-viewer-header">
-          <div className="manual-header-left">
-            <Book size={20} />
-            <span>LibreTune User Manual</span>
-          </div>
-          <div className="manual-header-right">
-            <button className="manual-icon-btn" onClick={handleOpenOnline} title="Open Online">
-              <ExternalLink size={18} />
-            </button>
-            <button className="manual-icon-btn" onClick={onClose} title="Close">
-              <X size={20} />
-            </button>
-          </div>
-        </div>
+  const titleNode = (
+    <div className="manual-title-row">
+      <div className="manual-title-left">
+        <Book size={18} />
+        <span>LibreTune User Manual</span>
+      </div>
+      <button className="manual-icon-btn" onClick={handleOpenOnline} title="Open Online">
+        <ExternalLink size={16} />
+      </button>
+    </div>
+  );
 
-        <div className="manual-viewer-body">
+  return (
+    <Dialog open onClose={onClose} title={titleNode} size="full" className="manual-viewer-dialog">
+      <div className="manual-viewer-body">
           {/* Sidebar */}
           {sidebarOpen && (
             <div className="manual-sidebar">
@@ -375,7 +371,6 @@ export default function UserManualViewer({ section = 'introduction', onClose }: 
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }

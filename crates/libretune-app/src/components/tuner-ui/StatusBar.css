@@ -108,15 +108,15 @@
   justify-content: center;
   min-width: 70px;
   padding: 2px 8px;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border-default, #444);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
   border-radius: 2px;
 }
 
 .statusbar-cell-label {
   font-size: 9px;
   font-weight: 500;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   line-height: 1;
@@ -127,22 +127,22 @@
   font-family: var(--font-mono, monospace);
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent, #4fc3f7);
+  color: var(--accent);
   line-height: 1.1;
 }
 
 .statusbar-cell-unit {
   font-size: 9px;
   font-weight: 400;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   margin-left: 2px;
 }
 
 /* Color variants for cells */
-.statusbar-cell-success .statusbar-cell-value { color: var(--success, #4caf50); }
-.statusbar-cell-warning .statusbar-cell-value { color: var(--warning, #ff9800); }
-.statusbar-cell-error .statusbar-cell-value { color: var(--error, #f44336); }
-.statusbar-cell-info .statusbar-cell-value { color: var(--info, #2196f3); }
+.statusbar-cell-success .statusbar-cell-value { color: var(--success); }
+.statusbar-cell-warning .statusbar-cell-value { color: var(--warning); }
+.statusbar-cell-error .statusbar-cell-value { color: var(--error); }
+.statusbar-cell-info .statusbar-cell-value { color: var(--info); }
 
 /* Logging indicator */
 .logging-indicator {

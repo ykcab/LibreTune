@@ -57,6 +57,64 @@
 }
 
 /* =============================================
+   SEMANTIC TOKEN ALIASES
+   These map legacy / alternate naming used by various components
+   to the canonical theme tokens. Declared in :root so they work
+   across all themes (CSS variables resolve at use-site).
+   ============================================= */
+:root {
+  /* Background aliases */
+  --bg-darker: var(--bg-app);
+  --bg-deep: var(--bg-app);
+  --bg-tertiary: var(--bg-elevated);
+  --bg-surface-elevated: var(--bg-elevated);
+  --bg-surface-hover: var(--bg-hover);
+  --hover-bg: var(--bg-hover);
+  --canvas-bg: var(--bg-app);
+  --card-bg: var(--bg-surface);
+  --card-hover-bg: var(--bg-hover);
+  --selection-bg: var(--bg-selected);
+
+  /* Surface aliases */
+  --surface-color: var(--bg-surface);
+  --surface-elevated: var(--bg-elevated);
+  --surface-light: var(--bg-elevated);
+  --surface-dark: var(--bg-app);
+  --surface-darker: var(--bg-app);
+  --surface-dim: var(--bg-app);
+  --surface-bright: var(--bg-elevated);
+  --surface-active: var(--bg-active);
+
+  /* Border aliases */
+  --border: var(--border-default);
+  --border-color: var(--border-default);
+  --border-hover: var(--border-strong);
+  --border-active: var(--border-focus);
+  --border-bright: var(--border-strong);
+  --border-emphasis: var(--border-strong);
+
+  /* Text aliases */
+  --text: var(--text-primary);
+  --text-color: var(--text-primary);
+  --text-main: var(--text-primary);
+  --text-bright: var(--text-primary);
+  --text-dim: var(--text-muted);
+
+  /* Accent / status aliases */
+  --accent-color: var(--accent);
+  --accent-color-hover: var(--accent-hover);
+  --accent-primary: var(--accent);
+  --primary-color: var(--primary);
+  --primary-light: var(--primary-hover);
+  --primary-border: var(--border-focus);
+  --secondary: var(--text-secondary);
+  --success-color: var(--success);
+  --warning-color: var(--warning);
+  --danger-color: var(--error);
+  --error-color: var(--error);
+}
+
+/* =============================================
    DARK THEME (Default - TS Classic)
    ============================================= */
 [data-theme="dark"] {

@@ -7,7 +7,7 @@
   flex-direction: column;
   width: 100%;
   height: 100%;
-  background: var(--card-bg, #1a1a1a);
+  background: var(--card-bg);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -59,7 +59,7 @@
 .ts-dashboard-title {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-color, #fff);
+  color: var(--text-color);
 }
 
 .ts-dashboard-selector-btn {
@@ -68,7 +68,7 @@
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 4px;
-  color: var(--text-color, #fff);
+  color: var(--text-color);
   cursor: pointer;
   transition: background 0.2s;
 }
@@ -98,7 +98,7 @@
 }
 
 .ts-dashboard-selector {
-  background: var(--card-bg, #2a2a2a);
+  background: var(--card-bg);
   border-radius: 8px;
   padding: 16px;
   min-width: 400px;
@@ -110,7 +110,7 @@
 
 .ts-dashboard-selector h3 {
   margin: 0 0 12px;
-  color: var(--text-color, #fff);
+  color: var(--text-color);
 }
 
 .ts-dashboard-list {
@@ -129,7 +129,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   padding: 4px 8px;
   margin-bottom: 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
@@ -156,7 +156,7 @@
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid transparent;
   border-radius: 4px;
-  color: var(--text-color, #fff);
+  color: var(--text-color);
   cursor: pointer;
   transition: all 0.2s;
   font-size: 12px;
@@ -170,7 +170,7 @@
 }
 
 .ts-dashboard-option.selected {
-  background: var(--accent-color, #4a9eff);
+  background: var(--accent-color);
   color: #fff;
 }
 
@@ -249,7 +249,7 @@
 }
 
 .loading-spinner {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 16px;
   display: flex;
   flex-direction: column;
@@ -262,7 +262,7 @@
   width: 32px;
   height: 32px;
   border: 3px solid rgba(255, 255, 255, 0.1);
-  border-top-color: var(--accent-color, #4a9eff);
+  border-top-color: var(--accent-color);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -273,7 +273,7 @@
 
 .error-message,
 .empty-message {
-  color: var(--text-color, #fff);
+  color: var(--text-color);
 }
 
 .error-message h3,
@@ -282,14 +282,14 @@
 }
 
 .error-message p {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   margin: 0 0 16px;
 }
 
 .error-message button,
 .empty-message button {
   padding: 8px 16px;
-  background: var(--accent-color, #4a9eff);
+  background: var(--accent-color);
   border: none;
   border-radius: 4px;
   color: #fff;
@@ -299,7 +299,7 @@
 
 .error-message button:hover,
 .empty-message button:hover {
-  background: var(--accent-hover, #3a8eff);
+  background: var(--accent-hover);
 }
 
 /* Component positioning */
@@ -326,12 +326,12 @@
 }
 
 .ts-dashboard.designer-mode .ts-component.editable:hover {
-  border-color: var(--accent-color, #4a9eff);
+  border-color: var(--accent-color);
   box-shadow: 0 0 16px rgba(74, 158, 255, 0.6);
 }
 
 .ts-dashboard.designer-mode .ts-component.selected {
-  border: 2px solid var(--accent-color, #4a9eff);
+  border: 2px solid var(--accent-color);
   box-shadow: 0 0 20px rgba(74, 158, 255, 0.8);
 }
 
@@ -354,7 +354,7 @@
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
-  color: var(--text-color, #fff);
+  color: var(--text-color);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
@@ -382,7 +382,7 @@
 }
 
 .ts-dashboard-action-btn.warn {
-  color: #fbbf24;
+  color: var(--warning);
   border-color: rgba(251, 191, 36, 0.3);
 }
 
@@ -396,7 +396,7 @@
   background: rgba(255, 255, 255, 0.03);
   padding: 10px 16px;
   font-size: 12px;
-  color: var(--text-color, #fff);
+  color: var(--text-color);
   flex-shrink: 0; /* Don't shrink validation panel */
   max-height: 120px; /* Compact height - issues accessible via scrolling */
   overflow-y: auto; /* Make scrollable if content exceeds max-height */
@@ -422,7 +422,7 @@
 .ts-dashboard-validation-section h4 {
   margin: 0 0 6px;
   font-size: 12px;
-  color: var(--text-muted, #cbd5f5);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -437,7 +437,7 @@
 }
 
 .ts-dashboard-validation-empty {
-  color: var(--text-muted, #cbd5f5);
+  color: var(--text-muted);
 }
 
 /* Management dialogs */
@@ -456,7 +456,7 @@
 }
 
 .ts-dashboard-dialog {
-  background: var(--surface-color, #1e1e1e);
+  background: var(--surface-color);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 20px;
@@ -467,7 +467,7 @@
 
 .ts-dashboard-dialog h3 {
   margin: 0 0 16px;
-  color: var(--text-color, #fff);
+  color: var(--text-color);
   font-size: 16px;
   font-weight: 500;
 }
@@ -482,26 +482,26 @@
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
-  color: var(--text-color, #fff);
+  color: var(--text-color);
   font-size: 14px;
   box-sizing: border-box;
 }
 
 .ts-dashboard-dialog-content input:focus {
   outline: none;
-  border-color: var(--accent-color, #4a9eff);
+  border-color: var(--accent-color);
   box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2);
 }
 
 .ts-dashboard-dialog-content p {
   margin: 0;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 14px;
   line-height: 1.5;
 }
 
 .ts-dashboard-dialog-content p strong {
-  color: var(--text-color, #fff);
+  color: var(--text-color);
 }
 
 .ts-dashboard-dialog-buttons {
@@ -521,7 +521,7 @@
 
 .ts-dashboard-dialog-buttons button:first-child {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--text-color, #fff);
+  color: var(--text-color);
 }
 
 .ts-dashboard-dialog-buttons button:first-child:hover {
@@ -529,20 +529,20 @@
 }
 
 .ts-dashboard-dialog-buttons button:last-child {
-  background: var(--accent-color, #4a9eff);
+  background: var(--accent-color);
   color: #fff;
 }
 
 .ts-dashboard-dialog-buttons button:last-child:hover {
-  background: var(--accent-hover, #3a8eff);
+  background: var(--accent-hover);
 }
 
 .ts-dashboard-dialog-buttons button.danger {
-  background: #dc3545;
+  background: var(--error);
 }
 
 .ts-dashboard-dialog-buttons button.danger:hover {
-  background: #c82333;
+  background: var(--error-bg);
 }
 
 /* Responsive adjustments */

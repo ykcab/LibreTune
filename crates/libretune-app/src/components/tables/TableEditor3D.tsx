@@ -1,313 +1,854 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
-import { ArrowLeft } from 'lucide-react';
+/**
+ * TableEditor3D - 3D Table Visualization using react-three-fiber
+ * 
+ * Provides an interactive 3D surface mesh visualization of ECU tuning tables
+ * with orbit controls, cell highlighting, and heatmap coloring.
+ */
+
+import { useRef, useMemo, useState, useCallback } from 'react';
+import { Canvas, useFrame, ThreeEvent } from '@react-three/fiber';
+import { OrbitControls, Text, Html, PerspectiveCamera } from '@react-three/drei';
+import * as THREE from 'three';
+import { ArrowLeft, Maximize2, Minimize2 } from 'lucide-react';
 import { valueToHeatmapColor, HeatmapScheme } from '../../utils/heatmapColors';
+import './TableEditor3D.css';
 
 interface TableEditor3DProps {
   title: string;
   x_bins: number[];
   y_bins: number[];
   z_values: number[][];
+  x_label?: string;
+  y_label?: string;
+  z_label?: string;
+  x_units?: string;
+  y_units?: string;
+  z_units?: string;
   onBack: () => void;
-  heatmapScheme?: HeatmapScheme | string[]; // Optional heatmap color scheme
+  onCellSelect?: (x: number, y: number) => void;
+  selectedCell?: { x: number; y: number } | null;
+  liveCell?: { x: number; y: number } | null;
+  historyTrail?: Array<{ row: number; col: number; time: number }>;
+  heatmapScheme?: HeatmapScheme | string[];
 }
 
-export default function TableEditor3D({ title, x_bins, y_bins, z_values, onBack, heatmapScheme = 'tunerstudio' }: TableEditor3DProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [yawAngle, setYawAngle] = useState(250);
-  const [rollAngle, setRollAngle] = useState(0);
-  const [pitchAngle, setPitchAngle] = useState(30);
-  const [zScale, setZScale] = useState(1.0);
-  const [followMode, setFollowMode] = useState(false);
-  const [showColorShade, setShowColorShade] = useState(true);
+interface SurfaceMeshProps {
+  x_bins: number[];
+  y_bins: number[];
+  z_values: number[][];
+  heatmapScheme: HeatmapScheme | string[];
+  onCellClick?: (x: number, y: number) => void;
+  selectedCell?: { x: number; y: number } | null;
+  liveCell?: { x: number; y: number } | null;
+  wireframe: boolean;
+}
 
-  const x_size = x_bins.length;
-  const y_size = y_bins.length;
-
-  useEffect(() => {
-    render();
-  }, [z_values, yawAngle, rollAngle, pitchAngle, zScale, showColorShade]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      switch(e.key) {
-        case 'm':
-          setYawAngle(prev => Math.min(360, prev + 5));
-          break;
-        case 'M':
-          setYawAngle(prev => Math.max(0, prev - 5));
-          break;
-        case 'n':
-          setRollAngle(prev => Math.min(90, prev + 5));
-          break;
-        case 'N':
-          setRollAngle(prev => Math.max(-90, prev - 5));
-          break;
-        case 'ArrowUp':
-          setPitchAngle(prev => Math.min(85, prev + 2));
-          break;
-        case 'ArrowDown':
-          setPitchAngle(prev => Math.max(10, prev - 2));
-          break;
-        case 'f':
-          setFollowMode(prev => !prev);
-          break;
+/** Creates the 3D surface mesh geometry from table data */
+function SurfaceMesh({ 
+  x_bins, 
+  y_bins, 
+  z_values, 
+  heatmapScheme,
+  onCellClick, 
+  selectedCell,
+  liveCell,
+  wireframe
+}: SurfaceMeshProps) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  
+  const { geometry } = useMemo(() => {
+    const xSize = x_bins.length;
+    const ySize = y_bins.length;
+    
+    // Normalize bins to 0-10 range for better visualization
+    const xMin = Math.min(...x_bins);
+    const xMax = Math.max(...x_bins);
+    const yMin = Math.min(...y_bins);
+    const yMax = Math.max(...y_bins);
+    const zFlat = z_values.flat();
+    const zMin = Math.min(...zFlat);
+    const zMax = Math.max(...zFlat);
+    
+    const normalizeX = (v: number) => ((v - xMin) / (xMax - xMin || 1)) * 10;
+    const normalizeY = (v: number) => ((v - yMin) / (yMax - yMin || 1)) * 10;
+    const normalizeZ = (v: number) => ((v - zMin) / (zMax - zMin || 1)) * 5;
+    
+    // Create vertices
+    const vertices: number[] = [];
+    const colorArray: number[] = [];
+    const indices: number[] = [];
+    
+    for (let yi = 0; yi < ySize; yi++) {
+      for (let xi = 0; xi < xSize; xi++) {
+        const x = normalizeX(x_bins[xi]);
+        const y = normalizeY(y_bins[yi]);
+        const z = normalizeZ(z_values[yi]?.[xi] ?? 0);
+        
+        vertices.push(x, z, y); // Y-up convention in Three.js
+        
+        // Get color from heatmap
+        const colorHex = valueToHeatmapColor(z_values[yi]?.[xi] ?? 0, zMin, zMax, heatmapScheme);
+        const color = new THREE.Color(colorHex);
+        colorArray.push(color.r, color.g, color.b);
       }
+    }
+    
+    // Create triangle indices for the mesh
+    for (let yi = 0; yi < ySize - 1; yi++) {
+      for (let xi = 0; xi < xSize - 1; xi++) {
+        const topLeft = yi * xSize + xi;
+        const topRight = topLeft + 1;
+        const bottomLeft = (yi + 1) * xSize + xi;
+        const bottomRight = bottomLeft + 1;
+        
+        // Two triangles per quad
+        indices.push(topLeft, bottomLeft, topRight);
+        indices.push(topRight, bottomLeft, bottomRight);
+      }
+    }
+    
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colorArray, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    
+    return { geometry: geo, colors: colorArray, minZ: zMin, maxZ: zMax };
+  }, [x_bins, y_bins, z_values, heatmapScheme]);
+
+  // Handle click on mesh
+  const handleClick = useCallback((event: ThreeEvent<MouseEvent>) => {
+    if (!onCellClick || !event.face) return;
+    
+    event.stopPropagation();
+    
+    // Get the face indices to find which cell was clicked
+    const faceIndex = event.faceIndex;
+    if (faceIndex === undefined || faceIndex === null) return;
+    
+    // Each quad has 2 triangles, so divide by 2 to get quad index
+    const quadIndex = Math.floor(faceIndex / 2);
+    const xSize = x_bins.length - 1;
+    const yi = Math.floor(quadIndex / xSize);
+    const xi = quadIndex % xSize;
+    
+    onCellClick(xi, yi);
+  }, [onCellClick, x_bins.length]);
+
+  return (
+    <>
+      <mesh 
+        ref={meshRef}
+        geometry={geometry}
+        onClick={handleClick}
+      >
+        <meshStandardMaterial 
+          vertexColors 
+          side={THREE.DoubleSide}
+          wireframe={wireframe}
+          roughness={0.6}
+          metalness={0.1}
+        />
+      </mesh>
+      
+      {/* Show selected cell marker */}
+      {selectedCell && (
+        <SelectedCellMarker 
+          x_bins={x_bins}
+          y_bins={y_bins}
+          z_values={z_values}
+          cellX={selectedCell.x}
+          cellY={selectedCell.y}
+        />
+      )}
+      
+      {/* Show live cell indicator (triangle + outline) */}
+      {liveCell && (
+        <LiveCellIndicator 
+          x_bins={x_bins}
+          y_bins={y_bins}
+          z_values={z_values}
+          cellX={liveCell.x}
+          cellY={liveCell.y}
+        />
+      )}
+    </>
+  );
+}
+
+/** Helper to get normalized position for a cell */
+function getNormalizedPosition(
+  x_bins: number[],
+  y_bins: number[],
+  z_values: number[][],
+  cellX: number,
+  cellY: number
+): THREE.Vector3 {
+  const xMin = Math.min(...x_bins);
+  const xMax = Math.max(...x_bins);
+  const yMin = Math.min(...y_bins);
+  const yMax = Math.max(...y_bins);
+  const zFlat = z_values.flat();
+  const zMin = Math.min(...zFlat);
+  const zMax = Math.max(...zFlat);
+  
+  const normalizeX = (v: number) => ((v - xMin) / (xMax - xMin || 1)) * 10;
+  const normalizeY = (v: number) => ((v - yMin) / (yMax - yMin || 1)) * 10;
+  const normalizeZ = (v: number) => ((v - zMin) / (zMax - zMin || 1)) * 5;
+  
+  const x = normalizeX(x_bins[cellX] ?? 0);
+  const y = normalizeY(y_bins[cellY] ?? 0);
+  const z = normalizeZ(z_values[cellY]?.[cellX] ?? 0);
+  
+  return new THREE.Vector3(x, z, y);
+}
+
+/** Live cell indicator with inverted triangle and cell outline */
+function LiveCellIndicator({ 
+  x_bins, 
+  y_bins, 
+  z_values, 
+  cellX, 
+  cellY
+}: {
+  x_bins: number[];
+  y_bins: number[];
+  z_values: number[][];
+  cellX: number;
+  cellY: number;
+}) {
+  const coneRef = useRef<THREE.Mesh>(null);
+  const outlineRef = useRef<THREE.LineSegments>(null);
+  
+  const { position, cellOutlineGeometry } = useMemo(() => {
+    const pos = getNormalizedPosition(x_bins, y_bins, z_values, cellX, cellY);
+    
+    // Calculate cell bounds for outline
+    const xMin = Math.min(...x_bins);
+    const xMax = Math.max(...x_bins);
+    const yMin = Math.min(...y_bins);
+    const yMax = Math.max(...y_bins);
+    const zFlat = z_values.flat();
+    const zMin = Math.min(...zFlat);
+    const zMax = Math.max(...zFlat);
+    
+    const normalizeX = (v: number) => ((v - xMin) / (xMax - xMin || 1)) * 10;
+    const normalizeY = (v: number) => ((v - yMin) / (yMax - yMin || 1)) * 10;
+    const normalizeZ = (v: number) => ((v - zMin) / (zMax - zMin || 1)) * 5;
+    
+    // Get half cell size
+    const xStep = x_bins.length > 1 ? normalizeX(x_bins[1]) - normalizeX(x_bins[0]) : 1;
+    const yStep = y_bins.length > 1 ? normalizeY(y_bins[1]) - normalizeY(y_bins[0]) : 1;
+    const halfX = xStep / 2;
+    const halfY = yStep / 2;
+    
+    // Get z values at cell corners (or use center value for all corners if at edge)
+    const getZ = (xi: number, yi: number) => {
+      const clampedX = Math.max(0, Math.min(xi, x_bins.length - 1));
+      const clampedY = Math.max(0, Math.min(yi, y_bins.length - 1));
+      return normalizeZ(z_values[clampedY]?.[clampedX] ?? 0);
     };
+    
+    // Create outline box on surface
+    const z = getZ(cellX, cellY);
+    const vertices = new Float32Array([
+      // Bottom square (slightly above surface)
+      pos.x - halfX, z + 0.05, pos.z - halfY,
+      pos.x + halfX, z + 0.05, pos.z - halfY,
+      pos.x + halfX, z + 0.05, pos.z - halfY,
+      pos.x + halfX, z + 0.05, pos.z + halfY,
+      pos.x + halfX, z + 0.05, pos.z + halfY,
+      pos.x - halfX, z + 0.05, pos.z + halfY,
+      pos.x - halfX, z + 0.05, pos.z + halfY,
+      pos.x - halfX, z + 0.05, pos.z - halfY,
+    ]);
+    
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    
+    return { position: pos, cellOutlineGeometry: geo };
+  }, [x_bins, y_bins, z_values, cellX, cellY]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  const _getCellColor = useCallback((value: number, _x: number, _y: number) => {
-    if (!showColorShade) return '#4CAF50';
-
-    const minVal = Math.min(...z_values.flat());
-    const maxVal = Math.max(...z_values.flat());
-
-    if (minVal === maxVal) return '#888888';
-
-    // Use centralized heatmap utility
-    return valueToHeatmapColor(value, minVal, maxVal, heatmapScheme);
-  }, [showColorShade, z_values, heatmapScheme]);
-
-  const project3D = (x: number, y: number, z: number) => {
-    const x_bin = x_bins[Math.min(x, x_size - 1)];
-    const y_bin = y_bins[Math.min(y, y_size - 1)];
-    // @ts-expect-error - Reserved for future interpolation feature
-    const _next_x_bin = x_bins[Math.min(x + 1, x_size - 1)] || x_bins[x_size - 1];
-    // @ts-expect-error - Reserved for future interpolation feature
-    const _next_y_bin = y_bins[Math.min(y + 1, y_size - 1)] || y_bins[y_size - 1];
-
-    const cell_width = 1.0 / x_size;
-    const cell_height = 1.0 / y_size;
-
-    const center_x = x * cell_width + cell_width / 2;
-    const center_y = y * cell_height + cell_height / 2;
-
-    const x_range = x_bins[x_size - 1] - x_bins[0];
-    const y_range = y_bins[y_size - 1] - y_bins[0];
-
-    const normalized_x = (x_bin - x_bins[0]) / x_range;
-    const normalized_y = (y_bin - y_bins[0]) / y_range;
-
-    const z_scale_factor = (z - Math.min(...z_values.flat())) / (Math.max(...z_values.flat()) - Math.min(...z_values.flat())) * zScale;
-
-    const projected_x = center_x + normalized_x * 0.4;
-    const projected_y = center_y + normalized_y * 0.4;
-
-    const rotated = rotateX(projected_x, projected_y, toRad(yawAngle));
-    const rolled = rotateZ(rotated.x, rotated.y * z_scale_factor, 0, toRad(rollAngle));
-    const pitched = rotateY(rolled.x, rolled.y, toRad(pitchAngle));
-
-    return {
-      x: pitched.x * 200 + 200,
-      y: -pitched.y * 200 + 150,
-      z: 0,
-    };
-  };
-
-  const render = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const rect = canvas.parentElement?.getBoundingClientRect();
-    if (!rect) return;
-
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.lineWidth = 1;
-
-    // Draw horizontal lines (Y-axis)
-    for (let y = 0; y <= y_size; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, (y - 1) * (canvas.height / y_size));
-
-      for (let x = 0; x <= x_size; x++) {
-        if (x <= x_size && y <= y_size) {
-          const zVal = z_values[Math.min(y - 1, y_size - 1)][Math.min(x - 1, x_size - 1)];
-          const projected = project3D(x, y, zVal);
-          ctx.lineTo(projected.x, projected.y);
-        }
-      }
-
-      // Use color shading if enabled
-      ctx.strokeStyle = showColorShade ? _getCellColor(z_values[Math.max(0, y - 2)][0], 0, y) : '#4a4a4a';
-      ctx.stroke();
+  // Pulsing animation
+  useFrame((state) => {
+    if (coneRef.current) {
+      const scale = 1 + Math.sin(state.clock.elapsedTime * 4) * 0.15;
+      coneRef.current.scale.setScalar(scale);
     }
-
-    // Draw vertical lines (X-axis)
-    for (let x = 0; x <= x_size; x++) {
-      ctx.beginPath();
-      ctx.moveTo((x - 1) * (canvas.width / x_size), 0);
-
-      for (let y = 0; y <= y_size; y++) {
-        if (x <= x_size && y <= y_size) {
-          const zVal = z_values[y - 1][x - 1];
-          const _projected = project3D(x, y, zVal);
-          ctx.lineTo(_projected.x, _projected.y);
-        }
-      }
-
-      // Use color shading if enabled
-      ctx.strokeStyle = showColorShade ? _getCellColor(z_values[0][Math.max(0, x - 2)], x, 0) : '#4a4a4a';
-      ctx.stroke();
+    if (outlineRef.current && outlineRef.current.material instanceof THREE.LineBasicMaterial) {
+      const intensity = 0.7 + Math.sin(state.clock.elapsedTime * 4) * 0.3;
+      outlineRef.current.material.opacity = intensity;
     }
-
-    // Draw filled cells with color shading
-    if (showColorShade) {
-      for (let y = 0; y < y_size; y++) {
-        for (let x = 0; x < x_size; x++) {
-          const zVal = z_values[y][x];
-
-          // Get the 4 corners of the cell
-          const p1 = project3D(x, y, zVal);
-          const p2 = project3D(x + 1, y, zVal);
-          const p3 = project3D(x + 1, y + 1, zVal);
-          const p4 = project3D(x, y + 1, zVal);
-
-          // Fill the cell with gradient color
-          ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y);
-          ctx.lineTo(p2.x, p2.y);
-          ctx.lineTo(p3.x, p3.y);
-          ctx.lineTo(p4.x, p4.y);
-          ctx.closePath();
-
-          // Get cell color based on Z value
-          ctx.fillStyle = _getCellColor(zVal, x, y);
-          ctx.fill();
-        }
-      }
-    }
-  };
-
-  const toRad = (degrees: number) => degrees * Math.PI / 180;
-
-  const rotateX = (x: number, y: number, angle: number) => ({
-    x: x * Math.cos(angle) - y * Math.sin(angle),
-    y: x * Math.sin(angle) + y * Math.cos(angle),
-  });
-
-  const rotateY = (x: number, y: number, angle: number) => ({
-    x: x,
-    y: y * Math.cos(angle) - x * Math.sin(angle),
-  });
-
-  const rotateZ = (x: number, y: number, z: number, angle: number) => ({
-    x: x * Math.cos(angle) - y * Math.sin(angle),
-    y: x * Math.sin(angle) + y * Math.cos(angle),
-    z: z,
   });
 
   return (
-    <div className="table-editor-3d">
-      <div className="editor-header">
-        <button className="back-btn" onClick={onBack}>
-          <ArrowLeft size={18} />
-          <span>Back</span>
-        </button>
-        <h1>{title} - 3D View</h1>
+    <>
+      {/* Cell outline on surface */}
+      <lineSegments ref={outlineRef} geometry={cellOutlineGeometry}>
+        <lineBasicMaterial color="#00ff00" linewidth={2} transparent opacity={1} />
+      </lineSegments>
+      
+      {/* Inverted triangle (cone) floating above */}
+      <mesh 
+        ref={coneRef} 
+        position={[position.x, position.y + 1.4, position.z]}
+        rotation={[Math.PI, 0, 0]} // Inverted (pointing down)
+      >
+        <coneGeometry args={[0.4, 0.8, 8]} />
+        <meshStandardMaterial 
+          color="#00ff00" 
+          emissive="#00ff00" 
+          emissiveIntensity={0.6}
+          transparent
+          opacity={0.9}
+        />
+      </mesh>
+    </>
+  );
+}
+
+/** Selected cell marker (simple outline) */
+function SelectedCellMarker({ 
+  x_bins, 
+  y_bins, 
+  z_values, 
+  cellX, 
+  cellY
+}: {
+  x_bins: number[];
+  y_bins: number[];
+  z_values: number[][];
+  cellX: number;
+  cellY: number;
+}) {
+  const outlineGeometry = useMemo(() => {
+    const pos = getNormalizedPosition(x_bins, y_bins, z_values, cellX, cellY);
+    
+    const xMin = Math.min(...x_bins);
+    const xMax = Math.max(...x_bins);
+    const yMin = Math.min(...y_bins);
+    const yMax = Math.max(...y_bins);
+    const zFlat = z_values.flat();
+    const zMin = Math.min(...zFlat);
+    const zMax = Math.max(...zFlat);
+    
+    const normalizeX = (v: number) => ((v - xMin) / (xMax - xMin || 1)) * 10;
+    const normalizeY = (v: number) => ((v - yMin) / (yMax - yMin || 1)) * 10;
+    const normalizeZ = (v: number) => ((v - zMin) / (zMax - zMin || 1)) * 5;
+    
+    const xStep = x_bins.length > 1 ? normalizeX(x_bins[1]) - normalizeX(x_bins[0]) : 1;
+    const yStep = y_bins.length > 1 ? normalizeY(y_bins[1]) - normalizeY(y_bins[0]) : 1;
+    const halfX = xStep / 2;
+    const halfY = yStep / 2;
+    const z = normalizeZ(z_values[cellY]?.[cellX] ?? 0);
+    
+    const vertices = new Float32Array([
+      pos.x - halfX, z + 0.05, pos.z - halfY,
+      pos.x + halfX, z + 0.05, pos.z - halfY,
+      pos.x + halfX, z + 0.05, pos.z - halfY,
+      pos.x + halfX, z + 0.05, pos.z + halfY,
+      pos.x + halfX, z + 0.05, pos.z + halfY,
+      pos.x - halfX, z + 0.05, pos.z + halfY,
+      pos.x - halfX, z + 0.05, pos.z + halfY,
+      pos.x - halfX, z + 0.05, pos.z - halfY,
+    ]);
+    
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    return geo;
+  }, [x_bins, y_bins, z_values, cellX, cellY]);
+
+  return (
+    <lineSegments geometry={outlineGeometry}>
+      <lineBasicMaterial color="#ffff00" linewidth={2} />
+    </lineSegments>
+  );
+}
+
+/** Smooth trail line with fading opacity */
+function TrailLine({
+  x_bins,
+  y_bins,
+  z_values,
+  historyTrail
+}: {
+  x_bins: number[];
+  y_bins: number[];
+  z_values: number[][];
+  historyTrail: Array<{ row: number; col: number; time: number }>;
+}) {
+  const TRAIL_DURATION_MS = 3000;
+
+  const curveGeometry = useMemo(() => {
+    if (historyTrail.length < 2) return null;
+    
+    const now = Date.now();
+    const points: THREE.Vector3[] = [];
+    const colorArray: number[] = [];
+    
+    // Get positions for each trail point
+    for (const entry of historyTrail) {
+      const age = now - entry.time;
+      if (age > TRAIL_DURATION_MS) continue;
+      
+      const pos = getNormalizedPosition(x_bins, y_bins, z_values, entry.col, entry.row);
+      pos.y += 0.1; // Slightly above surface
+      points.push(pos);
+      
+      // Fade from green (newest) to transparent (oldest)
+      const alpha = 1 - (age / TRAIL_DURATION_MS);
+      colorArray.push(0, 1, 0, alpha); // RGBA
+    }
+    
+    if (points.length < 2) return null;
+    
+    // Create smooth curve through points
+    const splineCurve = new THREE.CatmullRomCurve3(points);
+    const curvePoints = splineCurve.getPoints(points.length * 10);
+    
+    // Interpolate colors for curve points
+    const interpolatedColors: number[] = [];
+    for (let i = 0; i < curvePoints.length; i++) {
+      const t = i / (curvePoints.length - 1);
+      const colorIndex = Math.min(Math.floor(t * (colorArray.length / 4 - 1)), colorArray.length / 4 - 2);
+      const localT = (t * (colorArray.length / 4 - 1)) - colorIndex;
+      
+      const r = colorArray[colorIndex * 4] * (1 - localT) + colorArray[(colorIndex + 1) * 4] * localT;
+      const g = colorArray[colorIndex * 4 + 1] * (1 - localT) + colorArray[(colorIndex + 1) * 4 + 1] * localT;
+      const b = colorArray[colorIndex * 4 + 2] * (1 - localT) + colorArray[(colorIndex + 1) * 4 + 2] * localT;
+      interpolatedColors.push(r, g, b);
+    }
+    
+    const geo = new THREE.BufferGeometry().setFromPoints(curvePoints);
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(interpolatedColors, 3));
+    
+    return geo;
+  }, [x_bins, y_bins, z_values, historyTrail]);
+
+  if (!curveGeometry) return null;
+
+  // Use primitive to create THREE.Line directly
+  return (
+    <primitive object={new THREE.Line(curveGeometry, new THREE.LineBasicMaterial({ 
+      vertexColors: true, 
+      transparent: true, 
+      opacity: 0.8 
+    }))} />
+  );
+}
+
+/** Cell grid overlay (2D grid lines on surface) */
+function CellGridOverlay({
+  x_bins,
+  y_bins,
+  z_values
+}: {
+  x_bins: number[];
+  y_bins: number[];
+  z_values: number[][];
+}) {
+  const linesGeometry = useMemo(() => {
+    const xMin = Math.min(...x_bins);
+    const xMax = Math.max(...x_bins);
+    const yMin = Math.min(...y_bins);
+    const yMax = Math.max(...y_bins);
+    const zFlat = z_values.flat();
+    const zMin = Math.min(...zFlat);
+    const zMax = Math.max(...zFlat);
+    
+    const normalizeX = (v: number) => ((v - xMin) / (xMax - xMin || 1)) * 10;
+    const normalizeY = (v: number) => ((v - yMin) / (yMax - yMin || 1)) * 10;
+    const normalizeZ = (v: number) => ((v - zMin) / (zMax - zMin || 1)) * 5;
+    
+    const vertices: number[] = [];
+    
+    // Draw horizontal lines (along X axis for each Y)
+    for (let yi = 0; yi < y_bins.length; yi++) {
+      for (let xi = 0; xi < x_bins.length - 1; xi++) {
+        const x1 = normalizeX(x_bins[xi]);
+        const x2 = normalizeX(x_bins[xi + 1]);
+        const y = normalizeY(y_bins[yi]);
+        const z1 = normalizeZ(z_values[yi]?.[xi] ?? 0) + 0.02;
+        const z2 = normalizeZ(z_values[yi]?.[xi + 1] ?? 0) + 0.02;
+        
+        vertices.push(x1, z1, y, x2, z2, y);
+      }
+    }
+    
+    // Draw vertical lines (along Y axis for each X)
+    for (let xi = 0; xi < x_bins.length; xi++) {
+      for (let yi = 0; yi < y_bins.length - 1; yi++) {
+        const x = normalizeX(x_bins[xi]);
+        const y1 = normalizeY(y_bins[yi]);
+        const y2 = normalizeY(y_bins[yi + 1]);
+        const z1 = normalizeZ(z_values[yi]?.[xi] ?? 0) + 0.02;
+        const z2 = normalizeZ(z_values[yi + 1]?.[xi] ?? 0) + 0.02;
+        
+        vertices.push(x, z1, y1, x, z2, y2);
+      }
+    }
+    
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    return geo;
+  }, [x_bins, y_bins, z_values]);
+
+  return (
+    <lineSegments geometry={linesGeometry}>
+      <lineBasicMaterial color="#ffffff" transparent opacity={0.3} />
+    </lineSegments>
+  );
+}
+
+/** Axis labels and grid */
+function AxisLabels({ 
+  x_label, 
+  y_label, 
+  z_label,
+  x_bins,
+  y_bins
+}: { 
+  x_label?: string; 
+  y_label?: string; 
+  z_label?: string;
+  x_bins: number[];
+  y_bins: number[];
+}) {
+  return (
+    <>
+      {/* 3D Box Frame (The "Z lines") */}
+      <lineSegments position={[5, 2.5, 5]}>
+        <edgesGeometry args={[new THREE.BoxGeometry(10, 5, 10)]} />
+        <lineBasicMaterial color="#666666" opacity={0.4} transparent />
+      </lineSegments>
+
+      {/* Grid floor */}
+      <gridHelper args={[10, 10, '#444444', '#333333']} position={[5, 0, 5]} />
+
+      {/* --- X AXIS LABELS (Red/Horizontal) --- */}
+      {/* Front (Z=10 side) */}
+      <Text
+        position={[5, -0.8, 10.5]}
+        fontSize={0.4}
+        color="#ff8888"
+        anchorX="center"
+        rotation={[-Math.PI / 4, 0, 0]} 
+      >
+        {x_label || 'X'}
+      </Text>
+      {/* Back (Z=0 side) */}
+      <Text
+        position={[5, -0.5, -0.5]}
+        fontSize={0.4}
+        color="#ff8888"
+        anchorX="center"
+        rotation={[0, Math.PI, 0]} 
+      >
+        {x_label || 'X'}
+      </Text>
+
+      {/* --- Y AXIS LABELS (Green/Depth) --- */}
+      {/* Left (X=0 side) */}
+      <Text
+        position={[-0.5, -0.5, 5]}
+        fontSize={0.4}
+        color="#88ff88"
+        anchorX="center"
+        rotation={[0, -Math.PI / 2, 0]} 
+      >
+        {y_label || 'Y'}
+      </Text>
+      {/* Right (X=10 side) */}
+      <Text
+        position={[10.5, -0.5, 5]}
+        fontSize={0.4}
+        color="#88ff88"
+        anchorX="center"
+        rotation={[0, Math.PI / 2, 0]} 
+      >
+        {y_label || 'Y'}
+      </Text>
+      
+      {/* --- Z AXIS LABEL (Blue/Vertical) --- */}
+      <Text
+        position={[-0.8, 2.5, -0.8]}
+        fontSize={0.4}
+        color="#8888ff"
+        anchorX="center"
+        rotation={[0, 0, Math.PI / 2]}
+      >
+        {z_label || 'Z'}
+      </Text>
+      
+      {/* Axis value labels - Corners */}
+      <Text position={[-0.3, -0.3, -0.3]} fontSize={0.25} color="#888888">
+        {x_bins[0]?.toFixed(0)}/{y_bins[0]?.toFixed(0)}
+      </Text>
+      <Text position={[10.3, -0.3, -0.3]} fontSize={0.25} color="#888888">
+        {x_bins[x_bins.length - 1]?.toFixed(0)}
+      </Text>
+      <Text position={[-0.3, -0.3, 10.3]} fontSize={0.25} color="#888888">
+        {y_bins[y_bins.length - 1]?.toFixed(0)}
+      </Text>
+      <Text position={[10.3, -0.3, 10.3]} fontSize={0.25} color="#888888">
+        {x_bins[x_bins.length - 1]?.toFixed(0)}/{y_bins[y_bins.length - 1]?.toFixed(0)}
+      </Text>
+    </>
+  );
+}
+
+/** Tooltip showing cell value on hover */
+function CellTooltip({ 
+  x_bins, 
+  y_bins, 
+  z_values, 
+  hoveredCell 
+}: { 
+  x_bins: number[];
+  y_bins: number[];
+  z_values: number[][];
+  hoveredCell: { x: number; y: number } | null;
+}) {
+  if (!hoveredCell) return null;
+  
+  const value = z_values[hoveredCell.y]?.[hoveredCell.x];
+  const xVal = x_bins[hoveredCell.x];
+  const yVal = y_bins[hoveredCell.y];
+  
+  return (
+    <Html position={[5, 6, 5]} center>
+      <div className="table3d-tooltip">
+        <div>X: {xVal?.toFixed(1)}</div>
+        <div>Y: {yVal?.toFixed(1)}</div>
+        <div>Value: {value?.toFixed(2)}</div>
       </div>
+    </Html>
+  );
+}
 
-      <div className="controls-panel">
-        <div className="control-section">
-          <h3>Rotation</h3>
-          <div className="control-row">
-            <label>Yaw (M/K)</label>
-            <input
-              type="range"
-              min="0"
-              max="360"
-              value={yawAngle}
-              onChange={e => setYawAngle(Number(e.target.value))}
-            />
-            <span>{yawAngle}°</span>
-          </div>
-          <div className="control-row">
-            <label>Roll (N/J)</label>
-            <input
-              type="range"
-              min="-90"
-              max="90"
-              value={rollAngle}
-              onChange={e => setRollAngle(Number(e.target.value))}
-            />
-            <span>{rollAngle}°</span>
-          </div>
-          <div className="control-row">
-            <label>Pitch (↑/↓)</label>
-            <input
-              type="range"
-              min="10"
-              max="85"
-              value={pitchAngle}
-              onChange={e => setPitchAngle(Number(e.target.value))}
-            />
-            <span>{pitchAngle}°</span>
-          </div>
+/** Main 3D scene */
+function Scene({ 
+  x_bins, 
+  y_bins, 
+  z_values,
+  x_label,
+  y_label,
+  z_label,
+  heatmapScheme,
+  onCellClick,
+  selectedCell,
+  liveCell,
+  historyTrail,
+  wireframe,
+  showCells
+}: {
+  x_bins: number[];
+  y_bins: number[];
+  z_values: number[][];
+  x_label?: string;
+  y_label?: string;
+  z_label?: string;
+  heatmapScheme: HeatmapScheme | string[];
+  onCellClick?: (x: number, y: number) => void;
+  selectedCell?: { x: number; y: number } | null;
+  liveCell?: { x: number; y: number } | null;
+  historyTrail?: Array<{ row: number; col: number; time: number }>;
+  wireframe: boolean;
+  showCells: boolean;
+}) {
+  const [hoveredCell, _setHoveredCell] = useState<{ x: number; y: number } | null>(null);
+
+  return (
+    <>
+      <PerspectiveCamera makeDefault position={[15, 10, 15]} fov={45} />
+      <OrbitControls 
+        target={[5, 2, 5]} 
+        enableDamping 
+        dampingFactor={0.1}
+        minDistance={5}
+        maxDistance={40}
+      />
+      
+      {/* Lighting */}
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[10, 15, 10]} intensity={0.8} castShadow />
+      <directionalLight position={[-5, 10, -5]} intensity={0.3} />
+      
+      {/* Surface mesh */}
+      <SurfaceMesh
+        x_bins={x_bins}
+        y_bins={y_bins}
+        z_values={z_values}
+        heatmapScheme={heatmapScheme}
+        onCellClick={onCellClick}
+        selectedCell={selectedCell}
+        liveCell={liveCell}
+        wireframe={wireframe}
+      />
+      
+      {/* Cell grid overlay */}
+      {showCells && (
+        <CellGridOverlay
+          x_bins={x_bins}
+          y_bins={y_bins}
+          z_values={z_values}
+        />
+      )}
+      
+      {/* History trail line */}
+      {historyTrail && historyTrail.length > 1 && (
+        <TrailLine
+          x_bins={x_bins}
+          y_bins={y_bins}
+          z_values={z_values}
+          historyTrail={historyTrail}
+        />
+      )}
+      
+      {/* Axis labels and grid */}
+      <AxisLabels 
+        x_label={x_label}
+        y_label={y_label}
+        z_label={z_label}
+        x_bins={x_bins}
+        y_bins={y_bins}
+      />
+      
+      {/* Tooltip */}
+      <CellTooltip
+        x_bins={x_bins}
+        y_bins={y_bins}
+        z_values={z_values}
+        hoveredCell={hoveredCell}
+      />
+    </>
+  );
+}
+
+export default function TableEditor3D({
+  title,
+  x_bins,
+  y_bins,
+  z_values,
+  x_label,
+  y_label,
+  z_label,
+  x_units,
+  y_units,
+  z_units,
+  onBack,
+  onCellSelect,
+  selectedCell,
+  liveCell,
+  historyTrail,
+  heatmapScheme = 'tunerstudio'
+}: TableEditor3DProps) {
+  const [wireframe, setWireframe] = useState(false);
+  const [showCells, setShowCells] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const canRender3D = x_bins.length > 1 && y_bins.length > 1 && z_values.length > 0 && z_values[0]?.length > 0;
+
+  const handleCellClick = useCallback((x: number, y: number) => {
+    onCellSelect?.(x, y);
+  }, [onCellSelect]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!containerRef.current) return;
+    
+    if (!fullscreen) {
+      containerRef.current.requestFullscreen?.();
+    } else {
+      document.exitFullscreen?.();
+    }
+    setFullscreen(!fullscreen);
+  }, [fullscreen]);
+
+  // Calculate min/max for display
+  const zFlat = z_values.flat();
+  const zMin = Math.min(...zFlat);
+  const zMax = Math.max(...zFlat);
+
+  if (!canRender3D) {
+    return (
+      <div ref={containerRef} className={`table-editor-3d ${fullscreen ? 'fullscreen' : ''}`}>
+        <div className="table3d-header">
+          <button className="table3d-back-btn" onClick={onBack}>
+            <ArrowLeft size={16} />
+            Back
+          </button>
+          <div className="table3d-title">{title}</div>
         </div>
-
-        <div className="control-section">
-          <h3>Scale</h3>
-          <div className="control-row">
-            <label>Z Scale</label>
-            <input
-              type="range"
-              min="0.1"
-              max="3"
-              step="0.1"
-              value={zScale}
-              onChange={e => setZScale(Number(e.target.value))}
-            />
-            <span>{zScale.toFixed(1)}x</span>
-          </div>
+        <div className="table3d-empty">
+          3D view requires at least 2 bins on both axes.
         </div>
+      </div>
+    );
+  }
 
-        <div className="control-section">
-          <h3>View</h3>
-          <label className="checkbox-label">
+  return (
+    <div ref={containerRef} className={`table-editor-3d ${fullscreen ? 'fullscreen' : ''}`}>
+      {/* Header toolbar */}
+      <div className="table3d-header">
+        <button className="table3d-back-btn" onClick={onBack}>
+          <ArrowLeft size={16} />
+          Back
+        </button>
+        
+        <h3 className="table3d-title">{title}</h3>
+        
+        <div className="table3d-controls">
+          <label className="table3d-checkbox">
             <input
               type="checkbox"
-              checked={showColorShade}
-              onChange={e => setShowColorShade(e.target.checked)}
-            />
-            Color Shade (Z)
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={followMode}
-              onChange={e => setFollowMode(e.target.checked)}
-            />
-            Follow Mode (F)
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              readOnly
-              checked={true}
+              checked={wireframe}
+              onChange={(e) => setWireframe(e.target.checked)}
             />
             Wireframe
           </label>
+          
+          <label className="table3d-checkbox">
+            <input
+              type="checkbox"
+              checked={showCells}
+              onChange={(e) => setShowCells(e.target.checked)}
+            />
+            Show Cells
+          </label>
+          
+          <button className="table3d-btn" onClick={toggleFullscreen} title="Toggle fullscreen">
+            {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
         </div>
       </div>
 
-      <div className="canvas-container">
-        <div className="canvas-wrapper">
-          <canvas ref={canvasRef} className="table-canvas" />
-          <div className="active-position-display">
-            <div>Active Position</div>
-            <div>RPM: {x_bins[0]?.toFixed(0)}-{x_bins[x_size - 1]?.toFixed(0)}</div>
-            <div>MAP: {y_bins[0]?.toFixed(0)}-{y_bins[y_size - 1]?.toFixed(0)}</div>
-          </div>
-        </div>
+      {/* 3D Canvas */}
+      <div className="table3d-canvas-container">
+        <Canvas shadows>
+          <Scene
+            x_bins={x_bins}
+            y_bins={y_bins}
+            z_values={z_values}
+            x_label={`${x_label || 'X'}${x_units ? ` (${x_units})` : ''}`}
+            y_label={`${y_label || 'Y'}${y_units ? ` (${y_units})` : ''}`}
+            z_label={`${z_label || 'Z'}${z_units ? ` (${z_units})` : ''}`}
+            heatmapScheme={heatmapScheme}
+            onCellClick={handleCellClick}
+            selectedCell={selectedCell}
+            liveCell={liveCell}
+            historyTrail={historyTrail}
+            wireframe={wireframe}
+            showCells={showCells}
+          />
+        </Canvas>
+      </div>
+
+      {/* Info panel */}
+      <div className="table3d-info">
+        <span>Range: {zMin.toFixed(2)} - {zMax.toFixed(2)}</span>
+        <span>Size: {x_bins.length} × {y_bins.length}</span>
+        <span className="table3d-hint">Drag to rotate • Scroll to zoom • Click cells to select</span>
       </div>
     </div>
   );

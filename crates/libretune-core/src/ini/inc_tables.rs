@@ -51,8 +51,9 @@ enum IncTableData {
 impl IncTable {
     /// Load an .inc file from disk
     pub fn load_from_file(path: &Path) -> Result<Self, String> {
-        let content = fs::read_to_string(path)
+        let bytes = fs::read(path)
             .map_err(|e| format!("Failed to read .inc file '{}': {}", path.display(), e))?;
+        let content = crate::ini::encoding::decode_ini_bytes(&bytes);
 
         let name = path
             .file_stem()

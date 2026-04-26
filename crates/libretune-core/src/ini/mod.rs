@@ -10,6 +10,7 @@
 //! - Menu structure
 
 mod constants;
+pub mod encoding;
 mod error;
 pub mod expression;
 mod gauges;

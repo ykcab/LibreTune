@@ -7,7 +7,8 @@
 //! - Uses vehicle specs from user input
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { X, Car, Gauge, Fuel, Timer, Calculator, Save, RotateCcw } from 'lucide-react';
+import { Car, Gauge, Fuel, Timer, Calculator, Save, RotateCcw } from 'lucide-react';
+import { Dialog, Button } from '../common';
 import './PerformanceFieldsDialog.css';
 import { useChannels } from '../../stores/realtimeStore';
 
@@ -276,17 +277,21 @@ export default function PerformanceFieldsDialog({ isOpen, onClose }: Props) {
   
   if (!isOpen) return null;
   
+  const title = (
+    <>
+      <Calculator size={18} /> Performance Calculator
+    </>
+  );
+  
   return (
-    <div className="performance-dialog-overlay" onClick={onClose}>
-      <div className="performance-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="performance-dialog-header">
-          <h2><Calculator size={20} /> Performance Calculator</h2>
-          <button className="close-btn" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        
-        <div className="performance-dialog-content">
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      title={title}
+      size="xl"
+      className="performance-dialog"
+    >
+      <Dialog.Body className="performance-dialog-content">
           {/* Left Column - Vehicle Specs */}
           <div className="performance-section">
             <h3><Car size={16} /> Vehicle Specifications</h3>
@@ -393,12 +398,12 @@ export default function PerformanceFieldsDialog({ isOpen, onClose }: Props) {
             </div>
             
             <div className="button-row">
-              <button className="secondary" onClick={handleReset}>
-                <RotateCcw size={14} /> Reset
-              </button>
-              <button className="primary" onClick={handleSave}>
-                <Save size={14} /> Save Specs
-              </button>
+              <Button variant="secondary" onClick={handleReset} leadingIcon={<RotateCcw size={14} />}>
+                Reset
+              </Button>
+              <Button variant="primary" onClick={handleSave} leadingIcon={<Save size={14} />}>
+                Save Specs
+              </Button>
             </div>
           </div>
           
@@ -528,12 +533,11 @@ export default function PerformanceFieldsDialog({ isOpen, onClose }: Props) {
               * Calculations use physics-based model. Actual results may vary based on conditions.
             </div>
           </div>
-        </div>
-        
-        <div className="performance-dialog-footer">
-          <button onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
+      </Dialog.Body>
+      
+      <Dialog.Footer>
+        <Button variant="secondary" onClick={onClose}>Close</Button>
+      </Dialog.Footer>
+    </Dialog>
   );
 }

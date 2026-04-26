@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { StatusItem } from './TunerLayout';
 import { useChannelValue } from '../../stores/realtimeStore';
 import './StatusBar.css';
@@ -203,13 +204,14 @@ export function LoggingIndicator({
   isLogging: boolean;
   duration?: string;
 }) {
+  const { t } = useTranslation('common');
   if (!isLogging) {
     return (
       <span className="logging-indicator logging-inactive">
         <svg viewBox="0 0 16 16" className="statusbar-icon">
           <circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
         </svg>
-        <span>Not Logging</span>
+        <span>{t('state.notLogging')}</span>
       </span>
     );
   }
@@ -221,7 +223,7 @@ export function LoggingIndicator({
           <animate attributeName="opacity" values="1;0.5;1" dur="1s" repeatCount="indefinite" />
         </circle>
       </svg>
-      <span>Logging</span>
+      <span>{t('state.logging')}</span>
       {duration && <span className="logging-duration">{duration}</span>}
     </span>
   );

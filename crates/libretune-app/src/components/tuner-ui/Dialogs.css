@@ -205,8 +205,8 @@
 }
 
 .dialog-footer button.dialog-burn {
-  background: linear-gradient(135deg, #ff6b35, #ff4444);
-  border-color: #ff4444;
+  background: linear-gradient(135deg, var(--warning), var(--error));
+  border-color: var(--error);
 }
 
 /* Messages */

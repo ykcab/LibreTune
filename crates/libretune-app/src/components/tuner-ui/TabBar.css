@@ -152,7 +152,7 @@
 }
 
 .tab-popout:hover {
-  background: var(--accent, #4a9eff);
+  background: var(--accent);
   color: #fff;
 }
 
