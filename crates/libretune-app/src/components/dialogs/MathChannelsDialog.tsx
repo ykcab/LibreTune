@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Plus, Trash2, Save, Calculator, AlertCircle, CheckCircle } from 'lucide-react';
-import { Dialog, Button } from '../common';
+import { Dialog, Button, FormField } from '../common';
 import './MathChannelsDialog.css';
 
 interface UserMathChannel {
@@ -182,34 +182,44 @@ export default function MathChannelsDialog({ onClose }: MathChannelsDialogProps)
             ) : (
               <div className="editor-form">
                 <div className="form-row">
-                  <div className="form-group" style={{ flex: 2 }}>
-                    <label>Channel Name</label>
-                    <input 
-                      value={name} 
-                      onChange={e => { setName(e.target.value); setIsDirty(true); }}
-                      placeholder="e.g. Boost_PSI"
-                      disabled={editingId !== '__NEW__' && editingId !== name} 
-                    />
+                  <div style={{ flex: 2 }}>
+                    <FormField label="Channel Name">
+                      {(id) => (
+                        <input
+                          id={id}
+                          value={name}
+                          onChange={e => { setName(e.target.value); setIsDirty(true); }}
+                          placeholder="e.g. Boost_PSI"
+                          disabled={editingId !== '__NEW__' && editingId !== name}
+                        />
+                      )}
+                    </FormField>
                   </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Units</label>
-                    <input 
-                      value={units} 
-                      onChange={e => { setUnits(e.target.value); setIsDirty(true); }}
-                      placeholder="psi"
-                    />
+                  <div style={{ flex: 1 }}>
+                    <FormField label="Units">
+                      {(id) => (
+                        <input
+                          id={id}
+                          value={units}
+                          onChange={e => { setUnits(e.target.value); setIsDirty(true); }}
+                          placeholder="psi"
+                        />
+                      )}
+                    </FormField>
                   </div>
                 </div>
 
-                <div className="form-group">
-                  <label>Expression</label>
-                  <input 
-                    className="font-mono" 
-                    value={expression} 
-                    onChange={e => { setExpression(e.target.value); setIsDirty(true); }}
-                    placeholder="(map - 100) * 0.145"
-                  />
-                </div>
+                <FormField label="Expression">
+                  {(id) => (
+                    <input
+                      id={id}
+                      className="font-mono"
+                      value={expression}
+                      onChange={e => { setExpression(e.target.value); setIsDirty(true); }}
+                      placeholder="(map - 100) * 0.145"
+                    />
+                  )}
+                </FormField>
 
                 {expression && (
                   <div className={`validation-status ${isValid ? 'valid' : 'invalid'}`}>

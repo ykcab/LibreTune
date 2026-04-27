@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Circle, Square, FolderOpen, Save, Play, Hourglass, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { FormField } from './common';
 import './ActionRecorder.css';
 
 interface Action {
@@ -154,27 +155,31 @@ return new_afr`;
             
             {!isRecording ? (
               <>
-                <div className="form-group">
-                  <label>Action Set Name:</label>
-                  <input
-                    type="text"
-                    value={recordingName}
-                    onChange={(e) => setRecordingName(e.target.value)}
-                    placeholder="e.g., Fuel Tuning Workflow"
-                    disabled={isRecording}
-                  />
-                </div>
+                <FormField label="Action Set Name">
+                  {(id) => (
+                    <input
+                      id={id}
+                      type="text"
+                      value={recordingName}
+                      onChange={(e) => setRecordingName(e.target.value)}
+                      placeholder="e.g., Fuel Tuning Workflow"
+                      disabled={isRecording}
+                    />
+                  )}
+                </FormField>
 
-                <div className="form-group">
-                  <label>Description:</label>
-                  <textarea
-                    value={recordingDescription}
-                    onChange={(e) => setRecordingDescription(e.target.value)}
-                    placeholder="What does this action set do?"
-                    rows={3}
-                    disabled={isRecording}
-                  />
-                </div>
+                <FormField label="Description">
+                  {(id) => (
+                    <textarea
+                      id={id}
+                      value={recordingDescription}
+                      onChange={(e) => setRecordingDescription(e.target.value)}
+                      placeholder="What does this action set do?"
+                      rows={3}
+                      disabled={isRecording}
+                    />
+                  )}
+                </FormField>
 
                 <button
                   className="btn btn-primary"
