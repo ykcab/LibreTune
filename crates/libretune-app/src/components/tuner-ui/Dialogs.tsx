@@ -10,7 +10,7 @@ import { createFocusTrap, focusFirstElement } from '../../utils/focusManagement'
 import HotkeyEditor from '../dialogs/HotkeyEditor';
 import ThemePicker from '../dialogs/ThemePicker';
 import StatusBarChannelSelector from '../dialogs/StatusBarChannelSelector';
-import { Dialog, Button } from '../common';
+import { Dialog, Button, FormField } from '../common';
 import { ThemeName } from '../../themes';
 // Static list (no runtime cost — pure data). The i18n instance itself is
 // imported dynamically inside the apply handler to avoid forcing every
@@ -804,120 +804,134 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
         <div className="dialog-content">
           {currentTab === 'general' && (
             <div className="dialog-tab-content" id="general-panel" role="tabpanel" aria-labelledby="general-tab">
-              <div className="dialog-form-group">
-                <label>Theme</label>
-                <ThemePicker 
-                  selectedTheme={localTheme as ThemeName} 
-                  onChange={(theme) => setLocalTheme(theme)}
-                />
-              </div>
+              <FormField label="Theme">
+                {() => (
+                  <ThemePicker 
+                    selectedTheme={localTheme as ThemeName} 
+                    onChange={(theme) => setLocalTheme(theme)}
+                  />
+                )}
+              </FormField>
 
-              <div className="dialog-form-group">
-                <label htmlFor="settings-language">Language</label>
-                <select
-                  id="settings-language"
-                  value={localLanguage}
-                  onChange={(e) => setLocalLanguage(e.target.value as SupportedLanguageCode)}
-                >
-                  {SUPPORTED_LANGUAGES.map(lang => (
-                    <option key={lang.code} value={lang.code}>{lang.label}</option>
-                  ))}
-                </select>
-              </div>
+              <FormField label="Language">
+                {(id) => (
+                  <select
+                    id={id}
+                    value={localLanguage}
+                    onChange={(e) => setLocalLanguage(e.target.value as SupportedLanguageCode)}
+                  >
+                    {SUPPORTED_LANGUAGES.map(lang => (
+                      <option key={lang.code} value={lang.code}>{lang.label}</option>
+                    ))}
+                  </select>
+                )}
+              </FormField>
           
-          <div className="dialog-form-group">
-            <label>Units Preset</label>
-            <select
-              value={localUnits}
-              onChange={(e) => {
-                setLocalUnits(e.target.value);
-                if (e.target.value === 'metric') {
-                  unitPrefs.useMetricUnits();
-                } else if (e.target.value === 'imperial') {
-                  unitPrefs.useUSUnits();
-                }
-              }}
-            >
-              <option value="metric">Metric (°C, kPa)</option>
-              <option value="imperial">Imperial (°F, PSI)</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
+          <FormField label="Units Preset">
+            {(id) => (
+              <select
+                id={id}
+                value={localUnits}
+                onChange={(e) => {
+                  setLocalUnits(e.target.value);
+                  if (e.target.value === 'metric') {
+                    unitPrefs.useMetricUnits();
+                  } else if (e.target.value === 'imperial') {
+                    unitPrefs.useUSUnits();
+                  }
+                }}
+              >
+                <option value="metric">Metric (°C, kPa)</option>
+                <option value="imperial">Imperial (°F, PSI)</option>
+                <option value="custom">Custom</option>
+              </select>
+            )}
+          </FormField>
 
           <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>Unit Preferences</h3>
 
-          <div className="dialog-form-group">
-            <label>Temperature</label>
-            <select
-              value={unitPrefs.preferences.temperature}
-              onChange={(e) => {
-                unitPrefs.updatePreference('temperature', e.target.value as TemperatureUnit);
-                setLocalUnits('custom');
-              }}
-            >
-              <option value="C">Celsius (°C)</option>
-              <option value="F">Fahrenheit (°F)</option>
-              <option value="K">Kelvin (K)</option>
-            </select>
-          </div>
+          <FormField label="Temperature">
+            {(id) => (
+              <select
+                id={id}
+                value={unitPrefs.preferences.temperature}
+                onChange={(e) => {
+                  unitPrefs.updatePreference('temperature', e.target.value as TemperatureUnit);
+                  setLocalUnits('custom');
+                }}
+              >
+                <option value="C">Celsius (°C)</option>
+                <option value="F">Fahrenheit (°F)</option>
+                <option value="K">Kelvin (K)</option>
+              </select>
+            )}
+          </FormField>
 
-          <div className="dialog-form-group">
-            <label>Pressure</label>
-            <select
-              value={unitPrefs.preferences.pressure}
-              onChange={(e) => {
-                unitPrefs.updatePreference('pressure', e.target.value as PressureUnit);
-                setLocalUnits('custom');
-              }}
-            >
-              <option value="kPa">Kilopascals (kPa)</option>
-              <option value="PSI">PSI</option>
-              <option value="bar">Bar</option>
-              <option value="inHg">Inches of Mercury (inHg)</option>
-            </select>
-          </div>
+          <FormField label="Pressure">
+            {(id) => (
+              <select
+                id={id}
+                value={unitPrefs.preferences.pressure}
+                onChange={(e) => {
+                  unitPrefs.updatePreference('pressure', e.target.value as PressureUnit);
+                  setLocalUnits('custom');
+                }}
+              >
+                <option value="kPa">Kilopascals (kPa)</option>
+                <option value="PSI">PSI</option>
+                <option value="bar">Bar</option>
+                <option value="inHg">Inches of Mercury (inHg)</option>
+              </select>
+            )}
+          </FormField>
 
-          <div className="dialog-form-group">
-            <label>Air-Fuel Ratio</label>
-            <select
-              value={unitPrefs.preferences.afr}
-              onChange={(e) => {
-                unitPrefs.updatePreference('afr', e.target.value as AfrUnit);
-                setLocalUnits('custom');
-              }}
-            >
-              <option value="AFR">AFR (Air-Fuel Ratio)</option>
-              <option value="Lambda">Lambda (λ)</option>
-            </select>
-          </div>
+          <FormField label="Air-Fuel Ratio">
+            {(id) => (
+              <select
+                id={id}
+                value={unitPrefs.preferences.afr}
+                onChange={(e) => {
+                  unitPrefs.updatePreference('afr', e.target.value as AfrUnit);
+                  setLocalUnits('custom');
+                }}
+              >
+                <option value="AFR">AFR (Air-Fuel Ratio)</option>
+                <option value="Lambda">Lambda (λ)</option>
+              </select>
+            )}
+          </FormField>
 
-          <div className="dialog-form-group">
-            <label>Speed</label>
-            <select
-              value={unitPrefs.preferences.speed}
-              onChange={(e) => {
-                unitPrefs.updatePreference('speed', e.target.value as SpeedUnit);
-                setLocalUnits('custom');
-              }}
-            >
-              <option value="km/h">km/h</option>
-              <option value="mph">mph</option>
-            </select>
-          </div>
+          <FormField label="Speed">
+            {(id) => (
+              <select
+                id={id}
+                value={unitPrefs.preferences.speed}
+                onChange={(e) => {
+                  unitPrefs.updatePreference('speed', e.target.value as SpeedUnit);
+                  setLocalUnits('custom');
+                }}
+              >
+                <option value="km/h">km/h</option>
+                <option value="mph">mph</option>
+              </select>
+            )}
+          </FormField>
 
-          <div className="dialog-form-group">
-            <label>Fuel Type (for Lambda ↔ AFR)</label>
-            <select
-              value={unitPrefs.preferences.fuelType}
-              onChange={(e) => unitPrefs.updatePreference('fuelType', e.target.value as FuelType)}
-            >
-              <option value="gasoline">Gasoline (λ=1 @ {STOICH_AFR.gasoline}:1)</option>
-              <option value="e85">E85 (λ=1 @ {STOICH_AFR.e85}:1)</option>
-              <option value="ethanol">Ethanol (λ=1 @ {STOICH_AFR.ethanol}:1)</option>
-              <option value="methanol">Methanol (λ=1 @ {STOICH_AFR.methanol}:1)</option>
-              <option value="diesel">Diesel (λ=1 @ {STOICH_AFR.diesel}:1)</option>
-            </select>
-          </div>
+          <FormField label="Fuel Type (for Lambda ↔ AFR)">
+            {(id) => (
+              <select
+                id={id}
+                value={unitPrefs.preferences.fuelType}
+                onChange={(e) => unitPrefs.updatePreference('fuelType', e.target.value as FuelType)}
+              >
+                <option value="gasoline">Gasoline (λ=1 @ {STOICH_AFR.gasoline}:1)</option>
+                <option value="e85">E85 (λ=1 @ {STOICH_AFR.e85}:1)</option>
+                <option value="ethanol">Ethanol (λ=1 @ {STOICH_AFR.ethanol}:1)</option>
+                <option value="methanol">Methanol (λ=1 @ {STOICH_AFR.methanol}:1)</option>
+                <option value="diesel">Diesel (λ=1 @ {STOICH_AFR.diesel}:1)</option>
+              </select>
+            )}
+          </FormField>
 
           <div className="dialog-form-group">
             <label>
@@ -944,37 +958,43 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
             <span className="dialog-form-note">Simulate ECU data for testing (runtime-only)</span>
           </div>
 
-          <div className="dialog-form-group">
-            <label>Default Runtime Packet Mode</label>
-            <select
-              value={runtimePacketMode}
-              onChange={(e) => setRuntimePacketMode(e.target.value as any)}
-            >
-              <option value={'Auto'}>Auto (recommended)</option>
-              <option value={'ForceBurst'}>Force Burst</option>
-              <option value={'ForceOCH'}>Force OCH</option>
-              <option value={'Disabled'}>Disabled (use Burst)</option>
-            </select>
-            <span className="dialog-form-note">Default runtime packet mode for new connections</span>
-            <span className="dialog-form-note">OCH (On-Controller Block Read): use INI-defined block reads when supported by the ECU (configured via <code>ochGetCommand</code> / <code>ochBlockSize</code>).</span>
+          <FormField
+            label="Default Runtime Packet Mode"
+            help={<>
+              Default runtime packet mode for new connections.{' '}
+              OCH (On-Controller Block Read): use INI-defined block reads when supported by the ECU (configured via <code>ochGetCommand</code> / <code>ochBlockSize</code>).
+            </>}
+          >
+            {(id) => (
+              <select
+                id={id}
+                value={runtimePacketMode}
+                onChange={(e) => setRuntimePacketMode(e.target.value as any)}
+              >
+                <option value={'Auto'}>Auto (recommended)</option>
+                <option value={'ForceBurst'}>Force Burst</option>
+                <option value={'ForceOCH'}>Force OCH</option>
+                <option value={'Disabled'}>Disabled (use Burst)</option>
+              </select>
+            )}
+          </FormField>
 
-            {/* Auto-reconnect after controller commands */}
-            <div className="dialog-form-group" style={{ marginTop: '0.5rem' }}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={autoReconnectAfterControllerCommand}
-                  onChange={(e) => setAutoReconnectAfterControllerCommand(e.target.checked)}
-                />
-                Auto-sync & reconnect after controller commands
-              </label>
-              <span className="dialog-form-note">When enabled, the app will automatically sync and reconnect to the ECU after executing controller commands that modify ECU settings (e.g., applying base maps).</span>
-            </div>
+          {/* Auto-reconnect after controller commands */}
+          <div className="dialog-form-group" style={{ marginTop: '0.5rem' }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={autoReconnectAfterControllerCommand}
+                onChange={(e) => setAutoReconnectAfterControllerCommand(e.target.checked)}
+              />
+              Auto-sync & reconnect after controller commands
+            </label>
+            <span className="dialog-form-note">When enabled, the app will automatically sync and reconnect to the ECU after executing controller commands that modify ECU settings (e.g., applying base maps).</span>
+          </div>
 
-            {/* Show small live metrics in connection dialog too */}
-            <div style={{ marginTop: '0.6rem' }}>
-              <ConnectionMetrics compact />
-            </div>
+          {/* Show small live metrics in connection dialog too */}
+          <div style={{ marginTop: '0.6rem' }}>
+            <ConnectionMetrics compact />
           </div>
 
           <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>Status Bar</h3>
@@ -1030,47 +1050,53 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
 
           <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>Heatmap Colors</h3>
           
-          <div className="dialog-form-group">
-            <label>Value Tables (VE, Timing)</label>
-            <select
-              value={heatmapValueScheme}
-              onChange={(e) => setHeatmapValueScheme(e.target.value as HeatmapScheme)}
-            >
-              {availableSchemes.filter(s => s.id !== 'custom').map(scheme => (
-                <option key={scheme.id} value={scheme.id}>
-                  {scheme.name} {scheme.colorblindSafe && '(colorblind-safe)'}
-                </option>
-              ))}
-            </select>
-          </div>
+          <FormField label="Value Tables (VE, Timing)">
+            {(id) => (
+              <select
+                id={id}
+                value={heatmapValueScheme}
+                onChange={(e) => setHeatmapValueScheme(e.target.value as HeatmapScheme)}
+              >
+                {availableSchemes.filter(s => s.id !== 'custom').map(scheme => (
+                  <option key={scheme.id} value={scheme.id}>
+                    {scheme.name} {scheme.colorblindSafe && '(colorblind-safe)'}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
 
-          <div className="dialog-form-group">
-            <label>Change Display (AFR Correction)</label>
-            <select
-              value={heatmapChangeScheme}
-              onChange={(e) => setHeatmapChangeScheme(e.target.value as HeatmapScheme)}
-            >
-              {availableSchemes.filter(s => s.id !== 'custom').map(scheme => (
-                <option key={scheme.id} value={scheme.id}>
-                  {scheme.name} {scheme.colorblindSafe && '(colorblind-safe)'}
-                </option>
-              ))}
-            </select>
-          </div>
+          <FormField label="Change Display (AFR Correction)">
+            {(id) => (
+              <select
+                id={id}
+                value={heatmapChangeScheme}
+                onChange={(e) => setHeatmapChangeScheme(e.target.value as HeatmapScheme)}
+              >
+                {availableSchemes.filter(s => s.id !== 'custom').map(scheme => (
+                  <option key={scheme.id} value={scheme.id}>
+                    {scheme.name} {scheme.colorblindSafe && '(colorblind-safe)'}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
 
-          <div className="dialog-form-group">
-            <label>Coverage Display (Hit Weighting)</label>
-            <select
-              value={heatmapCoverageScheme}
-              onChange={(e) => setHeatmapCoverageScheme(e.target.value as HeatmapScheme)}
-            >
-              {availableSchemes.filter(s => s.id !== 'custom').map(scheme => (
-                <option key={scheme.id} value={scheme.id}>
-                  {scheme.name} {scheme.colorblindSafe && '(colorblind-safe)'}
-                </option>
-              ))}
-            </select>
-          </div>
+          <FormField label="Coverage Display (Hit Weighting)">
+            {(id) => (
+              <select
+                id={id}
+                value={heatmapCoverageScheme}
+                onChange={(e) => setHeatmapCoverageScheme(e.target.value as HeatmapScheme)}
+              >
+                {availableSchemes.filter(s => s.id !== 'custom').map(scheme => (
+                  <option key={scheme.id} value={scheme.id}>
+                    {scheme.name} {scheme.colorblindSafe && '(colorblind-safe)'}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
 
           <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>Dashboard</h3>
           
@@ -1124,46 +1150,56 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
 
           <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>Version Control</h3>
           
-          <div className="dialog-form-group">
-            <label>Auto-Commit on Save</label>
-            <select
-              value={autoCommitOnSave}
-              onChange={(e) => setAutoCommitOnSave(e.target.value)}
-            >
-              <option value="never">Never</option>
-              <option value="always">Always</option>
-              <option value="ask">Ask each time</option>
-            </select>
-            <span className="dialog-form-note">Automatically create a Git commit when saving the tune</span>
-          </div>
+          <FormField
+            label="Auto-Commit on Save"
+            help="Automatically create a Git commit when saving the tune"
+          >
+            {(id) => (
+              <select
+                id={id}
+                value={autoCommitOnSave}
+                onChange={(e) => setAutoCommitOnSave(e.target.value)}
+              >
+                <option value="never">Never</option>
+                <option value="always">Always</option>
+                <option value="ask">Ask each time</option>
+              </select>
+            )}
+          </FormField>
 
-          <div className="dialog-form-group">
-            <label>Commit Message Format</label>
-            <input
-              type="text"
-              value={commitMessageFormat}
-              onChange={(e) => setCommitMessageFormat(e.target.value)}
-              style={{ width: '100%', padding: '0.5rem', fontFamily: 'monospace' }}
-            />
-            <span className="dialog-form-note">Available placeholders: {'{date}'}, {'{time}'}, {'{table}'}</span>
-          </div>
+          <FormField
+            label="Commit Message Format"
+            help={<>Available placeholders: {'{date}'}, {'{time}'}, {'{table}'}</>}
+          >
+            {(id) => (
+              <input
+                id={id}
+                type="text"
+                value={commitMessageFormat}
+                onChange={(e) => setCommitMessageFormat(e.target.value)}
+                style={{ fontFamily: 'monospace' }}
+              />
+            )}
+          </FormField>
 
           <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>Indicator Panel</h3>
           
-          <div className="dialog-form-group">
-            <label>Column Count</label>
-            <select
-              value={indicatorColumnCount}
-              onChange={(e) => setIndicatorColumnCount(e.target.value)}
-            >
-              <option value="auto">Auto (fill width)</option>
-              <option value="8">8 columns</option>
-              <option value="10">10 columns</option>
-              <option value="12">12 columns</option>
-              <option value="14">14 columns</option>
-              <option value="16">16 columns</option>
-            </select>
-          </div>
+          <FormField label="Column Count">
+            {(id) => (
+              <select
+                id={id}
+                value={indicatorColumnCount}
+                onChange={(e) => setIndicatorColumnCount(e.target.value)}
+              >
+                <option value="auto">Auto (fill width)</option>
+                <option value="8">8 columns</option>
+                <option value="10">10 columns</option>
+                <option value="12">12 columns</option>
+                <option value="14">14 columns</option>
+                <option value="16">16 columns</option>
+              </select>
+            )}
+          </FormField>
 
           <div className="dialog-form-group">
             <label>
@@ -1177,16 +1213,18 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
             <span className="dialog-form-note">Add blank cells to complete the grid</span>
           </div>
 
-          <div className="dialog-form-group">
-            <label>Text Fit Mode</label>
-            <select
-              value={indicatorTextFit}
-              onChange={(e) => setIndicatorTextFit(e.target.value)}
-            >
-              <option value="scale">Scale to fit</option>
-              <option value="wrap">Wrap text (2 lines)</option>
-            </select>
-          </div>
+          <FormField label="Text Fit Mode">
+            {(id) => (
+              <select
+                id={id}
+                value={indicatorTextFit}
+                onChange={(e) => setIndicatorTextFit(e.target.value)}
+              >
+                <option value="scale">Scale to fit</option>
+                <option value="wrap">Wrap text (2 lines)</option>
+              </select>
+            )}
+          </FormField>
 
           <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>Data Logging</h3>
 
@@ -1254,29 +1292,37 @@ export function SettingsDialog({ isOpen, onClose, theme, onThemeChange, onSettin
             <span className="dialog-form-note">Shows a warning when changes exceed thresholds</span>
           </div>
 
-          <div className="dialog-form-group">
-            <label>Absolute Change Threshold</label>
-            <input
-              type="number"
-              min="0"
-              step="0.1"
-              value={alertLargeChangeAbs}
-              onChange={(e) => setAlertLargeChangeAbs(Number(e.target.value))}
-            />
-            <span className="dialog-form-note">Warn if a cell changes by more than this amount</span>
-          </div>
+          <FormField
+            label="Absolute Change Threshold"
+            help="Warn if a cell changes by more than this amount"
+          >
+            {(id) => (
+              <input
+                id={id}
+                type="number"
+                min="0"
+                step="0.1"
+                value={alertLargeChangeAbs}
+                onChange={(e) => setAlertLargeChangeAbs(Number(e.target.value))}
+              />
+            )}
+          </FormField>
 
-          <div className="dialog-form-group">
-            <label>Percent Change Threshold (%)</label>
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={alertLargeChangePercent}
-              onChange={(e) => setAlertLargeChangePercent(Number(e.target.value))}
-            />
-            <span className="dialog-form-note">Warn if a cell changes by more than this percent</span>
-          </div>
+          <FormField
+            label="Percent Change Threshold (%)"
+            help="Warn if a cell changes by more than this percent"
+          >
+            {(id) => (
+              <input
+                id={id}
+                type="number"
+                min="0"
+                step="1"
+                value={alertLargeChangePercent}
+                onChange={(e) => setAlertLargeChangePercent(Number(e.target.value))}
+              />
+            )}
+          </FormField>
             </div>
           )}
 
