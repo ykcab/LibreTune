@@ -9,19 +9,19 @@ import {
 } from './dashTypes';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Copy, Pencil, Trash2, Save, RotateCw, AlertTriangle, Compass, X, FolderOpen } from 'lucide-react';
 import { useRealtimeStore } from '../../stores/realtimeStore';
 import { invoke } from '@tauri-apps/api/core';
 import TsGauge from '../gauges/TsGauge';
 import GaugeContextMenu, { ContextMenuState } from './GaugeContextMenu';
 import ImportDashboardDialog from '../dialogs/ImportDashboardDialog';
 import DashboardDesigner from './DashboardDesigner';
-import { Dialog, Button } from '../common';
 import LiveTsIndicator from './components/LiveTsIndicator';
+import DashboardHeader from './components/DashboardHeader';
+import ValidationPanel from './components/ValidationPanel';
+import CompatibilityBar from './components/CompatibilityBar';
+import DashboardSelectorOverlay from './components/DashboardSelectorOverlay';
+import DashboardManagementDialogs from './components/DashboardManagementDialogs';
 import { buildDefaultGauge } from './utils/defaultGauge';
-import {
-  formatValidationIssue,
-} from './utils/validation';
 import {
   computeCompatibilityReport,
   hasCompatibilityIssues as hasCompatIssues,
@@ -389,221 +389,48 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
 
   return (
     <div className="ts-dashboard-container">
-      {/* Header with dashboard selector */}
-      <div className="ts-dashboard-header">
-        <div className="ts-dashboard-header-left">
-          <span className="ts-dashboard-title">
-            {dashFile.bibliography.author || selectedPath.split('/').pop()?.replace(/\.(ltdash\.xml|dash)$/i, '') || 'Dashboard'}
-          </span>
-          <button 
-            className="ts-dashboard-selector-btn"
-            onClick={() => setShowSelector(!showSelector)}
-          >
-            Change ▼
-          </button>
-
-        </div>
-        <div className="ts-dashboard-header-right">
-          <button 
-            className="ts-dashboard-action-btn"
-            onClick={() => { setNewDashName(''); setShowNewDialog(true); }}
-            title="New Dashboard"
-          >
-            <Plus size={14} /> New
-          </button>
-          <button 
-            className="ts-dashboard-action-btn"
-            onClick={handleDuplicateDashboard}
-            title="Duplicate Dashboard"
-          >
-            <Copy size={14} /> Duplicate
-          </button>
-          <button 
-            className="ts-dashboard-action-btn"
-            onClick={() => { 
-              const currentName = selectedPath.split('/').pop()?.replace(/\.(ltdash\.xml|dash)$/i, '') || '';
-              setRenameName(currentName);
-              setShowRenameDialog(true); 
-            }}
-            title="Rename Dashboard"
-          >
-            <Pencil size={14} /> Rename
-          </button>
-          <button 
-            className="ts-dashboard-action-btn danger"
-            onClick={() => setShowDeleteConfirm(true)}
-            title="Delete Dashboard"
-          >
-            <Trash2 size={14} /> Delete
-          </button>
-          <button 
-            className="ts-dashboard-action-btn"
-            onClick={handleExportDashboard}
-            title="Export Dashboard"
-          >
-            <Save size={14} /> Export
-          </button>
-          <button 
-            className="ts-dashboard-action-btn"
-            onClick={handleSyncGaugeRanges}
-            title="Sync gauge ranges from INI"
-          >
-            <RotateCw size={14} /> Sync Ranges
-          </button>
-          {validationReport && (
-            <button
-              className={`ts-dashboard-action-btn ${
-                validationReport.errors.length > 0
-                  ? 'danger'
-                  : validationReport.warnings.length > 0
-                    ? 'warn'
-                    : ''
-              }`}
-              onClick={() => setShowValidationPanel((prev) => !prev)}
-              title="Dashboard validation issues"
-            >
-              <AlertTriangle size={14} /> Validate ({validationReport.errors.length}E/{validationReport.warnings.length}W)
-            </button>
-          )}
-          <button
-            className={`ts-dashboard-action-btn ${legacyMode ? 'active' : ''}`}
-            onClick={() => setLegacyMode(prev => !prev)}
-            title={legacyMode ? 'Legacy TS layout enabled' : 'Enable legacy TS layout'}
-          >
-            <Compass size={14} /> Legacy: {legacyMode ? 'On' : 'Off'}
-          </button>
-        </div>
-      </div>
+      <DashboardHeader
+        title={dashFile.bibliography.author || selectedPath.split('/').pop()?.replace(/\.(ltdash\.xml|dash)$/i, '') || 'Dashboard'}
+        showSelector={showSelector}
+        onToggleSelector={() => setShowSelector(!showSelector)}
+        onNew={() => { setNewDashName(''); setShowNewDialog(true); }}
+        onDuplicate={handleDuplicateDashboard}
+        onRename={() => {
+          const currentName = selectedPath.split('/').pop()?.replace(/\.(ltdash\.xml|dash)$/i, '') || '';
+          setRenameName(currentName);
+          setShowRenameDialog(true);
+        }}
+        onDelete={() => setShowDeleteConfirm(true)}
+        onExport={handleExportDashboard}
+        onSyncRanges={handleSyncGaugeRanges}
+        validationReport={validationReport}
+        onToggleValidationPanel={() => setShowValidationPanel((prev) => !prev)}
+        legacyMode={legacyMode}
+        onToggleLegacyMode={() => setLegacyMode((prev) => !prev)}
+      />
 
       {showValidationPanel && validationReport && (
-        <div className="ts-dashboard-validation">
-          <div className="ts-dashboard-validation-header">
-            <div>
-              Validation: {validationReport.errors.length} error(s), {validationReport.warnings.length} warning(s)
-            </div>
-            <button
-              className="ts-dashboard-compat-close"
-              onClick={() => setShowValidationPanel(false)}
-              title="Dismiss"
-              aria-label="Dismiss"
-            >
-              <X size={14} />
-            </button>
-          </div>
-          {validationReport.errors.length === 0 && validationReport.warnings.length === 0 ? (
-            <div className="ts-dashboard-validation-empty">No issues detected.</div>
-          ) : (
-            <div className="ts-dashboard-validation-body">
-              {validationReport.errors.length > 0 && (
-                <div className="ts-dashboard-validation-section">
-                  <h4>Errors</h4>
-                  <ul>
-                    {validationReport.errors.map((issue, idx) => (
-                      <li key={`err-${idx}`}>{formatValidationIssue(issue)}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {validationReport.warnings.length > 0 && (
-                <div className="ts-dashboard-validation-section">
-                  <h4>Warnings</h4>
-                  <ul>
-                    {validationReport.warnings.map((issue, idx) => (
-                      <li key={`warn-${idx}`}>{formatValidationIssue(issue)}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <ValidationPanel report={validationReport} onClose={() => setShowValidationPanel(false)} />
       )}
 
       {compatibilityReport && compatBarVisible && hasCompatibilityIssues && (
-        <div className={`ts-dashboard-compat warn`}>
-          <span>
-            Compatibility: some features not yet supported
-          </span>
-          <button
-            className="ts-dashboard-compat-close"
-            onClick={() => setCompatBarVisible(false)}
-            title="Dismiss"
-            aria-label="Dismiss"
-          >
-            <X size={14} />
-          </button>
-        </div>
+        <CompatibilityBar onClose={() => setCompatBarVisible(false)} />
       )}
 
       {/* Dashboard selector dropdown */}
       {showSelector && (
-        <div className="ts-dashboard-selector-overlay" onClick={() => setShowSelector(false)}>
-          <div className="ts-dashboard-selector" onClick={e => e.stopPropagation()}>
-            <h3>Select Dashboard</h3>
-            <div className="ts-dashboard-list">
-              {/* Group dashboards by category */}
-              {(() => {
-                const categories = new Map<string, DashFileInfo[]>();
-                availableDashes.forEach(dash => {
-                  const cat = dash.category || 'Other';
-                  if (!categories.has(cat)) {
-                    categories.set(cat, []);
-                  }
-                  categories.get(cat)!.push(dash);
-                });
-                
-                // Sort categories: User first, then Reference, then others
-                const sortedCats = Array.from(categories.keys()).sort((a, b) => {
-                  if (a === 'User') return -1;
-                  if (b === 'User') return 1;
-                  if (a === 'Reference') return -1;
-                  if (b === 'Reference') return 1;
-                  return a.localeCompare(b);
-                });
-                
-                return sortedCats.map(category => (
-                  <div key={category} className="ts-dashboard-category">
-                    <div className="ts-dashboard-category-header">
-                      {category}
-                      <span className="ts-dashboard-category-count">
-                        ({categories.get(category)!.length})
-                      </span>
-                    </div>
-                    <div className="ts-dashboard-category-items">
-                      {categories.get(category)!.map((dash) => (
-                        <button
-                          key={dash.path}
-                          className={`ts-dashboard-option ${dash.path === selectedPath ? 'selected' : ''}`}
-                          onClick={() => handleDashSelect(dash.path)}
-                          title={dash.path}
-                        >
-                          {dash.name.replace(/\.(ltdash\.xml|dash|gauge)$/i, '')}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ));
-              })()}
-            </div>
-            
-            {/* Import button */}
-            <div className="ts-dashboard-import-section">
-              <button
-                className="ts-dashboard-import-btn"
-                onClick={() => {
-                  setShowSelector(false);
-                  setShowImportDialog(true);
-                }}
-              >
-                <FolderOpen size={14} /> Import TS Dashboard Files...
-              </button>
-            </div>
-          </div>
-        </div>
+        <DashboardSelectorOverlay
+          availableDashes={availableDashes}
+          selectedPath={selectedPath}
+          onSelect={handleDashSelect}
+          onClose={() => setShowSelector(false)}
+          onImportClick={() => {
+            setShowSelector(false);
+            setShowImportDialog(true);
+          }}
+        />
       )}
 
-
-      
       {/* Import dialog */}
       <ImportDashboardDialog
         isOpen={showImportDialog}
@@ -611,74 +438,22 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
         onImportComplete={handleImportComplete}
       />
 
-      {/* New Dashboard Dialog */}
-      <Dialog
-        open={showNewDialog}
-        onClose={() => setShowNewDialog(false)}
-        title="New Dashboard"
-        size="sm"
-      >
-        <Dialog.Body>
-          <label>Dashboard Name:</label>
-          <input
-            type="text"
-            value={newDashName}
-            onChange={(e) => setNewDashName(e.target.value)}
-            placeholder="My Dashboard"
-            autoFocus
-            onKeyDown={(e) => e.key === 'Enter' && handleNewDashboard()}
-          />
-        </Dialog.Body>
-        <Dialog.Footer>
-          <Button variant="secondary" onClick={() => setShowNewDialog(false)}>Cancel</Button>
-          <Button variant="primary" onClick={handleNewDashboard} disabled={!newDashName.trim()}>
-            Create
-          </Button>
-        </Dialog.Footer>
-      </Dialog>
-
-      {/* Rename Dashboard Dialog */}
-      <Dialog
-        open={showRenameDialog}
-        onClose={() => setShowRenameDialog(false)}
-        title="Rename Dashboard"
-        size="sm"
-      >
-        <Dialog.Body>
-          <label>New Name:</label>
-          <input
-            type="text"
-            value={renameName}
-            onChange={(e) => setRenameName(e.target.value)}
-            placeholder="Dashboard Name"
-            autoFocus
-            onKeyDown={(e) => e.key === 'Enter' && handleRenameDashboard()}
-          />
-        </Dialog.Body>
-        <Dialog.Footer>
-          <Button variant="secondary" onClick={() => setShowRenameDialog(false)}>Cancel</Button>
-          <Button variant="primary" onClick={handleRenameDashboard} disabled={!renameName.trim()}>
-            Rename
-          </Button>
-        </Dialog.Footer>
-      </Dialog>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={showDeleteConfirm}
-        onClose={() => setShowDeleteConfirm(false)}
-        title="Delete Dashboard?"
-        size="sm"
-      >
-        <Dialog.Body>
-          <p>Are you sure you want to delete "{selectedPath.split('/').pop()?.replace(/\.(ltdash\.xml|dash)$/i, '')}"?</p>
-          <p className="warning">This action cannot be undone.</p>
-        </Dialog.Body>
-        <Dialog.Footer>
-          <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
-          <Button variant="danger" onClick={handleDeleteDashboard}>Delete</Button>
-        </Dialog.Footer>
-      </Dialog>
+      <DashboardManagementDialogs
+        newOpen={showNewDialog}
+        newName={newDashName}
+        onNewNameChange={setNewDashName}
+        onNewClose={() => setShowNewDialog(false)}
+        onNewCreate={handleNewDashboard}
+        renameOpen={showRenameDialog}
+        renameValue={renameName}
+        onRenameValueChange={setRenameName}
+        onRenameClose={() => setShowRenameDialog(false)}
+        onRenameConfirm={handleRenameDashboard}
+        deleteOpen={showDeleteConfirm}
+        deleteTargetName={selectedPath.split('/').pop()?.replace(/\.(ltdash\.xml|dash)$/i, '') || ''}
+        onDeleteClose={() => setShowDeleteConfirm(false)}
+        onDeleteConfirm={handleDeleteDashboard}
+      />
 
       {/* Designer Mode - full screen editor */}
       {designerMode && dashFile ? (
