@@ -12,11 +12,12 @@
  */
 
 import { useCallback, useRef } from 'react';
-import { DashFile, DashComponent, isGauge, isIndicator } from './dashTypes';
+import { DashFile, isGauge, isIndicator } from './dashTypes';
 import PropertyEditor from './designer/PropertyEditor';
 import DesignerToolbar from './designer/DesignerToolbar';
+import DesignerCanvas from './designer/DesignerCanvas';
 import { useDesignerHistory } from './designer/useDesignerHistory';
-import { useDesignerDragResize, ResizeHandle } from './designer/useDesignerDragResize';
+import { useDesignerDragResize } from './designer/useDesignerDragResize';
 import { useDesignerKeyboard } from './designer/useDesignerKeyboard';
 import { useDesignerDrop } from './designer/useDesignerDrop';
 import './DashboardDesigner.css';
@@ -120,21 +121,6 @@ export default function DashboardDesigner({
     onDashFileChange,
   });
 
-  // Render resize handles for selected gauge
-  const renderResizeHandles = (gaugeId: string, component: DashComponent) => {
-    if (selectedGaugeId !== gaugeId) return null;
-    
-    const handles: ResizeHandle[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
-    
-    return handles.map(handle => (
-      <div
-        key={handle}
-        className={`resize-handle resize-handle-${handle}`}
-        onMouseDown={(e) => handleResizeMouseDown(e, handle, gaugeId, component)}
-      />
-    ));
-  };
-
   return (
     <div className="dashboard-designer">
       <DesignerToolbar
@@ -157,74 +143,22 @@ export default function DashboardDesigner({
 
       {/* Main designer area */}
       <div className="designer-content">
-        {/* Canvas with gauges */}
-        <div 
-          ref={containerRef}
-          className={`designer-canvas ${showGrid ? 'show-grid' : ''}`}
-          style={{
-            '--grid-size': `${gridSnap}%`,
-          } as React.CSSProperties}
-          onClick={() => onSelectGauge(null)}
-          onContextMenu={(e) => onContextMenu(e, null)}
+        <DesignerCanvas
+          containerRef={containerRef}
+          dashFile={dashFile}
+          showGrid={showGrid}
+          gridSnap={gridSnap}
+          selectedGaugeId={selectedGaugeId}
+          dragState={dragState}
+          resizeState={resizeState}
+          onSelectGauge={onSelectGauge}
+          onContextMenu={onContextMenu}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-        >
-          {dashFile.gauge_cluster.components.map((component, index) => {
-            let id: string, relX: number, relY: number, width: number, height: number;
-            
-            if (isGauge(component)) {
-              const g = component.Gauge;
-              id = g.id || `gauge-${index}`;
-              relX = g.relative_x ?? 0;
-              relY = g.relative_y ?? 0;
-              width = g.relative_width ?? 0.25;
-              height = g.relative_height ?? 0.25;
-            } else if (isIndicator(component)) {
-              const i = component.Indicator;
-              id = i.id || `indicator-${index}`;
-              relX = i.relative_x ?? 0;
-              relY = i.relative_y ?? 0;
-              width = i.relative_width ?? 0.1;
-              height = i.relative_height ?? 0.05;
-            } else {
-              return null;
-            }
-            
-            const isSelected = selectedGaugeId === id;
-            const isDraggingThis = dragState.isDragging && dragState.gaugeId === id;
-            const isResizingThis = resizeState.isResizing && resizeState.gaugeId === id;
-            
-            return (
-              <div
-                key={id}
-                className={`designer-gauge ${isSelected ? 'selected' : ''} ${isDraggingThis ? 'dragging' : ''} ${isResizingThis ? 'resizing' : ''}`}
-                style={{
-                  left: `${relX * 100}%`,
-                  top: `${relY * 100}%`,
-                  width: `${width * 100}%`,
-                  height: `${height * 100}%`,
-                }}
-                onMouseDown={(e) => handleGaugeMouseDown(e, id, component)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectGauge(id);
-                }}
-                onContextMenu={(e) => onContextMenu(e, id)}
-              >
-                <div className="gauge-preview">
-                  {isGauge(component) && (
-                    <span className="gauge-label">{component.Gauge.title || component.Gauge.output_channel}</span>
-                  )}
-                  {isIndicator(component) && (
-                    <span className="gauge-label">{component.Indicator.on_text || component.Indicator.output_channel}</span>
-                  )}
-                </div>
-                {renderResizeHandles(id, component)}
-              </div>
-            );
-          })}
-        </div>
+          onGaugeMouseDown={handleGaugeMouseDown}
+          onResizeMouseDown={handleResizeMouseDown}
+        />
 
         {/* Property editor panel */}
         <div className="designer-properties">
