@@ -16,6 +16,9 @@ import { histogramPainter } from './histogram';
 import { lineGraphPainter } from './lineGraph';
 import { roundGaugePainter } from './roundGauge';
 import { roundDashedGaugePainter } from './roundDashedGauge';
+import { sweepGaugePainter } from './sweepGauge';
+import { fuelMeterPainter } from './fuelMeter';
+import { tachometerPainter } from './tachometer';
 
 export { painterRegistry, type Painter, type PainterContext } from './types';
 
@@ -39,4 +42,7 @@ export function ensurePaintersRegistered(): void {
   registerPainter('LineGraph', lineGraphPainter);
   registerPainter('RoundGauge', roundGaugePainter);
   registerPainter('RoundDashedGauge', roundDashedGaugePainter);
+  registerPainter('AsymmetricSweepGauge', sweepGaugePainter);
+  registerPainter('FuelMeter', fuelMeterPainter);
+  registerPainter('Tachometer', tachometerPainter);
 }
