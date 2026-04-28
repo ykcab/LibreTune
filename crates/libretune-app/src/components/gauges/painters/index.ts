@@ -19,6 +19,9 @@ import { roundDashedGaugePainter } from './roundDashedGauge';
 import { sweepGaugePainter } from './sweepGauge';
 import { fuelMeterPainter } from './fuelMeter';
 import { tachometerPainter } from './tachometer';
+import { analogGaugePainter } from './analogGauge';
+import { analogBarGaugePainter } from './analogBarGauge';
+import { analogMovingBarGaugePainter } from './analogMovingBarGauge';
 
 export { painterRegistry, type Painter, type PainterContext } from './types';
 
@@ -45,4 +48,9 @@ export function ensurePaintersRegistered(): void {
   registerPainter('AsymmetricSweepGauge', sweepGaugePainter);
   registerPainter('FuelMeter', fuelMeterPainter);
   registerPainter('Tachometer', tachometerPainter);
+  registerPainter('AnalogGauge', analogGaugePainter);
+  registerPainter('BasicAnalogGauge', analogGaugePainter);
+  registerPainter('CircleAnalogGauge', analogGaugePainter);
+  registerPainter('AnalogBarGauge', analogBarGaugePainter);
+  registerPainter('AnalogMovingBarGauge', analogMovingBarGaugePainter);
 }
