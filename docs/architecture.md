@@ -31,12 +31,10 @@ Public modules (post-Phase 7):
 - `autotune` — VE / AFR / dwell adaptation algorithms; recommendations and
   authority limits live in `autotune/anomaly.rs` and friends.
 - `basemap` — Built-in base-map generation logic.
-- `dash` — Dashboard data structures:
-  - `dash::layout` (LibreTune-native simple format: `DashboardLayout`,
-    `GaugeConfig`, `GaugeType`, file-path helpers).
-  - `dash::{parser, writer, types, validation, templates}` — TunerStudio
-    `.dash` XML format (full schema with `DashFile`, `GaugeCluster`,
-    `DashComponent`, `Bibliography`, etc.).
+- `dash` — TunerStudio-compatible `.dash` / `.gauge` XML format and the
+  single canonical dashboard runtime model (`DashFile`, `GaugeCluster`,
+  `DashComponent`, `GaugeConfig`, `IndicatorConfig`, `Bibliography`,
+  validation, built-in templates).
 - `datalog` — Streaming log writer.
 - `demo` — Synthetic ECU for offline / demo mode.
 - `ecu` — `EcuMemory`, `Value`, page model.
@@ -74,8 +72,8 @@ file owns a coherent slice of functionality, e.g.:
 
 - `connection.rs`, `metrics.rs`, `realtime_get.rs` — connection lifecycle
   and metrics tasks.
-- `dash_files.rs`, `dash_layout.rs`, `dash_convert.rs` — dashboard file
-  IO + layout and `DashboardLayout` ↔ `DashFile` conversion.
+- `dash_files.rs`, `dash_layout.rs` — dashboard file IO, discovery,
+  templates, and import.
 - `tune_io.rs`, `tune_info.rs`, `tune_misc.rs`, `tune_health.rs`,
   `tune_migration.rs` — tune persistence, diffing, migration.
 - `table_ops.rs`, `table_compare.rs`, `csv_io.rs` — table editing
@@ -171,10 +169,9 @@ src/
 - Default dashboards (Basic / Tuning / Racing) are seeded by Rust at first
   launch via `create_default_dashboard_files`; the frontend treats these
   like any other dashboard via `list_available_dashes` / `get_dash_file`.
-- The TunerStudio `.dash` XML format is parsed by `libretune_core::dash`
-  (parser/writer); LibreTune's simpler runtime layout
-  (`DashboardLayout`) is converted at the Tauri-command boundary by
-  `commands::dash_convert`.
+- The TunerStudio `.dash` / `.gauge` XML format is the canonical dashboard
+  representation in both Rust core (`libretune_core::dash`) and the
+  frontend; there is no separate "native" intermediate model.
 
 ## State management
 

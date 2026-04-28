@@ -64,9 +64,7 @@ pub mod prelude {
         AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneRecommendation, AutoTuneSettings,
         AutoTuneState,
     };
-    pub use crate::dash::layout::{
-        get_dashboard_file, get_dashboard_file_path, DashboardLayout, GaugeConfig, GaugeType,
-    };
+    pub use crate::dash::{DashFile, GaugeConfig, GaugePainter, IndicatorConfig};
     pub use crate::datalog::{DataLogger, LogEntry};
     pub use crate::ecu::{EcuMemory, Value};
     pub use crate::ini::{Constant, EcuDefinition, OutputChannel, TableDefinition};
