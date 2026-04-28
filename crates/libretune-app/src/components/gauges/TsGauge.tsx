@@ -9,6 +9,17 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { TsGaugeConfig, TsColor, tsColorToRgba, tsColorToHex } from '../dashboards/dashTypes';
 import { useRealtimeStore, getChannelHistoryBuffer } from '../../stores/realtimeStore';
+import {
+  roundRect,
+  lightenColor,
+  darkenColor,
+  createMetallicGradient,
+} from './drawUtils';
+import {
+  getEmbeddedImage as getCachedEmbeddedImage,
+  isFontLoaded,
+  loadEmbeddedAssets,
+} from './assetCache';
 
 interface TsGaugeProps {
   config: TsGaugeConfig;
@@ -18,12 +29,6 @@ interface TsGaugeProps {
   /** When true, the value prop takes priority over the store subscription (sweep/demo mode) */
   overrideStore?: boolean;
 }
-
-// Cache for loaded fonts
-const loadedFonts = new Set<string>();
-
-// Cache for loaded HTMLImageElement objects (for canvas drawImage)
-const loadedImages = new Map<string, HTMLImageElement>();
 
 // Lerp factor per animation frame (25% of remaining distance → reaches within 1% in ~17 frames ≈ 280ms @ 60fps)
 const ANIMATION_LERP = 0.25;
@@ -73,59 +78,22 @@ function TsGaugeInner({ config, value, embeddedImages, legacyMode = false, overr
       return;
     }
 
-    const loadAssets = async () => {
-      const loadPromises: Promise<void>[] = [];
-      
-      for (const [id, dataUrl] of embeddedImages.entries()) {
-        // Load fonts
-        if (dataUrl.startsWith('data:font/ttf') && !loadedFonts.has(id)) {
-          loadPromises.push(
-            (async () => {
-              try {
-                const fontFace = new FontFace(id, `url(${dataUrl})`);
-                await fontFace.load();
-                document.fonts.add(fontFace);
-                loadedFonts.add(id);
-              } catch (e) {
-                console.warn(`Failed to load embedded font ${id}:`, e);
-              }
-            })()
-          );
-        }
-        
-        // Load images (PNG/GIF)
-        if ((dataUrl.startsWith('data:image/png') || dataUrl.startsWith('data:image/gif')) 
-            && !loadedImages.has(id)) {
-          loadPromises.push(
-            new Promise<void>((resolve) => {
-              const img = new Image();
-              img.onload = () => {
-                loadedImages.set(id, img);
-                resolve();
-              };
-              img.onerror = () => {
-                console.warn(`Failed to load embedded image ${id}`);
-                resolve();
-              };
-              img.src = dataUrl;
-            })
-          );
-        }
-      }
-      
-      await Promise.all(loadPromises);
+    let cancelled = false;
+    loadEmbeddedAssets(embeddedImages).then(() => {
+      if (cancelled) return;
       setFontsReady(true);
       setImagesReady(true);
+    });
+    return () => {
+      cancelled = true;
     };
-
-    loadAssets();
   }, [embeddedImages]);
 
   /** Get a loaded image by name or id */
-  const getEmbeddedImage = useCallback((name: string | null | undefined): HTMLImageElement | null => {
-    if (!name) return null;
-    return loadedImages.get(name) || null;
-  }, []);
+  const getEmbeddedImage = useCallback(
+    (name: string | null | undefined): HTMLImageElement | null => getCachedEmbeddedImage(name),
+    [],
+  );
   
   /** 
    * Get font family with web-safe fallbacks.
@@ -163,7 +131,7 @@ function TsGaugeInner({ config, value, embeddedImages, legacyMode = false, overr
     }
     
     // If it's an embedded font (should be loaded), use it with fallbacks
-    if (loadedFonts.has(customFont)) {
+    if (isFontLoaded(customFont)) {
       return preferMonospace 
         ? `"${customFont}", "Courier New", monospace`
         : `"${customFont}", Arial, sans-serif`;
@@ -203,42 +171,6 @@ function TsGaugeInner({ config, value, embeddedImages, legacyMode = false, overr
     }
     return config.font_color;
   }, [config]);
-
-  /** Create a metallic gradient for bezels */
-  const createMetallicGradient = useCallback((
-    ctx: CanvasRenderingContext2D,
-    x: number, y: number, r1: number, r2: number,
-    baseColor: TsColor
-  ): CanvasGradient => {
-    const gradient = ctx.createRadialGradient(x - r2 * 0.3, y - r2 * 0.3, r1, x, y, r2);
-    const hex = tsColorToHex(baseColor);
-    gradient.addColorStop(0, lightenColor(hex, 60));
-    gradient.addColorStop(0.3, lightenColor(hex, 30));
-    gradient.addColorStop(0.5, hex);
-    gradient.addColorStop(0.7, darkenColor(hex, 20));
-    gradient.addColorStop(1, darkenColor(hex, 40));
-    return gradient;
-  }, []);
-
-  /** Lighten a hex color */
-  const lightenColor = (hex: string, percent: number): string => {
-    const num = parseInt(hex.replace('#', ''), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = Math.min(255, (num >> 16) + amt);
-    const G = Math.min(255, ((num >> 8) & 0x00FF) + amt);
-    const B = Math.min(255, (num & 0x0000FF) + amt);
-    return `#${(0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)}`;
-  };
-
-  /** Darken a hex color */
-  const darkenColor = (hex: string, percent: number): string => {
-    const num = parseInt(hex.replace('#', ''), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = Math.max(0, (num >> 16) - amt);
-    const G = Math.max(0, ((num >> 8) & 0x00FF) - amt);
-    const B = Math.max(0, (num & 0x0000FF) - amt);
-    return `#${(0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)}`;
-  };
 
   // Ref to track the pending animation frame ID
   const rafIdRef = useRef<number | null>(null);
@@ -500,7 +432,7 @@ function TsGaugeInner({ config, value, embeddedImages, legacyMode = false, overr
     };
     // Note: clampedValue intentionally NOT in deps — target is driven by targetRef,
     // updated by store subscription (live data) and clampedValue sync effect (sweep/demo).
-  }, [config, embeddedImages, fontsReady, imagesReady, legacyMode, getValueColor, createMetallicGradient, getEmbeddedImage, getFontFamily]);
+  }, [config, embeddedImages, fontsReady, imagesReady, legacyMode, getValueColor, getEmbeddedImage, getFontFamily]);
 
   /** Draw digital readout (LCD style) with improved visuals */
   const drawBasicReadout = (
@@ -594,21 +526,6 @@ function TsGaugeInner({ config, value, embeddedImages, legacyMode = false, overr
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillText(config.units, width / 2, height - padding - 2);
-  };
-
-  /** Helper to draw rounded rectangles */
-  const roundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
   };
 
   /** Draw horizontal bar gauge with improved 3D effect */
