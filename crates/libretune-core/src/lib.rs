@@ -56,6 +56,7 @@ pub mod protocol;
 pub mod realtime;
 pub mod table_ops;
 pub mod tune;
+pub mod tune_view;
 pub mod unit_conversion;
 
 /// Re-export commonly used types
