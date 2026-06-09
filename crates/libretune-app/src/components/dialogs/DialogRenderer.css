@@ -38,10 +38,10 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden; /* Prevent horizontal scroll */
-  padding: 20px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 32px; /* Increased from 16px for more spacing between sections */
+  gap: 8px; /* Compact spacing between sections (TunerStudio-like density) */
   min-height: 0; /* Critical for nested flex scroll */
   max-height: 100%; /* Explicit height constraint for scroll */
   max-width: none; /* Override App.css 600px constraint */
@@ -52,7 +52,7 @@
 .dialog-view .dialog-row-container {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 10px;
   align-items: start;
 }
 
@@ -60,7 +60,7 @@
 .dialog-view .dialog-column {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 6px;
   min-height: 0;
 }
 
@@ -69,9 +69,9 @@
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: flex-start; /* Left-justify content */
+  justify-content: space-between; /* Label left, value right (TunerStudio-like) */
   gap: 12px;
-  padding: 12px 16px; /* Add padding for taller rows */
+  padding: 4px 10px; /* Compact rows */
   background: var(--bg-secondary);
   border-radius: 4px;
 }
@@ -81,6 +81,8 @@
   color: var(--text-secondary);
   font-weight: 500;
   text-align: left;
+  flex: 1; /* Let the label take available width, pushing the value to the right */
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -114,21 +116,21 @@
 .dialog-view .field-input-wrap {
   display: flex;
   align-items: center;
-  justify-content: flex-start; /* Left-justify inputs */
+  justify-content: flex-end; /* Align value/input to the right */
   gap: 8px;
+  flex: 0 0 auto;
 }
 
 .dialog-view .field-input-wrap input {
-  flex: 1;
-  min-width: 120px;
-  max-width: 400px;
+  min-width: 100px;
+  max-width: 240px;
   width: auto; /* Override App.css width: 80px */
-  padding: 12px 16px; /* Increased from 8px 12px for taller inputs */
+  padding: 4px 8px; /* Compact inputs */
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
   text-align: left;
 }
 
@@ -138,19 +140,18 @@
 }
 
 .dialog-view .field-input-wrap input[type="text"] {
-  max-width: 500px;
+  max-width: 300px;
 }
 
 .dialog-view .field-input-wrap select {
-  flex: 1;
-  min-width: 150px;
-  max-width: 400px;
-  padding: 12px 16px; /* Increased from 8px 12px for taller selects */
+  min-width: 130px;
+  max-width: 280px;
+  padding: 4px 8px; /* Compact selects */
   background: var(--bg-input);
   border: 1.5px solid var(--border-default);
   border-radius: 4px;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .dialog-view .field-input-wrap select:focus {
@@ -160,8 +161,8 @@
 
 .dialog-view .settings-field input[type="checkbox"] {
   margin-right: 8px;
-  width: 20px; /* Increased from 16px */
-  height: 20px; /* Increased from 16px */
+  width: 16px;
+  height: 16px;
 }
 
 .field-unit {
@@ -197,8 +198,7 @@
   overflow: hidden; /* Contain panel content */
   display: flex;
   flex-direction: column;
-  min-height: 270px; /* Minimum height for each section panel (~50% taller) */
-  flex-shrink: 0; /* Prevent flex shrinking below min-height */
+  flex-shrink: 0; /* Prevent flex shrinking */
   width: 100%; /* Expand to fill container width */
   max-width: 100%; /* Prevent horizontal overflow */
 }
@@ -210,7 +210,7 @@
 }
 
 .dialog-view .panel-title {
-  padding: 16px 24px; /* Increased from 10px 16px for taller header */
+  padding: 8px 14px; /* Compact panel header */
   background: var(--bg-subtle);
   font-size: 14px;
   font-weight: 600;
@@ -220,10 +220,10 @@
 }
 
 .panel-content {
-  padding: 24px; /* Increased from 16px for taller sections */
+  padding: 10px 12px; /* Compact section padding */
   display: flex;
   flex-direction: column;
-  gap: 18px; /* Increased from 12px for taller sections */
+  gap: 6px; /* Compact spacing between fields */
   flex: 1;
   min-height: 0; /* Allow flex shrinking for proper scrolling */
   overflow-y: auto; /* Allow panel content to scroll if needed */
