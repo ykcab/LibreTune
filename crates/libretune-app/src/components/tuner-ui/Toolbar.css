@@ -38,7 +38,7 @@
 
 .toolbar-button-active {
   background: var(--bg-active);
-  color: var(--primary);
+  color: var(--accent);
 }
 
 .toolbar-button:disabled {

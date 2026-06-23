@@ -1,91 +1,67 @@
-.dialog-view {
-  display: flex;
-  flex-direction: column;
+.dialog-view.configurator {
   height: 100%;
-  min-height: 0; /* Allow flex shrinking for proper scrolling */
-  overflow: hidden; /* Contain scrolling to dialog-container child */
-  background: var(--bg-primary);
 }
 
-.dialog-view .editor-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.dialog-view .icon-btn {
-  padding: 6px;
-  background: transparent;
-  border: none;
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.dialog-view .icon-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-/* Use .dialog-view parent to override App.css max-width: 600px constraint */
-.dialog-view .dialog-container {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden; /* Prevent horizontal scroll */
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px; /* Compact spacing between sections (TunerStudio-like density) */
-  min-height: 0; /* Critical for nested flex scroll */
-  max-height: 100%; /* Explicit height constraint for scroll */
-  max-width: none; /* Override App.css 600px constraint */
-  width: 100%;
-}
-
-/* Multi-column layout support for dialogs with East/West positioned panels */
 .dialog-view .dialog-row-container {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-4);
   align-items: start;
+  padding: var(--space-2) var(--space-5);
 }
 
-/* Single column within row (for West/East positioning) */
 .dialog-view .dialog-column {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-height: 0;
+  gap: 0;
+  min-width: 0;
 }
 
-/* Field layout - use .dialog-view parent for specificity over App.css */
+/* ---- Field rows: tight two-column grid, not space-between stretch ---- */
 .dialog-view .settings-field {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between; /* Label left, value right (TunerStudio-like) */
-  gap: 12px;
-  padding: 4px 10px; /* Compact rows */
-  background: var(--bg-secondary);
-  border-radius: 4px;
+  column-gap: 20px;
+  row-gap: 4px;
+  padding: 9px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  max-width: 720px;
+  width: 100%;
+}
+
+.dialog-view .settings-field:hover {
+  background: var(--bg-hover);
+}
+
+.dialog-view .settings-field:last-child {
+  border-bottom: none;
 }
 
 .dialog-view .settings-field label {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  font-weight: 400;
   text-align: left;
-  flex: 1; /* Let the label take available width, pushing the value to the right */
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+  line-height: 1.35;
+}
+
+/* Checkbox rows: single column, checkbox inline with label */
+.dialog-view .settings-field--checkbox {
+  grid-template-columns: 1fr;
+  max-width: 720px;
+}
+
+.dialog-view .settings-field--checkbox label {
+  cursor: pointer;
+  gap: 10px;
 }
 
 .help-icon {
@@ -94,17 +70,16 @@
   justify-content: center;
   color: var(--accent);
   cursor: pointer;
-  opacity: 0.7;
-  transition: all 0.2s ease;
+  opacity: 0.75;
+  transition: all 0.15s ease;
   padding: 2px;
   border-radius: 50%;
-  margin-left: 4px;
+  flex-shrink: 0;
 }
 
 .help-icon:hover {
   opacity: 1;
-  background: rgba(var(--accent-rgb, 100, 149, 237), 0.2);
-  transform: scale(1.15);
+  background: rgba(var(--accent-rgb), 0.15);
 }
 
 .help-icon:focus {
@@ -116,59 +91,71 @@
 .dialog-view .field-input-wrap {
   display: flex;
   align-items: center;
-  justify-content: flex-end; /* Align value/input to the right */
+  justify-content: flex-end;
   gap: 8px;
-  flex: 0 0 auto;
+  flex-shrink: 0;
 }
 
 .dialog-view .field-input-wrap input {
-  min-width: 100px;
-  max-width: 240px;
-  width: auto; /* Override App.css width: 80px */
-  padding: 4px 8px; /* Compact inputs */
+  width: 96px;
+  min-width: 80px;
+  max-width: 120px;
+  padding: 5px 8px;
   background: var(--bg-input);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 13px;
-  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  text-align: right;
 }
 
 .dialog-view .field-input-wrap input:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.18);
 }
 
-.dialog-view .field-input-wrap input[type="text"] {
-  max-width: 300px;
+.dialog-view .field-input-wrap input[type="text"]:not([inputmode="decimal"]) {
+  width: 180px;
+  max-width: 220px;
+  text-align: left;
+  font-family: var(--font-sans);
 }
 
 .dialog-view .field-input-wrap select {
-  min-width: 130px;
-  max-width: 280px;
-  padding: 4px 8px; /* Compact selects */
+  min-width: 140px;
+  max-width: 200px;
+  padding: 5px 28px 5px 8px;
   background: var(--bg-input);
-  border: 1.5px solid var(--border-default);
-  border-radius: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .dialog-view .field-input-wrap select:focus {
   outline: none;
-  border-color: var(--border-focus);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.18);
 }
 
 .dialog-view .settings-field input[type="checkbox"] {
-  margin-right: 8px;
-  width: 16px;
-  height: 16px;
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
 }
 
 .field-unit {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  min-width: 40px;
+  min-width: 2.5em;
+  text-align: left;
+  flex-shrink: 0;
 }
 
 .field-help {
@@ -184,49 +171,89 @@
   font-size: 13px;
 }
 
+.field-load-error {
+  padding: 8px 0;
+  color: var(--danger, #e57373);
+  font-size: 13px;
+}
+
 .dialog-label {
   font-size: 14px;
   color: var(--text-primary);
   padding: 8px 0;
 }
 
-/* Use .dialog-view parent for higher specificity over App.css */
+/* Section panels — standalone embedded panels (not inside ConfiguratorGroup) */
 .dialog-view .nested-panel {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  overflow: hidden; /* Contain panel content */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0; /* Prevent flex shrinking */
-  width: 100%; /* Expand to fill container width */
-  max-width: 100%; /* Prevent horizontal overflow */
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 720px;
+}
+
+/* Inside ConfiguratorGroup: one card only — flush fields with group header padding */
+.dialog-view .configurator-group-body .nested-panel {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  max-width: none;
+  width: 100%;
+  box-shadow: none;
+}
+
+.dialog-view .configurator-group-body .settings-field,
+.dialog-view .configurator-group-body .settings-field--checkbox,
+.dialog-view .configurator-group-body .dialog-label,
+.dialog-view .configurator-group-body .field-loading,
+.dialog-view .configurator-group-body .field-load-error,
+.dialog-view .configurator-group-body .indicator-field,
+.dialog-view .configurator-group-body .command-button-field,
+.dialog-view .configurator-group-body .panel-loading {
+  max-width: none;
+  padding-left: var(--space-5);
+  padding-right: var(--space-5);
 }
 
 /* Allow panels with tables to grow and fill space */
 .dialog-view .nested-panel:has(.table-editor-2d) {
   flex: 1;
-  min-height: 400px; /* Larger min-height for table panels */
+  min-height: 400px;
+  max-width: none;
 }
 
 .dialog-view .panel-title {
-  padding: 8px 14px; /* Compact panel header */
-  background: var(--bg-subtle);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-color);
-  text-align: left; /* Left-justify panel titles */
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
 }
 
 .panel-content {
-  padding: 10px 12px; /* Compact section padding */
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px; /* Compact spacing between fields */
+  gap: 0;
   flex: 1;
-  min-height: 0; /* Allow flex shrinking for proper scrolling */
-  overflow-y: auto; /* Allow panel content to scroll if needed */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Standalone fields outside panels share panel width */
+.dialog-view .dialog-container > .settings-field,
+.dialog-view .dialog-column > .settings-field {
+  max-width: 720px;
 }
 
 .panel-loading {
@@ -432,12 +459,13 @@
 
 /* Description panel at bottom of dialog */
 .dialog-description-panel {
-  padding: 12px 20px;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
-  min-height: 60px;
-  max-height: 100px;
+  padding: 10px 16px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border-subtle);
+  min-height: 52px;
+  max-height: 88px;
   overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .dialog-description-panel strong {
@@ -462,12 +490,11 @@
 /* Search result highlight flash animation */
 @keyframes search-highlight-flash {
   0% {
-    background-color: rgba(59, 130, 246, 0.5);
-    box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+    background-color: rgba(var(--accent-rgb), 0.35);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
   50% {
-    background-color: rgba(59, 130, 246, 0.3);
-    box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+    background-color: rgba(var(--accent-rgb), 0.15);
   }
   100% {
     background-color: transparent;

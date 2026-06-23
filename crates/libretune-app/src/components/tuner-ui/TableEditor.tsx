@@ -1,10 +1,13 @@
-import { useState, useCallback, useRef, useEffect, KeyboardEvent, useMemo } from 'react';
+import { useState, useCallback, useRef, useEffect, KeyboardEvent, useMemo, lazy, Suspense } from 'react';
 import { useChannels } from '../../stores/realtimeStore';
 import { useHeatmapSettings } from '../../utils/useHeatmapSettings';
 import './TableEditor.css';
-import TableEditor3D from '../tables/TableEditor3D';
 import TableToolbar from './table-editor/TableToolbar';
 import TableContextMenu from './table-editor/TableContextMenu';
+import TableLiveReadouts from '../tables/TableLiveReadouts';
+import { isValidTableData } from '../../utils/validateTableData';
+
+const TableEditor3D = lazy(() => import('../tables/TableEditor3D'));
 
 export interface TableData {
   name: string;
@@ -24,6 +27,8 @@ export interface TableData {
   xOutputChannel?: string;
   /** Output channel name for Y-axis (used for live cell highlighting) */
   yOutputChannel?: string;
+  /** Output channel name for Z/output value (PWM/user tables) */
+  zOutputChannel?: string;
 }
 
 export interface CellPosition {
@@ -60,21 +65,34 @@ interface IncrementSettings {
   stepPercent: number;     // Percentage for Shift operations
 }
 
-export function TableEditor({
+export function TableEditor(props: TableEditorProps) {
+  if (!isValidTableData(props.data)) {
+    return (
+      <div className="table-editor table-editor--invalid">
+        <p>Table data is incomplete or still loading.</p>
+        <p className="table-editor--invalid-hint">Close this tab and reopen the table from the menu.</p>
+      </div>
+    );
+  }
+  return <TableEditorInner {...props} data={props.data} />;
+}
+
+function TableEditorInner({
   data,
   onChange,
   onBurn,
   followMode: _followMode = false,
   livePosition = null,
   showHistoryTrail: _showHistoryTrail = false,
-}: TableEditorProps) {
+}: TableEditorProps & { data: TableData }) {
   // Get realtime data from Zustand store - only subscribe to channels needed for live position
   const outputChannels = useMemo(() => {
     const channels: string[] = [];
     if (data.xOutputChannel) channels.push(data.xOutputChannel);
     if (data.yOutputChannel) channels.push(data.yOutputChannel);
+    if (data.zOutputChannel) channels.push(data.zOutputChannel);
     return channels;
-  }, [data.xOutputChannel, data.yOutputChannel]);
+  }, [data.xOutputChannel, data.yOutputChannel, data.zOutputChannel]);
   const realtimeData = useChannels(outputChannels);
 
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -210,10 +228,13 @@ export function TableEditor({
 
   // Calculate color for value based on min/max
   const getValueColor = useCallback((value: number) => {
-    if (!heatmapEnabled) return 'var(--table-cell-bg)';
+    if (!heatmapEnabled || !Number.isFinite(value)) return 'var(--table-cell-bg)';
 
-    const min = data.min ?? Math.min(...data.zValues.flat());
-    const max = data.max ?? Math.max(...data.zValues.flat());
+    const flat = data.zValues.flat().filter(Number.isFinite);
+    if (flat.length === 0) return 'var(--table-cell-bg)';
+
+    const min = data.min ?? Math.min(...flat);
+    const max = data.max ?? Math.max(...flat);
     if (min === max) return 'var(--table-cell-bg)';
 
     return getHeatmapColor(value, min, max, 'value');
@@ -726,6 +747,7 @@ export function TableEditor({
 
   // Format value for display
   const formatValue = useCallback((value: number) => {
+    if (!Number.isFinite(value)) return '—';
     return value.toFixed(data.precision ?? 1);
   }, [data.precision]);
 
@@ -849,7 +871,8 @@ export function TableEditor({
 
       {/* 3D View */}
       {show3D && (
-        <TableEditor3D
+        <Suspense fallback={<div className="table-3d-loading">Loading 3D view…</div>}>
+          <TableEditor3D
           title={data.name}
           x_bins={data.xAxis}
           y_bins={data.yAxis}
@@ -866,6 +889,7 @@ export function TableEditor({
           historyTrail={followMode ? historyTrail : undefined}
           heatmapScheme={heatmapScheme}
         />
+        </Suspense>
       )}
 
       {/* Table */}
@@ -889,7 +913,7 @@ export function TableEditor({
               <tr key={rowIndex}>
                 <th className="table-y-header">{y}</th>
                 {data.xAxis.map((_, colIndex) => {
-                  const value = data.zValues[rowIndex][colIndex];
+                  const value = data.zValues[rowIndex]?.[colIndex] ?? 0;
                   const isSelected = isCellSelected(rowIndex, colIndex);
                   const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex;
                   const isLive = effectiveLivePosition?.row === rowIndex && effectiveLivePosition?.col === colIndex;
@@ -932,6 +956,17 @@ export function TableEditor({
           </tbody>
         </table>
       </div>
+      )}
+
+      {(data.xOutputChannel || data.yOutputChannel || data.zOutputChannel) && (
+        <TableLiveReadouts
+          xChannel={data.xOutputChannel}
+          yChannel={data.yOutputChannel}
+          zChannel={data.zOutputChannel}
+          xLabel={data.xLabel}
+          yLabel={data.yLabel}
+          precision={data.precision}
+        />
       )}
 
       {/* Status */}

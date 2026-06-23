@@ -10,6 +10,8 @@ import type {
   IniCapabilities,
   TabContent,
 } from "../types/app";
+import { processMenuAvailability, type ProcessedMenuNode } from "../utils/menuAvailability";
+import { exitApplication } from "../utils/exitApplication";
 
 export interface BuildMenuItemsDeps {
   t: TFunction;
@@ -22,7 +24,13 @@ export interface BuildMenuItemsDeps {
   sidebarVisible: boolean;
   tabs: Tab[];
   // Callbacks (closures from App)
-  openTarget: (target: string, label?: string) => void;
+  openTarget: (
+    target: string,
+    label?: string,
+    highlightTerm?: string,
+    forceReload?: boolean,
+    targetKind?: "Table" | "Dialog",
+  ) => void;
   handleStdTarget: (target: string, label: string) => void;
   openHelpTopic: (topic: string, label: string) => void;
   showToast: (msg: string, kind?: "info" | "success" | "error" | "warning") => void;
@@ -83,7 +91,7 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
         { id: "sep3", label: "", separator: true },
         { id: "burn", label: "&Burn to ECU\tCtrl+B", onClick: () => setBurnDialogOpen(true), disabled: status.state !== "Connected" },
         { id: "sep4", label: "", separator: true },
-        { id: "exit", label: "E&xit", onClick: () => window.close() },
+        { id: "exit", label: "E&xit", onClick: () => { void exitApplication(); } },
       ]
     : [
         { id: "new-project", label: "&New Project...\tCtrl+N", onClick: () => setNewProjectDialogOpen(true) },
@@ -91,7 +99,7 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
         { id: "sep1", label: "", separator: true },
         { id: "settings", label: "&Settings...", onClick: () => setSettingsDialogOpen(true) },
         { id: "sep2", label: "", separator: true },
-        { id: "exit", label: "E&xit", onClick: () => window.close() },
+        { id: "exit", label: "E&xit", onClick: () => { void exitApplication(); } },
       ];
 
   const fileMenu: TunerMenuItem = { id: "file", label: t('file.title'), items: fileMenuItems };
@@ -144,40 +152,67 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
     ],
   };
 
+  const processedNodeToMenuItem = (
+    node: ProcessedMenuNode,
+    prefix: string,
+    idx: number,
+  ): NonNullable<TunerMenuItem["items"]>[number] | null => {
+    const { item, availability, children } = node;
+
+    if (item.type === "Separator") {
+      return { id: `${prefix}-sep-${idx}`, label: "", separator: true };
+    }
+
+    const base = {
+      id: item.target || `${prefix}-item-${idx}`,
+      label: item.label || "",
+      disabled: availability.disabled,
+      disabledReason: availability.disabledReason,
+    };
+
+    if (item.type === "SubMenu" && children && children.length > 0) {
+      const subItems = children
+        .map((child, childIdx) => processedNodeToMenuItem(child, `${prefix}-${idx}`, childIdx))
+        .filter((n): n is NonNullable<typeof n> => n !== null);
+
+      return {
+        id: `${prefix}-submenu-${idx}`,
+        label: item.label || "",
+        items: subItems,
+        disabled: availability.disabled,
+        disabledReason: availability.disabledReason,
+      };
+    }
+
+    if (item.type === "Std") {
+      return {
+        ...base,
+        onClick: () => handleStdTarget(item.target || "", item.label || ""),
+      };
+    }
+    if (item.type === "Help") {
+      return {
+        ...base,
+        onClick: () => openHelpTopic(item.target || "", item.label || ""),
+      };
+    }
+
+    return {
+      ...base,
+      onClick: () => item.target && openTarget(
+        item.target,
+        item.label,
+        undefined,
+        false,
+        item.type === "Table" ? "Table" : item.type === "Dialog" ? "Dialog" : undefined,
+      ),
+    };
+  };
+
   const convertMenuItems = (items: BackendMenuItem[], prefix: string): TunerMenuItem["items"] => {
-    return items
-      .filter((item) => item.type !== "Separator" || item.label)
-      .map((item, idx) => {
-        if (item.type === "Separator") {
-          return { id: `${prefix}-sep-${idx}`, label: "", separator: true };
-        }
-        if (item.type === "SubMenu" && item.items && item.items.length > 0) {
-          return {
-            id: `${prefix}-submenu-${idx}`,
-            label: item.label || "",
-            items: convertMenuItems(item.items, `${prefix}-${idx}`),
-          };
-        }
-        if (item.type === "Std") {
-          return {
-            id: item.target || `${prefix}-std-${idx}`,
-            label: item.label || "",
-            onClick: () => handleStdTarget(item.target || "", item.label || ""),
-          };
-        }
-        if (item.type === "Help") {
-          return {
-            id: item.target || `${prefix}-help-${idx}`,
-            label: item.label || "",
-            onClick: () => openHelpTopic(item.target || "", item.label || ""),
-          };
-        }
-        return {
-          id: item.target || `${prefix}-item-${idx}`,
-          label: item.label || "",
-          onClick: () => item.target && openTarget(item.target, item.label),
-        };
-      });
+    return processMenuAvailability(items)
+      .map((node, idx) => processedNodeToMenuItem(node, prefix, idx))
+      .filter((n): n is NonNullable<typeof n> => n !== null);
   };
 
   const tuningMenus: TunerMenuItem[] = (backendMenus ?? []).map((menu) => ({

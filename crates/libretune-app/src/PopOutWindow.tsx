@@ -31,6 +31,7 @@ interface BackendTableData {
   y_axis_name?: string;
   x_output_channel?: string | null;
   y_output_channel?: string | null;
+  z_output_channel?: string | null;
 }
 
 interface BackendCurveData {
@@ -181,6 +182,7 @@ export default function PopOutWindow() {
             yLabel: data.y_axis_name || 'Y',
             xOutputChannel: data.x_output_channel ?? undefined,
             yOutputChannel: data.y_output_channel ?? undefined,
+            zOutputChannel: data.z_output_channel ?? undefined,
           };
           console.log('[PopOutWindow] Fetched table data:', tableData);
           setPopOutData(prev => prev ? { ...prev, data: tableData } : null);

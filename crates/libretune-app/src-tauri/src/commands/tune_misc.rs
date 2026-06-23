@@ -1,5 +1,6 @@
 //! Miscellaneous tune commands: string constant updates, tune source switching.
 
+use crate::commands::project_tune_sync::save_tune_to_project;
 use crate::state::AppState;
 use libretune_core::ini::DataType;
 use libretune_core::tune::TuneFile;
@@ -136,13 +137,10 @@ pub async fn use_project_tune(
 
 /// Use the ECU's tune data, discarding project file changes.
 ///
-/// Keeps the currently synced ECU data and marks the tune as unmodified.
-/// Used when there's a conflict between project and ECU data.
-///
-/// Returns: Nothing on success
+/// Keeps the currently synced ECU data and writes it to the project tune file.
 #[tauri::command]
 pub async fn use_ecu_tune(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    // ECU tune is already loaded from sync, just mark as not modified
-    *state.tune_modified.lock().await = false;
+    // ECU tune is already loaded from sync — persist to project and clear modified flag
+    save_tune_to_project(state).await?;
     Ok(())
 }

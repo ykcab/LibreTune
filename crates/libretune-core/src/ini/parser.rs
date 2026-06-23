@@ -31,6 +31,7 @@ struct ParserState {
     current_table: Option<String>,
     current_dialog: Option<String>,
     current_indicator_panel: Option<String>,
+    current_readout_panel: Option<String>,
     current_curve: Option<String>,
     current_help: Option<String>,
 }
@@ -113,6 +114,7 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
         current_table: None,
         current_dialog: None,
         current_indicator_panel: None,
+        current_readout_panel: None,
         current_curve: None,
         current_help: None,
     };
@@ -342,6 +344,7 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
                     value,
                     &mut state.current_dialog,
                     &mut state.current_indicator_panel,
+                    &mut state.current_readout_panel,
                     &mut state.current_help,
                 ),
                 "settingcontexthelp" => parse_setting_context_help(&mut definition, key, value),
@@ -2151,6 +2154,7 @@ fn parse_user_defined_entry(
     value: &str,
     current_dialog: &mut Option<String>,
     current_indicator_panel: &mut Option<String>,
+    current_readout_panel: &mut Option<String>,
     current_help: &mut Option<String>,
 ) {
     let key = key.to_lowercase();
@@ -2209,6 +2213,8 @@ fn parse_user_defined_entry(
                 };
                 def.dialogs.insert(name.clone(), dialog);
                 *current_dialog = Some(name);
+                *current_indicator_panel = None;
+                *current_readout_panel = None;
             }
         }
         "indicatorpanel" => {
@@ -2236,6 +2242,40 @@ fn parse_user_defined_entry(
                 };
                 def.indicator_panels.insert(name.clone(), panel);
                 *current_indicator_panel = Some(name);
+                *current_readout_panel = None;
+            }
+        }
+        "readoutpanel" => {
+            // Format: readoutPanel = name [, columns] [, {visibility_condition}]
+            let parts = split_ini_line(value);
+            if !parts.is_empty() {
+                let name = parts[0].to_string();
+                let dialog = DialogDefinition {
+                    name: name.clone(),
+                    title: name.clone(),
+                    components: Vec::new(),
+                };
+                def.dialogs.insert(name.clone(), dialog);
+                *current_readout_panel = Some(name);
+                *current_indicator_panel = None;
+            }
+        }
+        "readout" => {
+            if let Some(panel_name) = current_readout_panel {
+                if let Some(dialog) = def.dialogs.get_mut(panel_name) {
+                    // Format: readout = channel, "Label", units, ...
+                    let parts = split_ini_line(value);
+                    if parts.len() >= 2 {
+                        let field_name = parts[0].trim().to_string();
+                        let label = parts[1].trim_matches('"').to_string();
+                        dialog.components.push(DialogComponent::Field {
+                            label,
+                            name: field_name,
+                            visibility_condition: None,
+                            enabled_condition: None,
+                        });
+                    }
+                }
             }
         }
         "panel" => {
@@ -3582,5 +3622,44 @@ constOnPage0 = scalar, U16, 0, "ms", 1, 0, 0, 100, 1
     assert_eq!(
         c.page, 0,
         "INI 'page = 0' should remain as internal page 0 (saturating_sub prevents underflow)"
+    );
+}
+
+#[test]
+fn test_parse_readout_panel_as_dialog() {
+    let content = r#"
+[MegaTune]
+signature = "test 1.0"
+queryCommand = "Q"
+
+[UserDefined]
+readoutPanel = sdCardErrorPanel
+    readout = sd_error, "FRESULT", "", 0, 20, 0, 0, 1, 1, 0, 0
+
+dialog = sdCard, "SD Card"
+    panel = sdCardErrorPanel
+"#;
+
+    let def = parse_ini(content).expect("Should parse successfully");
+    let error_panel = def
+        .dialogs
+        .get("sdCardErrorPanel")
+        .expect("readoutPanel should create a dialog");
+    assert_eq!(error_panel.components.len(), 1);
+    match &error_panel.components[0] {
+        DialogComponent::Field { label, name, .. } => {
+            assert_eq!(label, "FRESULT");
+            assert_eq!(name, "sd_error");
+        }
+        other => panic!("expected Field component, got {:?}", other),
+    }
+
+    let sd_card = def.dialogs.get("sdCard").expect("sdCard dialog should exist");
+    assert!(
+        sd_card.components.iter().any(|c| matches!(
+            c,
+            DialogComponent::Panel { name, .. } if name == "sdCardErrorPanel"
+        )),
+        "sdCard should reference sdCardErrorPanel panel"
     );
 }

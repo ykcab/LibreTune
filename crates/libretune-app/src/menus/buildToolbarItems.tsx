@@ -17,13 +17,15 @@ export interface BuildToolbarItemsDeps {
   setSettingsDialogOpen: (open: boolean) => void;
   setActiveTabId: (id: string) => void;
   setIsLogging: (logging: boolean) => void;
+  /** When true, Rx/Tx metrics render in AppShellHeader instead of the toolbar */
+  useShellHeader?: boolean;
 }
 
 export function buildToolbarItems(deps: BuildToolbarItemsDeps): ToolbarItem[] {
   const {
     status, iniCapabilities, isLogging, connectionRuntimePacketMode, defaultRuntimePacketMode,
     setLoadDialogOpen, setSaveDialogOpen, setBurnDialogOpen, setConnectionDialogOpen,
-    setSettingsDialogOpen, setActiveTabId, setIsLogging,
+    setSettingsDialogOpen, setActiveTabId, setIsLogging, useShellHeader,
   } = deps;
 
   const items: ToolbarItem[] = [
@@ -38,7 +40,10 @@ export function buildToolbarItems(deps: BuildToolbarItemsDeps): ToolbarItem[] {
       active: status.state === "Connected",
       onClick: () => setConnectionDialogOpen(true),
     },
-    {
+  ];
+
+  if (!useShellHeader) {
+    items.push({
       id: 'connection-info',
       icon: 'connection-info',
       tooltip: 'Connection status and packet mode',
@@ -48,8 +53,8 @@ export function buildToolbarItems(deps: BuildToolbarItemsDeps): ToolbarItem[] {
           <span className="packet-mode">{status.state === 'Connected' ? (connectionRuntimePacketMode || defaultRuntimePacketMode) : '—'}</span>
         </div>
       ) as ReactNode,
-    },
-  ];
+    });
+  }
 
   if (iniCapabilities?.has_frontpage || iniCapabilities?.has_gauges) {
     items.push({ id: "realtime", icon: "realtime", tooltip: "Realtime Dashboard", onClick: () => setActiveTabId("dashboard") });

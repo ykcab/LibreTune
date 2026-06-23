@@ -1,6 +1,17 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowLeft } from 'lucide-react';
+import {
+  ConfiguratorShell,
+  ConfiguratorHeader,
+  ConfiguratorSearch,
+  ConfiguratorBody,
+  ConfiguratorGroups,
+  ConfiguratorGroup,
+  ConfiguratorFooter,
+} from '../common/ConfiguratorLayout';
+import { SidebarNodeIcon } from '../tuner-ui/SidebarNodeIcon';
+import { resolveSidebarIcon } from '../../utils/sidebarIcons';
+import '../common/ConfiguratorLayout.css';
 import './DialogRenderer.css';
 import {
   type DialogComponent,
@@ -16,29 +27,36 @@ export interface DialogRendererProps {
   context: Record<string, number>;
   onUpdate?: () => void;
   onOptimisticUpdate?: (name: string, value: number) => void;
-  /** Override title for display (formatted as "Menu Label (ini_name)") */
   displayTitle?: string;
-  /** Search term to highlight matching fields (scroll into view and flash animation) */
   highlightTerm?: string;
 }
 
-export default function DialogRenderer({ definition, onBack, openTable, context, onUpdate, onOptimisticUpdate, displayTitle, highlightTerm }: DialogRendererProps) {
-  // The context is already dynamic - it contains the current values of all constants
-  // Conditions like {cylindersCount > 5} will automatically evaluate based on the current cylindersCount value
-  // This works for any cylinder count: 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, etc.
-  
-  // State for showing field description in bottom panel
+function countFieldLike(components: DialogComponent[]): number {
+  return components.filter((c) => c.type === 'Field' || c.type === 'Indicator').length;
+}
+
+function formatPanelTitle(name: string, label?: string): string {
+  if (label?.trim()) return label.trim();
+  return name.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim();
+}
+
+export default function DialogRenderer({
+  definition,
+  onBack,
+  openTable,
+  context,
+  onUpdate,
+  onOptimisticUpdate,
+  displayTitle,
+  highlightTerm,
+}: DialogRendererProps) {
   const [selectedField, setSelectedField] = useState<FieldInfo | null>(null);
-  
-  // State for help icon visibility setting (default true = show on all fields)
   const [showAllHelpIcons, setShowAllHelpIcons] = useState(true);
-  
-  // Ref for scrolling to highlighted field
+  const [searchFilter, setSearchFilter] = useState(highlightTerm || '');
   const containerRef = useRef<HTMLDivElement>(null);
-  
-  // Fetch the help icon visibility setting on mount
+
   useEffect(() => {
-    invoke<{ show_all_help_icons?: boolean }>("get_settings")
+    invoke<{ show_all_help_icons?: boolean }>('get_settings')
       .then((settings) => {
         if (settings.show_all_help_icons !== undefined) {
           setShowAllHelpIcons(settings.show_all_help_icons);
@@ -47,190 +65,148 @@ export default function DialogRenderer({ definition, onBack, openTable, context,
       .catch(console.error);
   }, []);
 
-  
-  // Scroll to and highlight matching field when highlightTerm is provided
   useEffect(() => {
-    if (!highlightTerm || !containerRef.current) return;
-    
-    // Wait for DOM to render
+    if (highlightTerm) setSearchFilter(highlightTerm);
+  }, [highlightTerm]);
+
+  useEffect(() => {
+    if (!highlightTerm || !containerRef.current || !definition?.name) return;
+
     const timer = setTimeout(() => {
       const container = containerRef.current;
       if (!container) return;
-      
-      // Find field labels that match the search term
+
       const lowerTerm = highlightTerm.toLowerCase();
-      const labels = container.querySelectorAll('.dialog-field label, .dialog-field-label');
-      
+      const labels = container.querySelectorAll('.settings-field label, .dialog-field-label');
+
       for (const label of labels) {
         if (label.textContent?.toLowerCase().includes(lowerTerm)) {
-          // Found a matching label - scroll to its parent field row
-          const fieldRow = label.closest('.dialog-field') || label.closest('.dialog-row');
+          const fieldRow = label.closest('.settings-field') || label.closest('.dialog-row');
           if (fieldRow) {
             fieldRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            // Add flash animation class
             fieldRow.classList.add('search-highlight-flash');
-            // Remove class after animation
-            setTimeout(() => {
-              fieldRow.classList.remove('search-highlight-flash');
-            }, 2000);
+            setTimeout(() => fieldRow.classList.remove('search-highlight-flash'), 2000);
             break;
           }
         }
       }
     }, 100);
-    
+
     return () => clearTimeout(timer);
-  }, [highlightTerm, definition.name]);
-  
+  }, [highlightTerm, definition?.name]);
+
+  const title = displayTitle || definition?.title || definition?.name || 'Settings';
+  const headerIconKey = resolveSidebarIcon({
+    id: definition?.name ?? 'unknown',
+    label: title,
+    type: 'dialog',
+  });
+
+  if (!definition?.name) {
+    return (
+      <div className="dialog-view panel-load-error">
+        <span>This settings page could not be loaded (missing definition).</span>
+      </div>
+    );
+  }
+
   const handleFieldFocus = (info: FieldInfo) => {
     setSelectedField(info);
   };
-  
-  // Log all components for debugging
-  useEffect(() => {
-    console.log(`[DialogRenderer] Rendering dialog '${definition.name}' with ${definition.components.length} components:`);
-    definition.components.forEach((comp, i) => {
-      console.log(`  [${i}] type=${comp.type}, name=${comp.name || 'N/A'}, position=${comp.position || 'none'}, visibility=${comp.visibility_condition || 'none'}`);
-    });
-  }, [definition]);
-  
-  // Group components by position for multi-column layout
-  const organizeComponents = () => {
-    const rows: { west: DialogComponent[], east: DialogComponent[], unpositioned: DialogComponent[] }[] = [];
-    let currentRow: { west: DialogComponent[], east: DialogComponent[], unpositioned: DialogComponent[] } | null = null;
-    
-    for (const comp of definition.components) {
-      const position = comp.position?.toLowerCase();
-      
-      if (position === 'west' || position === 'east') {
-        // Start a new row if we don't have one or if current row already has items in this position
-        if (!currentRow || (position === 'west' && currentRow.west.length > 0) || (position === 'east' && currentRow.east.length > 0)) {
-          currentRow = { west: [], east: [], unpositioned: [] };
-          rows.push(currentRow);
-        }
-        
-        if (position === 'west') {
-          currentRow.west.push(comp);
-        } else {
-          currentRow.east.push(comp);
-        }
-      } else {
-        // Unpositioned components - add to unpositioned array
-        if (!currentRow) {
-          currentRow = { west: [], east: [], unpositioned: [] };
-          rows.push(currentRow);
-        }
-        currentRow.unpositioned.push(comp);
-      }
-    }
-    
-    return rows;
-  };
-  
-  const componentRows = useMemo(() => organizeComponents(), [definition.components]);
-  
-  return (
-    <div className="dialog-view view-transition">
-      <div className="editor-header">
-        <button onClick={onBack} className="icon-btn" title="Back">
-          <ArrowLeft size={20} />
-        </button>
-        <h2 className="content-title" style={{ margin: 0 }}>
-          {displayTitle || definition.title}
-        </h2>
-      </div>
 
-      <div className="glass-card dialog-container" ref={containerRef}>
-        {componentRows.map((row, rowIndex) => {
-          const hasPositioned = row.west.length > 0 || row.east.length > 0;
-          
-          if (!hasPositioned) {
-            // No positioned components - render unpositioned components normally
-            return (
-              <React.Fragment key={`row-${rowIndex}`}>
-                {row.unpositioned.map((comp, i) => (
-                  <DialogComponentRenderer 
-                    key={`unpositioned-${rowIndex}-${i}`} 
-                    comp={comp} 
-                    openTable={openTable} 
-                    context={context} 
-                    onUpdate={onUpdate} 
-                    onOptimisticUpdate={onOptimisticUpdate} 
-                    onFieldFocus={handleFieldFocus} 
-                    showAllHelpIcons={showAllHelpIcons} 
-                  />
-                ))}
-              </React.Fragment>
-            );
-          }
-          
-          // Has positioned components - use grid layout
-          return (
-            <React.Fragment key={`row-${rowIndex}`}>
-              {row.unpositioned.map((comp, i) => (
-                <DialogComponentRenderer 
-                  key={`pre-${rowIndex}-${i}`} 
-                  comp={comp} 
-                  openTable={openTable} 
-                  context={context} 
-                  onUpdate={onUpdate} 
-                  onOptimisticUpdate={onOptimisticUpdate} 
-                  onFieldFocus={handleFieldFocus} 
-                  showAllHelpIcons={showAllHelpIcons} 
-                />
-              ))}
-              <div className="dialog-row-container">
-                {row.west.length > 0 && (
-                  <div className="dialog-column">
-                    {row.west.map((comp, i) => (
-                      <DialogComponentRenderer 
-                        key={`west-${rowIndex}-${i}`} 
-                        comp={comp} 
-                        openTable={openTable} 
-                        context={context} 
-                        onUpdate={onUpdate} 
-                        onOptimisticUpdate={onOptimisticUpdate} 
-                        onFieldFocus={handleFieldFocus} 
-                        showAllHelpIcons={showAllHelpIcons} 
-                      />
-                    ))}
-                  </div>
-                )}
-                {row.east.length > 0 && (
-                  <div className="dialog-column">
-                    {row.east.map((comp, i) => (
-                      <DialogComponentRenderer 
-                        key={`east-${rowIndex}-${i}`} 
-                        comp={comp} 
-                        openTable={openTable} 
-                        context={context} 
-                        onUpdate={onUpdate} 
-                        onOptimisticUpdate={onOptimisticUpdate} 
-                        onFieldFocus={handleFieldFocus} 
-                        showAllHelpIcons={showAllHelpIcons} 
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </React.Fragment>
-          );
-        })}
-      </div>
-      
-      <div className="dialog-description-panel">
+  const renderComponent = (comp: DialogComponent, key: string) => (
+    <DialogComponentRenderer
+      key={key}
+      comp={comp}
+      openTable={openTable}
+      context={context}
+      onUpdate={onUpdate}
+      onOptimisticUpdate={onOptimisticUpdate}
+      onFieldFocus={handleFieldFocus}
+      showAllHelpIcons={showAllHelpIcons}
+      searchFilter={searchFilter}
+    />
+  );
+
+  const components = definition.components ?? [];
+
+  const groupedContent = (() => {
+    const panels = components.filter((c) => c.type === 'Panel');
+    const others = components.filter((c) => c.type !== 'Panel');
+    const generalCount = countFieldLike(others);
+
+    const blocks: React.ReactNode[] = [];
+
+    if (others.length > 0) {
+      blocks.push(
+        <ConfiguratorGroup
+          key="general"
+          title={panels.length > 0 ? 'General' : title}
+          icon={<SidebarNodeIcon icon={headerIconKey} />}
+          count={generalCount || others.length}
+        >
+          {others.map((comp, i) => renderComponent(comp, `general-${i}`))}
+        </ConfiguratorGroup>,
+      );
+    }
+
+    panels.forEach((comp, i) => {
+      const panelTitle = formatPanelTitle(comp.name || '', comp.label);
+      const panelIcon = resolveSidebarIcon({
+        id: comp.name || '',
+        label: panelTitle,
+        type: 'folder',
+      });
+      blocks.push(
+        <ConfiguratorGroup
+          key={`panel-${comp.name}-${i}`}
+          title={panelTitle}
+          icon={<SidebarNodeIcon icon={panelIcon} />}
+          defaultExpanded={i === 0}
+        >
+          {renderComponent(comp, `panel-${i}`)}
+        </ConfiguratorGroup>,
+      );
+    });
+
+    return blocks;
+  })();
+
+  return (
+    <ConfiguratorShell className="dialog-view view-transition">
+      <ConfiguratorHeader
+        icon={<SidebarNodeIcon icon={headerIconKey} size={22} />}
+        title={title}
+        subtitle={definition.name}
+        onBack={onBack}
+      />
+
+      <ConfiguratorSearch
+        value={searchFilter}
+        onChange={setSearchFilter}
+        placeholder="Search settings…"
+      />
+
+      <ConfiguratorBody>
+        <div ref={containerRef}>
+          <ConfiguratorGroups>{groupedContent}</ConfiguratorGroups>
+        </div>
+      </ConfiguratorBody>
+
+      <ConfiguratorFooter>
         {selectedField ? (
           <>
             <strong>{selectedField.label}</strong>
             <p>{selectedField.help || 'No description available for this setting.'}</p>
           </>
         ) : (
-          <p className="description-placeholder">Click the ? icon next to any setting to see its description</p>
+          <p className="description-placeholder">
+            Click the ? icon next to any setting to see its description
+          </p>
         )}
-      </div>
-    </div>
+      </ConfiguratorFooter>
+    </ConfiguratorShell>
   );
 }
 
-// Export types for use in App.tsx
 export type { DialogDefinition, DialogComponent };

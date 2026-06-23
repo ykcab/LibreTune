@@ -197,17 +197,35 @@ impl EcuDefinition {
         self.tables.get(name)
     }
 
+    /// Known menu/INI typos where the menu target name differs from the table definition.
+    fn resolve_table_alias(name_or_map: &str) -> &str {
+        match name_or_map {
+            // rusEFI menu typo: "Closed Loop Boost Table Switch 1" points at blend *2* table name
+            "boostClosedBlend2Table" => "boostClosedBlend1Table",
+            _ => name_or_map,
+        }
+    }
+
+    fn lookup_table_by_name_or_map(&self, name_or_map: &str) -> Option<&TableDefinition> {
+        if let Some(table) = self.tables.get(name_or_map) {
+            return Some(table);
+        }
+        if let Some(table_name) = self.table_map_to_name.get(name_or_map) {
+            return self.tables.get(table_name);
+        }
+        None
+    }
+
     /// Get a table definition by name or map_name
     /// Menus often reference tables by map_name (e.g., "veTable1Map"),
     /// but tables are indexed by name (e.g., "veTable1Tbl")
     pub fn get_table_by_name_or_map(&self, name_or_map: &str) -> Option<&TableDefinition> {
-        // First try direct lookup by name
-        if let Some(table) = self.tables.get(name_or_map) {
+        let alias = Self::resolve_table_alias(name_or_map);
+        if let Some(table) = self.lookup_table_by_name_or_map(alias) {
             return Some(table);
         }
-        // Then try lookup by map_name
-        if let Some(table_name) = self.table_map_to_name.get(name_or_map) {
-            return self.tables.get(table_name);
+        if alias != name_or_map {
+            return self.lookup_table_by_name_or_map(name_or_map);
         }
         None
     }

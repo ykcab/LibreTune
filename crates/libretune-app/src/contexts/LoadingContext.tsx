@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import './LoadingContext.css';
 
 interface LoadingState {
@@ -28,6 +28,15 @@ export function LoadingProvider({ children }: { children: ReactNode }) {
   const hideLoading = useCallback(() => {
     setLoadingState({ active: false, message: '' });
   }, []);
+
+  useEffect(() => {
+    if (!loadingState.active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') hideLoading();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [loadingState.active, hideLoading]);
 
   return (
     <LoadingContext.Provider

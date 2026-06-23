@@ -17,7 +17,10 @@ pub async fn sync_ecu_data(
     let n_pages = def.n_pages;
     let page_sizes: Vec<u32> = def.protocol.page_sizes.clone();
     let total_bytes: usize = page_sizes.iter().map(|&s| s as usize).sum();
+    let def_clone = def.clone();
     drop(def_guard);
+
+    crate::commands::tune_persist::ensure_tune_cache(&state, &def_clone).await;
 
     // Create new tune file
     let mut tune = TuneFile::new(&signature);
@@ -74,6 +77,8 @@ pub async fn sync_ecu_data(
                     let mut cache_guard = state.tune_cache.lock().await;
                     if let Some(cache) = cache_guard.as_mut() {
                         cache.load_page(page_num, page_data);
+                    } else {
+                        eprintln!("[WARN] sync_ecu_data: tune cache missing after ensure");
                     }
                 }
             }
@@ -101,6 +106,13 @@ pub async fn sync_ecu_data(
     }
 
     // Store tune file in state (even if partial)
+    {
+        let def_guard = state.definition.lock().await;
+        if let Some(def) = def_guard.as_ref() {
+            crate::commands::constant_values::refresh_tune_constants_from_pages(&mut tune, def);
+        }
+    }
+
     let mut tune_guard = state.current_tune.lock().await;
     let project_tune = tune_guard.clone(); // Keep copy for comparison
     let ecu_tune = tune.clone(); // Keep copy for comparison
@@ -122,6 +134,10 @@ pub async fn sync_ecu_data(
         failed_page: None,
     };
     let _ = app.emit("sync:progress", &progress);
+
+    if pages_synced > 0 {
+        let _ = app.emit("tune:loaded", "ecu_sync");
+    }
 
     // Check if project tune exists and differs from ECU tune
     if let Some(ref project) = project_tune {

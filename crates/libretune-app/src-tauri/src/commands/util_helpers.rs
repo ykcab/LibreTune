@@ -1,6 +1,8 @@
 //! Small helper functions extracted from lib.rs.
 
-use libretune_core::ini::DataType;
+use crate::commands::constant_values::read_constant_from_cache_or_tune;
+use libretune_core::ini::{DataType, EcuDefinition};
+use libretune_core::tune::{TuneCache, TuneFile};
 
 /// Parse a runtime packet mode string into enum
 pub(crate) fn parse_runtime_packet_mode(mode: &str) -> libretune_core::protocol::RuntimePacketMode {
@@ -54,6 +56,158 @@ pub(crate) fn clean_axis_label(label: &str) -> String {
 
     // Not an expression, return as-is
     trimmed.to_string()
+}
+
+/// Resolve a table axis label expression using tune constant values.
+///
+/// Evaluates `bitStringValue(optionList, indexConstant)` against the loaded tune
+/// (e.g. `{bitStringValue(pwmAxisLabels, gppwm1_rpmAxis)}` → `"RPM"`).
+pub(crate) fn resolve_table_axis_label(
+    label: &str,
+    def: &EcuDefinition,
+    tune: Option<&TuneFile>,
+    cache: Option<&TuneCache>,
+) -> String {
+    let trimmed = label.trim();
+
+    if trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return trimmed.trim_matches('"').to_string();
+    }
+
+    let inner = if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        trimmed[1..trimmed.len() - 1].trim()
+    } else {
+        trimmed
+    };
+
+    if let Some(resolved) = try_resolve_bit_string_value(inner, def, tune, cache) {
+        return resolved;
+    }
+
+    clean_axis_label(label)
+}
+
+fn try_resolve_bit_string_value(
+    inner: &str,
+    def: &EcuDefinition,
+    tune: Option<&TuneFile>,
+    cache: Option<&TuneCache>,
+) -> Option<String> {
+    let rest = inner.strip_prefix("bitStringValue(")?;
+    let rest = rest.strip_suffix(')')?;
+    let comma = rest.find(',')?;
+    let list_name = rest[..comma].trim();
+    let index_var = rest[comma + 1..].trim();
+
+    let list_const = def.constants.get(list_name)?;
+    let index_const = def.constants.get(index_var)?;
+    let index = read_constant_from_cache_or_tune(
+        index_var,
+        index_const,
+        def.endianness,
+        tune,
+        cache,
+    ) as usize;
+
+    let option = list_const.bit_options.get(index)?;
+    let opt = option.trim();
+    if opt.is_empty() || opt.eq_ignore_ascii_case("INVALID") {
+        return None;
+    }
+    Some(opt.to_string())
+}
+
+#[cfg(test)]
+mod axis_label_tests {
+    use super::*;
+    use libretune_core::ini::{Constant, DataType, EcuDefinition, Shape};
+    use libretune_core::tune::{TuneFile, TuneValue};
+
+    fn sample_def() -> EcuDefinition {
+        let mut def = EcuDefinition::default();
+        def.constants.insert(
+            "pwmAxisLabels".to_string(),
+            Constant {
+                name: "pwmAxisLabels".to_string(),
+                data_type: DataType::Bits,
+                bit_options: vec![
+                    "Zero".into(),
+                    "TPS %".into(),
+                    "MAP kPa".into(),
+                    "RPM".into(),
+                ],
+                ..Default::default()
+            },
+        );
+        def.constants.insert(
+            "gppwm1_rpmAxis".to_string(),
+            Constant {
+                name: "gppwm1_rpmAxis".to_string(),
+                data_type: DataType::Bits,
+                shape: Shape::Scalar,
+                ..Default::default()
+            },
+        );
+        def
+    }
+
+    #[test]
+    fn resolve_bit_string_value_axis_label() {
+        let def = sample_def();
+        let mut tune = TuneFile::default();
+        tune.constants
+            .insert("gppwm1_rpmAxis".to_string(), TuneValue::Scalar(3.0));
+
+        let label = "{bitStringValue(pwmAxisLabels, gppwm1_rpmAxis)}";
+        assert_eq!(
+            resolve_table_axis_label(label, &def, Some(&tune), None),
+            "RPM"
+        );
+    }
+
+    #[test]
+    fn resolve_quoted_literal_axis_label() {
+        let def = EcuDefinition::default();
+        assert_eq!(
+            resolve_table_axis_label("\"MAP\"", &def, None, None),
+            "MAP"
+        );
+    }
+
+    #[test]
+    fn infer_z_output_channel_maps_gppwm_and_user_tables() {
+        assert_eq!(
+            infer_z_output_channel(&Some("gppwmXAxis1".to_string())),
+            Some("gppwmOutput1".to_string())
+        );
+        assert_eq!(
+            infer_z_output_channel(&Some("utXAxis2".to_string())),
+            Some("utOutput2".to_string())
+        );
+        assert_eq!(
+            infer_z_output_channel(&Some("userTableXAxis3".to_string())),
+            Some("userTableOutput3".to_string())
+        );
+        assert_eq!(infer_z_output_channel(&None), None);
+    }
+}
+
+/// Infer the Z/output channel for a table from its X live channel name.
+/// e.g. gppwmXAxis1 -> gppwmOutput1, utXAxis2 -> utOutput2
+pub(crate) fn infer_z_output_channel(x_output_channel: &Option<String>) -> Option<String> {
+    let x = x_output_channel.as_ref()?;
+    for prefix in ["gppwmXAxis", "utXAxis", "userTableXAxis"] {
+        if let Some(suffix) = x.strip_prefix(prefix) {
+            let out_prefix = match prefix {
+                "gppwmXAxis" => "gppwmOutput",
+                "utXAxis" => "utOutput",
+                "userTableXAxis" => "userTableOutput",
+                _ => return None,
+            };
+            return Some(format!("{out_prefix}{suffix}"));
+        }
+    }
+    None
 }
 
 /// Helper to write stream diagnostic logs to /tmp/libretune-stream.log

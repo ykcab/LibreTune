@@ -1,9 +1,13 @@
 //! Update constant value command.
 
+use crate::commands::tune_persist::{
+    ensure_tune_cache, schedule_debounced_auto_save, write_bytes_to_tune_pages,
+};
 use crate::AppState;
 
 #[tauri::command]
 pub async fn update_constant(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     name: String,
     value: f64,
@@ -13,6 +17,8 @@ pub async fn update_constant(
     let mut cache_guard = state.tune_cache.lock().await;
 
     let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+
+    ensure_tune_cache(&state, def).await;
 
     let constant = def
         .constants
@@ -160,6 +166,10 @@ pub async fn update_constant(
             "[DEBUG] update_constant: Updated bits constant '{}' to value {}",
             name, value
         );
+        drop(conn_guard);
+        drop(cache_guard);
+        drop(def_guard);
+        schedule_debounced_auto_save(app.clone());
         return Ok(());
     }
 
@@ -172,38 +182,19 @@ pub async fn update_constant(
 
     // Always write to TuneCache if available (enables offline editing)
     if let Some(cache) = cache_guard.as_mut() {
-        if cache.write_bytes(constant.page, constant.offset, &raw_data) {
-            // Also update TuneFile in memory
-            let mut tune_guard = state.current_tune.lock().await;
-            if let Some(tune) = tune_guard.as_mut() {
-                // Get or create page data
-                let page_data = tune.pages.entry(constant.page).or_insert_with(|| {
-                    // Create empty page if it doesn't exist
-                    vec![
-                        0u8;
-                        def.page_sizes
-                            .get(constant.page as usize)
-                            .copied()
-                            .unwrap_or(256) as usize
-                    ]
-                });
+        cache.write_bytes(constant.page, constant.offset, &raw_data);
+    }
 
-                // Update the page data
-                let start = constant.offset as usize;
-                let end = start + raw_data.len();
-                if end <= page_data.len() {
-                    page_data[start..end].copy_from_slice(&raw_data);
-                }
-
-                // Update constants HashMap for offline reads
-                tune.constants
-                    .insert(name.clone(), libretune_core::tune::TuneValue::Scalar(value));
-            }
-
-            // Mark tune as modified
-            *state.tune_modified.lock().await = true;
+    {
+        let mut tune_guard = state.current_tune.lock().await;
+        if let Some(tune) = tune_guard.as_mut() {
+            write_bytes_to_tune_pages(tune, def, constant.page, constant.offset, &raw_data);
+            tune.constants
+                .insert(name.clone(), libretune_core::tune::TuneValue::Scalar(value));
         }
     }
+
+    *state.tune_modified.lock().await = true;
 
     // Write to ECU if connected (optional - offline mode works without this)
     if let Some(conn) = conn_guard.as_mut() {
@@ -214,11 +205,16 @@ pub async fn update_constant(
             data: raw_data.clone(),
         };
 
-        // Don't fail if ECU write fails - offline mode should still work
         if let Err(e) = conn.write_memory(params) {
             eprintln!("[WARN] Failed to write to ECU (offline mode?): {}", e);
         }
     }
+
+    drop(conn_guard);
+    drop(cache_guard);
+    drop(def_guard);
+
+    schedule_debounced_auto_save(app);
 
     Ok(())
 }

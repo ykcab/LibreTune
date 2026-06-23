@@ -22,12 +22,19 @@ import {
   ToggleLeft,
   Save,
   RotateCcw,
-  AlertTriangle,
   Check,
-  ChevronDown,
-  ChevronRight,
-  Search,
 } from 'lucide-react';
+import {
+  ConfiguratorShell,
+  ConfiguratorHeader,
+  ConfiguratorWarnings,
+  ConfiguratorSearch,
+  ConfiguratorBody,
+  ConfiguratorGroups,
+  ConfiguratorGroup,
+  ConfiguratorFooter,
+} from '../common/ConfiguratorLayout';
+import '../common/ConfiguratorLayout.css';
 import './PortEditor.css';
 
 // Pin function types
@@ -192,7 +199,6 @@ export default function PortEditor({
 }: PortEditorProps) {
   const [hardwarePins] = useState<HardwarePin[]>(DEFAULT_HARDWARE_PINS);
   const [assignments, setAssignments] = useState<Map<string, string>>(new Map());
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['injectors', 'ignition', 'inputs']));
   const [_selectedPin, setSelectedPin] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
@@ -247,18 +253,7 @@ export default function PortEditor({
     },
   ], []);
 
-  // Toggle group expansion
-  const toggleGroup = useCallback((groupId: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
-      return next;
-    });
-  }, []);
+  // Toggle group expansion handled by ConfiguratorGroup
 
   // Get available pins for a function type
   const getAvailablePins = useCallback((func: PinFunction): HardwarePin[] => {
@@ -348,116 +343,86 @@ export default function PortEditor({
   }, [functionGroups, searchFilter]);
 
   return (
-    <div className="port-editor">
-      {/* Header */}
-      <div className="port-editor-header">
-        <div className="header-title">
-          <Cpu size={24} />
-          <div>
-            <h2>{title || 'Pin Configuration'}</h2>
-            <span className="ecu-type">{ecuType}</span>
-          </div>
-        </div>
-        <div className="header-actions">
-          <button className="btn-secondary" onClick={handleReset} disabled={!hasChanges}>
-            <RotateCcw size={14} />
-            Reset
-          </button>
-          <button className="btn-primary" onClick={handleSave}>
-            <Save size={14} />
-            Save Configuration
-          </button>
-        </div>
-      </div>
+    <ConfiguratorShell className="port-editor">
+      <ConfiguratorHeader
+        icon={<Cpu size={22} />}
+        title={title || 'Output Port Settings'}
+        subtitle={ecuType}
+        actions={
+          <>
+            <button type="button" className="configurator-btn-secondary" onClick={handleReset} disabled={!hasChanges}>
+              <RotateCcw size={14} />
+              Reset
+            </button>
+            <button type="button" className="configurator-btn-primary" onClick={handleSave}>
+              <Save size={14} />
+              Save Configuration
+            </button>
+          </>
+        }
+      />
 
-      {/* Warnings */}
-      {warnings.length > 0 && (
-        <div className="warnings-banner">
-          <AlertTriangle size={16} />
-          <div className="warnings-list">
-            {warnings.slice(0, 3).map((warn, i) => (
-              <span key={i}>{warn}</span>
-            ))}
-            {warnings.length > 3 && (
-              <span className="more">+{warnings.length - 3} more</span>
-            )}
-          </div>
-        </div>
-      )}
+      <ConfiguratorWarnings warnings={warnings} />
 
-      {/* Main content */}
-      <div className="port-editor-content">
-        {/* Left panel: Function assignments */}
-        <div className="assignments-panel">
-          <div className="search-box">
-            <Search size={14} />
-            <input
-              type="text"
-              placeholder="Search functions..."
-              value={searchFilter}
-              onChange={(e) => setSearchFilter(e.target.value)}
-            />
-          </div>
+      <ConfiguratorSearch
+        value={searchFilter}
+        onChange={setSearchFilter}
+        placeholder="Search functions…"
+      />
 
-          <div className="function-groups">
-            {filteredGroups.map(group => (
-              <div key={group.id} className="function-group">
-                <div 
-                  className="group-header"
-                  onClick={() => toggleGroup(group.id)}
+      <ConfiguratorBody>
+        <div className="port-editor-content">
+          <div className="assignments-panel">
+            <ConfiguratorGroups>
+              {filteredGroups.map((group) => (
+                <ConfiguratorGroup
+                  key={group.id}
+                  title={group.name}
+                  icon={group.icon}
+                  count={group.assignments.length}
                 >
-                  {expandedGroups.has(group.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  {group.icon}
-                  <span className="group-name">{group.name}</span>
-                  <span className="group-count">{group.assignments.length}</span>
-                </div>
-                
-                {expandedGroups.has(group.id) && (
-                  <div className="group-assignments">
-                    {group.assignments.map(assignment => {
-                      const assignedPin = assignments.get(assignment.id);
-                      const availablePins = getAvailablePins(assignment.function);
-                      
-                      return (
-                        <div 
-                          key={assignment.id} 
-                          className={`assignment-row ${assignment.required ? 'required' : ''} ${assignedPin ? 'assigned' : 'unassigned'}`}
-                        >
-                          <div className="assignment-info">
-                            <span 
-                              className="function-indicator"
-                              style={{ backgroundColor: getFunctionColor(assignment.function) }}
-                            />
-                            <span className="assignment-name">{assignment.name}</span>
-                            {assignment.required && <span className="required-badge">Required</span>}
-                          </div>
-                          
-                          <select
-                            value={(!assignedPin || assignedPin === 'NONE' || assignedPin === 'INVALID') ? '' : assignedPin}
-                            onChange={(e) => assignPin(assignment.id, e.target.value || null)}
-                            className={assignedPin && assignedPin !== 'NONE' && assignedPin !== 'INVALID' ? 'has-value' : ''}
-                          >
-                            <option value="">Not Assigned</option>
-                            {assignedPin && assignedPin !== 'NONE' && assignedPin !== 'INVALID' && (
-                              <option value={assignedPin}>
-                                {hardwarePins.find(p => p.id === assignedPin)?.name || assignedPin}
-                              </option>
-                            )}
-                            {availablePins.map(pin => (
-                              <option key={pin.id} value={pin.id}>
-                                {pin.name}
-                              </option>
-                            ))}
-                          </select>
+                  {group.assignments.map((assignment) => {
+                    const assignedPin = assignments.get(assignment.id);
+                    const availablePins = getAvailablePins(assignment.function);
+
+                    return (
+                      <div
+                        key={assignment.id}
+                        className={`configurator-row ${assignment.required ? 'required' : ''} ${assignedPin ? 'assigned' : 'unassigned'}`}
+                      >
+                        <div className="configurator-row-label">
+                          <span
+                            className="configurator-row-dot"
+                            style={{ backgroundColor: getFunctionColor(assignment.function) }}
+                          />
+                          <span>{assignment.name}</span>
+                          {assignment.required && <span className="configurator-badge">Required</span>}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            ))}
+
+                        <select
+                          value={(!assignedPin || assignedPin === 'NONE' || assignedPin === 'INVALID') ? '' : assignedPin}
+                          onChange={(e) => assignPin(assignment.id, e.target.value || null)}
+                          className={assignedPin && assignedPin !== 'NONE' && assignedPin !== 'INVALID' ? 'has-value' : ''}
+                        >
+                          <option value="">Not Assigned</option>
+                          {assignedPin && assignedPin !== 'NONE' && assignedPin !== 'INVALID' && (
+                            <option value={assignedPin}>
+                              {hardwarePins.find((p) => p.id === assignedPin)?.name || assignedPin}
+                            </option>
+                          )}
+                          {availablePins.map((pin) => (
+                            <option key={pin.id} value={pin.id}>
+                              {pin.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </ConfiguratorGroup>
+              ))}
+            </ConfiguratorGroups>
           </div>
-        </div>
 
         {/* Right panel: Pin diagram */}
         <div className="pinout-panel">
@@ -606,21 +571,21 @@ export default function PortEditor({
             </div>
           </div>
         </div>
-      </div>
+        </div>
+      </ConfiguratorBody>
 
-      {/* Footer */}
-      <div className="port-editor-footer">
-        <div className="status">
+      <ConfiguratorFooter>
+        <div className="port-editor-status">
           {hasChanges ? (
             <span className="unsaved">Unsaved changes</span>
           ) : (
             <span className="saved"><Check size={14} /> Configuration saved</span>
           )}
         </div>
-        <button className="btn-cancel" onClick={() => onCancel?.()}>
+        <button type="button" className="configurator-btn-secondary" onClick={() => onCancel?.()}>
           Cancel
         </button>
-      </div>
-    </div>
+      </ConfiguratorFooter>
+    </ConfiguratorShell>
   );
 }

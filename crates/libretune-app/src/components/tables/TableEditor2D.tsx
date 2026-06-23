@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ArrowLeft, Save, Zap, ExternalLink, AlertTriangle, Palette, MapPin, Crosshair } from 'lucide-react';
 import TableToolbar from './TableToolbar';
 import TableGrid, { SelectionRange } from './TableGrid';
 import TableContextMenu from './TableContextMenu';
+import TableLiveReadouts from './TableLiveReadouts';
 import RebinDialog from '../dialogs/RebinDialog';
 import CellEditDialog from '../dialogs/CellEditDialog';
 import { useHeatmapSettings } from '../../utils/useHeatmapSettings';
@@ -42,6 +43,8 @@ interface TableEditor2DProps {
   x_output_channel?: string | null;
   /** Output channel name for Y-axis (used for live cursor) */
   y_output_channel?: string | null;
+  /** Output channel name for Z/output value (PWM/user tables) */
+  z_output_channel?: string | null;
   /** Callback when back button is clicked (optional for embedded mode) */
   onBack?: () => void;
   /** Compact mode for embedding in dialogs */
@@ -110,6 +113,7 @@ export default function TableEditor2D({
   z_values,
   x_output_channel,
   y_output_channel,
+  z_output_channel,
   onBack,
   embedded = false,
   onOpenInTab,
@@ -126,11 +130,12 @@ export default function TableEditor2D({
     const channels: string[] = [];
     if (x_output_channel) channels.push(x_output_channel);
     if (y_output_channel) channels.push(y_output_channel);
+    if (z_output_channel) channels.push(z_output_channel);
     if (channels.length === 0) {
       channels.push('rpm', 'map');
     }
     return channels;
-  }, [x_output_channel, y_output_channel]);
+  }, [x_output_channel, y_output_channel, z_output_channel]);
   const realtimeData = useChannels(outputChannels);
   
   // Use safe fallback values for hooks when data is invalid
@@ -188,6 +193,47 @@ export default function TableEditor2D({
   const [activeCell, setActiveCell] = useState<[number, number] | null>(null);
 
   const { showToast } = useToast();
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync local editor state when parent provides refreshed table data (e.g. after ECU sync)
+  useEffect(() => {
+    if (!hasValidData) return;
+    setLocalZValues(z_values.map((row) => [...row]));
+    setLocalXBins([...x_bins]);
+    setLocalYBins([...y_bins]);
+    setRebinDialog((prev) => ({ ...prev, newXBins: [...x_bins], newYBins: [...y_bins] }));
+    setHistory([{
+      z: z_values.map((row) => [...row]),
+      x: [...x_bins],
+      y: [...y_bins],
+    }]);
+    setHistoryIndex(0);
+  }, [table_name, z_values, x_bins, y_bins, hasValidData]);
+
+  const persistTableData = useCallback((values: number[][]) => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+    }
+    persistTimerRef.current = setTimeout(() => {
+      invoke('update_table_data', {
+        table_name,
+        z_values: values,
+      })
+        .then(() => {
+          onValuesChange?.(values);
+        })
+        .catch((err) => {
+          console.error('Failed to persist table data:', err);
+          showToast('Failed to save table changes', 'error');
+        });
+    }, 250);
+  }, [table_name, onValuesChange, showToast]);
+
+  useEffect(() => () => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+    }
+  }, []);
 
   const [alertLargeChangeEnabled, setAlertLargeChangeEnabled] = useState(true);
   const [alertLargeChangeAbs, setAlertLargeChangeAbs] = useState(5);
@@ -552,7 +598,7 @@ export default function TableEditor2D({
     setLocalZValues(newValues);
     setSelectionRange({ start: [x,y], end: [x,y] });
     pushHistory(newValues, localXBins, localYBins);
-    onValuesChange?.(newValues);
+    persistTableData(newValues);
 
     if (!options?.suppressAlert) {
       warnIfLargeChange(prevValue, value, options?.operation ?? 'Cell edit');
@@ -1122,6 +1168,8 @@ export default function TableEditor2D({
           x_bins={localXBins}
           y_bins={localYBins}
           z_values={localZValues}
+          xAxisName={x_axis_name}
+          yAxisName={y_axis_name}
           onCellChange={handleCellChange}
           onAxisChange={handleAxisChange}
           selectionRange={selectionRange}
@@ -1139,6 +1187,17 @@ export default function TableEditor2D({
           heatmapScheme={heatmapSettings.valueScheme}
         />
       </div>
+
+      {(x_output_channel || y_output_channel || z_output_channel) && (
+        <TableLiveReadouts
+          xChannel={x_output_channel}
+          yChannel={y_output_channel}
+          zChannel={z_output_channel}
+          xLabel={x_axis_name}
+          yLabel={y_axis_name}
+          compact={embedded}
+        />
+      )}
 
       <TableContextMenu
         visible={contextMenu.visible}

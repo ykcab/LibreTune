@@ -7,6 +7,8 @@
 
 // Theme CSS custom properties (--bg-primary, --text-primary, etc.)
 import '../themes/base.css';
+import '../themes/industrial.css';
+import '../themes/shell.css';
 
 // Global app styles
 import '../App.css';

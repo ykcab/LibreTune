@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -6,6 +6,9 @@ import { listen } from "@tauri-apps/api/event";
 import { ThemeProvider, useTheme } from "./themes";
 import { initializeHotkeyManager } from "./services/hotkeyService";
 import { useRealtimeStore } from "./stores/realtimeStore";
+import { useConstantValuesStore, getConstantValues } from "./stores/constantValuesStore";
+import { clearPanelDefinitionCache } from "./stores/panelDefinitionCache";
+import { clearConstantMetadataCache } from "./stores/constantsMetadataCache";
 import { LANGUAGE_STORAGE_KEY } from "./i18n/languages";
 import {
   TunerLayout,
@@ -24,7 +27,6 @@ import { TuneMismatchInfo } from "./components/dialogs/TuneMismatchDialog";
 import { BaseMapResult } from "./components/dialogs/BaseMapDialog";
 import { useErrorDialog } from "./components/dialogs/ErrorDetailsDialog";
 import ErrorBoundary from "./components/common/ErrorBoundary";
-import { DialogOverlays } from "./components/DialogOverlays";
 import { useBackendEventListeners } from "./hooks/useBackendEventListeners";
 import { useRealtimeStream } from "./hooks/useRealtimeStream";
 import { useTabPopout } from "./hooks/useTabPopout";
@@ -37,10 +39,12 @@ import { useLoading } from "./contexts/LoadingContext";
 import { useToast } from "./contexts/ToastContext";
 import { formatError } from "./utils/formatError";
 import { buildSidebarItems } from "./utils/buildSidebarItems";
+import { withSidebarIcons } from "./utils/sidebarIcons";
 import { TabContentRouter } from "./components/TabContentRouter";
 import { buildMenuItems } from "./menus/buildMenuItems";
 import { buildToolbarItems } from "./menus/buildToolbarItems";
-import { openTargetImpl } from "./services/openTarget";
+import { openTargetImpl, type OpenTargetKind } from "./services/openTarget";
+import { debounce } from "./utils/debounce";
 import {
   type ConnectionStatus,
   type ConnectResult,
@@ -60,6 +64,10 @@ import {
   toCurveData,
 } from "./types/app";
 import "./styles";
+
+const DialogOverlays = lazy(() =>
+  import("./components/DialogOverlays").then((m) => ({ default: m.DialogOverlays })),
+);
 
 function AppContent() {
   const { theme, setTheme } = useTheme();
@@ -120,7 +128,6 @@ function AppContent() {
 
   // Menu/tree state
   const [backendMenus, setBackendMenus] = useState<BackendMenu[]>([]);
-  const [constantValues, setConstantValues] = useState<Record<string, number>>({});
   const [searchIndex, setSearchIndex] = useState<Record<string, string[]>>({});
 
   // Status bar channel configuration - fetched from INI FrontPage or defaults
@@ -258,13 +265,112 @@ function AppContent() {
     }
   }, [isTauri]);
 
-  // Update window title with project name
-  // Persist active tab state
-  // Listen for reconnect:request, ini:changed, demo:changed events
-  // (all extracted to a dedicated hook below).
+  /** Restore a persisted tab without blocking the initial UI paint. */
+  const restorePersistedTab = useCallback(async (tabId: string) => {
+    const dashTab = { id: "dashboard", title: "Dashboard", icon: "dashboard", closable: false };
+
+    const TOOLS: Record<string, { title: string; icon: string; type: TabContent['type'] }> = {
+      console: { title: "ECU Console", icon: "terminal", type: "console" },
+      datalog: { title: "Data Logging", icon: "datalog", type: "datalog" },
+      autotune: { title: "AutoTune", icon: "autotune", type: "autotune" },
+      "tooth-logger": { title: "Tooth Logger", icon: "scope", type: "tooth-logger" },
+      "composite-logger": { title: "Composite Logger", icon: "scope", type: "composite-logger" },
+      "och-status": { title: "Output Channel Status", icon: "dashboard", type: "och-status" },
+      "lua-console": { title: "Lua Console", icon: "terminal", type: "lua-console" },
+      settings: { title: "Settings", icon: "settings", type: "settings" },
+    };
+
+    try {
+      if (TOOLS[tabId]) {
+        const tool = TOOLS[tabId];
+        setTabs([dashTab, { id: tabId, title: tool.title, icon: tool.icon }]);
+        setTabContents({
+          dashboard: { type: "dashboard" },
+          [tabId]: { type: tool.type, data: tabId === "autotune" ? "" : undefined },
+        });
+        setActiveTabId(tabId);
+        return;
+      }
+
+      const targetName = tabId.startsWith("table:") ? tabId.replace("table:", "") : tabId;
+      console.log(`Restoring content tab: ${targetName}`);
+
+      // Dialog before table — most persisted tabs are dialogs; avoids slow table probes.
+      try {
+        const def = await invoke<RendererDialogDef>("get_dialog_definition", { name: targetName });
+        setTabs([dashTab, { id: targetName, title: def.title || targetName, icon: "dialog" }]);
+        setTabContents({
+          dashboard: { type: "dashboard" },
+          [targetName]: { type: "dialog", data: def },
+        });
+        setActiveTabId(targetName);
+        return;
+      } catch {
+        // not a dialog
+      }
+
+      try {
+        const data = await invoke<BackendTableData>("get_table_data", { tableName: targetName });
+        const tableData = toTunerTableData(data);
+        setTabs([dashTab, { id: targetName, title: data.title || targetName, icon: "table" }]);
+        setTabContents({
+          dashboard: { type: "dashboard" },
+          [targetName]: { type: "table", data: tableData },
+        });
+        setActiveTabId(targetName);
+        return;
+      } catch {
+        // not a table
+      }
+
+      try {
+        const data = await invoke<BackendCurveData>("get_curve_data", { curveName: targetName });
+        const curveData = toCurveData(data);
+        let gaugeInfo: SimpleGaugeInfo | null = null;
+        if (data.gauge) {
+          try {
+            gaugeInfo = await invoke<SimpleGaugeInfo>("get_gauge_config", { gaugeName: data.gauge });
+          } catch (e) {
+            console.warn("Gauge load failed", e);
+          }
+        }
+        setTabs([dashTab, { id: targetName, title: data.title || targetName, icon: "curve" }]);
+        setTabContents({
+          dashboard: { type: "dashboard" },
+          [targetName]: { type: "curve", data: curveData, gauge: gaugeInfo },
+        });
+        setActiveTabId(targetName);
+        return;
+      } catch {
+        // not a curve
+      }
+
+      try {
+        const portEditor = await invoke<{ name: string; label: string }>("get_port_editor", { name: targetName });
+        const assignments = await invoke("get_port_editor_assignments", { name: portEditor.name }).catch(() => []);
+        setPortEditorAssignments((prev) => ({ ...prev, [portEditor.name]: assignments as PinConfig[] }));
+        setTabs([dashTab, { id: targetName, title: portEditor.label || targetName, icon: "dialog" }]);
+        setTabContents({
+          dashboard: { type: "dashboard" },
+          [targetName]: { type: "portEditor", data: portEditor },
+        });
+        setActiveTabId(targetName);
+      } catch {
+        console.warn(`Could not restore tab '${tabId}' - content not found.`);
+      }
+    } catch (restoreErr) {
+      console.warn("Failed to restore tab:", restoreErr);
+    }
+  }, [setPortEditorAssignments, setTabContents, setTabs, setActiveTabId]);
 
   async function initializeApp() {
     showLoading("Initializing LibreTune...");
+    const loadingSafety = window.setTimeout(() => {
+      console.warn("[App] Initialization taking too long — dismissing loading overlay");
+      hideLoading();
+    }, 20000);
+    let pendingTabRestore: string | null = null;
+
     try {
       // Initialize INI repository
       await invoke("init_ini_repository");
@@ -340,120 +446,18 @@ function AppContent() {
       if (project) {
         setCurrentProject(project);
         try {
-          // Fetch menus for the project
           const values = await fetchConstants();
+          useConstantValuesStore.getState().setAll(values);
           await fetchMenuTree(values);
-          
-          let restored = false;
-          // Dashboard base is always needed
+          void fetchSearchIndex();
+
           const dashTab = { id: "dashboard", title: "Dashboard", icon: "dashboard", closable: false };
+          setTabs([dashTab]);
+          setTabContents({ dashboard: { type: "dashboard" } });
+          setActiveTabId("dashboard");
 
           if (settings.last_active_tab && settings.last_active_tab !== "dashboard") {
-             const tabId = settings.last_active_tab;
-             
-             // Define known tools mapping for quick persistence restoration
-             const TOOLS: Record<string, { title: string, icon: string, type: TabContent['type'] }> = {
-               "console": { title: "ECU Console", icon: "terminal", type: "console" },
-               "datalog": { title: "Data Logging", icon: "datalog", type: "datalog" },
-               "autotune": { title: "AutoTune", icon: "autotune", type: "autotune" },
-               "tooth-logger": { title: "Tooth Logger", icon: "scope", type: "tooth-logger" },
-               "composite-logger": { title: "Composite Logger", icon: "scope", type: "composite-logger" },
-               "och-status": { title: "Output Channel Status", icon: "dashboard", type: "och-status" },
-               "lua-console": { title: "Lua Console", icon: "terminal", type: "lua-console" },
-               "settings": { title: "Settings", icon: "settings", type: "settings" },
-             };
-
-             try {
-                if (TOOLS[tabId]) {
-                   // Case 1: Known Tool request
-                   const tool = TOOLS[tabId];
-                   console.log(`Restoring tool tab: ${tabId}`);
-                   setTabs([dashTab, { id: tabId, title: tool.title, icon: tool.icon }]);
-                   setTabContents({ 
-                     dashboard: { type: "dashboard" },
-                     [tabId]: { type: tool.type, data: tabId === "autotune" ? "" : undefined }
-                   });
-                   setActiveTabId(tabId);
-                   restored = true;
-                } else {
-                   // Case 2: Content (Table, Curve, Dialog, PortEditor)
-                   // Remove "table:" prefix if present (legacy support)
-                   const targetName = tabId.startsWith("table:") ? tabId.replace("table:", "") : tabId;
-                   console.log(`Restoring content tab: ${targetName}`);
-
-                   // Strategy: Try Table -> Curve -> Dialog -> PortEditor
-                   try {
-                     // 1. Try Table
-                     const data = await invoke<BackendTableData>("get_table_data", { tableName: targetName });
-                     const tableData = toTunerTableData(data);
-                     
-                     setTabs([dashTab, { id: targetName, title: data.title || targetName, icon: "table" }]);
-                     setTabContents({ 
-                       dashboard: { type: "dashboard" },
-                       [targetName]: { type: "table", data: tableData }
-                     });
-                     setActiveTabId(targetName);
-                     restored = true;
-                   } catch {
-                     // 2. Try Curve
-                     try {
-                       const data = await invoke<BackendCurveData>("get_curve_data", { curveName: targetName });
-                       const curveData = toCurveData(data);
-                       let gaugeInfo: SimpleGaugeInfo | null = null;
-                       if (data.gauge) {
-                         try {
-                           gaugeInfo = await invoke<SimpleGaugeInfo>("get_gauge_config", { gaugeName: data.gauge });
-                         } catch (e) { console.warn("Gauge load failed", e); }
-                       }
-                       
-                       setTabs([dashTab, { id: targetName, title: data.title || targetName, icon: "curve" }]);
-                       setTabContents({ 
-                         dashboard: { type: "dashboard" },
-                         [targetName]: { type: "curve", data: curveData, gauge: gaugeInfo }
-                       });
-                       setActiveTabId(targetName);
-                       restored = true;
-                     } catch {
-                       // 3. Try Dialog
-                       try {
-                         const def = await invoke<RendererDialogDef>("get_dialog_definition", { name: targetName });
-                         setTabs([dashTab, { id: targetName, title: def.title || targetName, icon: "dialog" }]);
-                         setTabContents({ 
-                           dashboard: { type: "dashboard" },
-                           [targetName]: { type: "dialog", data: def }
-                         });
-                         setActiveTabId(targetName);
-                         restored = true;
-                       } catch {
-                          // 4. Try PortEditor
-                          try {
-                            const portEditor = await invoke<{ name: string; label: string }>("get_port_editor", { name: targetName });
-                            const assignments = await invoke("get_port_editor_assignments", { name: portEditor.name }).catch(() => []);
-                            setPortEditorAssignments(prev => ({ ...prev, [portEditor.name]: assignments as any }));
-
-                            setTabs([dashTab, { id: targetName, title: portEditor.label || targetName, icon: "dialog" }]);
-                            setTabContents({ 
-                              dashboard: { type: "dashboard" },
-                              [targetName]: { type: "portEditor", data: portEditor }
-                            });
-                            setActiveTabId(targetName);
-                            restored = true;
-                          } catch {
-                            console.warn(`Could not restore tab '${tabId}' - content not found.`);
-                          }
-                       }
-                     }
-                   }
-                }
-             } catch (restoreErr) {
-                console.warn("Failed to restore tab:", restoreErr);
-             }
-          }
-
-          if (!restored) {
-            setTabs([dashTab]);
-            setTabContents({ dashboard: { type: "dashboard" } });
-            setActiveTabId("dashboard");
+            pendingTabRestore = settings.last_active_tab;
           }
         } catch (menuError) {
           console.error("Failed to load menus:", menuError);
@@ -469,7 +473,12 @@ function AppContent() {
       console.error("Failed to initialize app:", e);
       showToast("Failed to initialize application: " + e, "error");
     } finally {
+      window.clearTimeout(loadingSafety);
       hideLoading();
+    }
+
+    if (pendingTabRestore) {
+      void restorePersistedTab(pendingTabRestore);
     }
   }
 
@@ -605,7 +614,7 @@ function AppContent() {
   async function fetchConstants() {
     try {
       const vals = await invoke<Record<string, number>>("get_all_constant_values");
-      setConstantValues(vals);
+      useConstantValuesStore.getState().setAll(vals);
       return vals;
     } catch (e) {
       console.error(e);
@@ -616,21 +625,34 @@ function AppContent() {
   async function fetchMenuTree(context?: Record<string, number>) {
     try {
       const tree = await invoke<BackendMenu[]>("get_menu_tree", {
-        filterContext: context || constantValues,
+        filterContext: context ?? getConstantValues(),
       });
       setBackendMenus(tree);
-      
-      // Also fetch searchable index for deep search
-      try {
-        const index = await invoke<Record<string, string[]>>("get_searchable_index");
-        setSearchIndex(index);
-      } catch (e) {
-        console.error("Failed to fetch search index:", e);
-      }
     } catch (e) {
       console.error(e);
     }
   }
+
+  async function fetchSearchIndex() {
+    try {
+      const index = await invoke<Record<string, string[]>>("get_searchable_index");
+      setSearchIndex(index);
+    } catch (e) {
+      console.error("Failed to fetch search index:", e);
+    }
+  }
+
+  const fetchMenuTreeRef = useRef(fetchMenuTree);
+  fetchMenuTreeRef.current = fetchMenuTree;
+
+  /** Debounced menu refresh — avoids re-evaluating the full INI menu on every field edit. */
+  const scheduleMenuRefresh = useMemo(
+    () =>
+      debounce((context?: Record<string, number>) => {
+        void fetchMenuTreeRef.current(context ?? getConstantValues());
+      }, 400),
+    [],
+  );
 
   // Note: Curves are accessed via their parent dialogs in the menu tree, not via a catchall folder.
   // The get_curves backend command still exists for search functionality.
@@ -671,19 +693,18 @@ function AppContent() {
         console.warn(`Partial sync: ${result.pages_synced}/${result.total_pages} pages succeeded`);
         result.errors.forEach(err => console.warn("Sync error:", err));
       }
-      
-      // Compare tunes after successful sync
-      // if (result.pages_synced > 0) {
-      //   try {
-      //     const differs = await invoke<boolean>("compare_project_and_ecu_tunes");
-      //     if (differs) {
-      //       setTuneComparisonOpen(true);
-      //     }
-      //   } catch (e) {
-      //     console.error("Failed to compare tunes:", e);
-      //     // Don't block on comparison failure
-      //   }
-      // }
+
+      // Refresh UI constants/menu from synced ECU page data
+      if (result.pages_synced > 0) {
+        try {
+          const values = await fetchConstants();
+          useConstantValuesStore.getState().setAll(values);
+          await fetchMenuTree(values);
+          void fetchSearchIndex();
+        } catch (e) {
+          console.error("Failed to refresh constants after sync:", e);
+        }
+      }
       
       return result;
     } catch (e) {
@@ -858,18 +879,22 @@ function AppContent() {
           setTabs([]);
           setTabContents({});
           setActiveTabId(null);
+          clearPanelDefinitionCache();
+          clearConstantMetadataCache();
         } catch (closeErr) {
           console.warn("Failed to close previous project:", closeErr);
         }
       }
 
-      const project = await invoke<CurrentProject>("create_project", { 
+      const project = await invoke<CurrentProject>("create_project", {
         name, 
         iniId,
         tunePath: null 
       });
       
       setCurrentProject(project);
+      clearPanelDefinitionCache();
+      clearConstantMetadataCache();
       
       // Show loading spinner while we fetch menus and initialize
       showLoading("Loading project...");
@@ -878,6 +903,7 @@ function AppContent() {
         // Refresh menus for the new project
         const values = await fetchConstants();
         await fetchMenuTree(values);
+        void fetchSearchIndex();
 
         await initializeDefaultTabs();
         
@@ -928,6 +954,8 @@ function AppContent() {
     try {
       const project = await invoke<CurrentProject>("open_project", { path });
       setCurrentProject(project);
+      clearPanelDefinitionCache();
+      clearConstantMetadataCache();
       
       // Update port selection from project settings
       if (project.connection.port) {
@@ -939,6 +967,7 @@ function AppContent() {
         // Refresh menus for the project
         const values = await fetchConstants();
         await fetchMenuTree(values);
+        void fetchSearchIndex();
 
         await initializeDefaultTabs();
       } catch (menuError) {
@@ -982,6 +1011,8 @@ function AppContent() {
       setTabs([]);
       setTabContents({});
       setActiveTabId(null);
+      clearPanelDefinitionCache();
+      clearConstantMetadataCache();
     } catch (e) {
       showToast("Failed to close project: " + e, "error");
     }
@@ -1035,18 +1066,25 @@ function AppContent() {
   }
 
   // Open a table or dialog in a new tab
-  const openTarget = useCallback(
-    async (name: string, title?: string, highlightTerm?: string) => {
+   const openTarget = useCallback(
+    async (
+      name: string,
+      title?: string,
+      highlightTerm?: string,
+      forceReload = false,
+      targetKind?: OpenTargetKind,
+    ) => {
       await openTargetImpl(
         {
-          tabs, tabContents, iniCapabilities,
+          tabs, tabContents, activeTabId, iniCapabilities,
           setTabs, setTabContents, setActiveTabId,
           setPortEditorAssignments, showToast,
         },
-        name, title, highlightTerm,
+        name, title, highlightTerm, forceReload, targetKind,
+        targetKind === "Dialog",
       );
     },
-    [tabs, tabContents, iniCapabilities, showToast]
+    [iniCapabilities, showToast, setTabs, setTabContents, setActiveTabId, setPortEditorAssignments, activeTabId, tabs, tabContents],
   );
 
   // Handle standard built-in targets (std_*)
@@ -1173,7 +1211,12 @@ function AppContent() {
     status, iniCapabilities, isLogging, connectionRuntimePacketMode, defaultRuntimePacketMode,
     setLoadDialogOpen, setSaveDialogOpen, setBurnDialogOpen, setConnectionDialogOpen,
     setSettingsDialogOpen, setActiveTabId, setIsLogging,
+    useShellHeader: true,
   }), [status, isLogging, iniCapabilities, connectionRuntimePacketMode, defaultRuntimePacketMode]);
+
+  const connectionPacketMode = status.state === 'Connected'
+    ? (connectionRuntimePacketMode || defaultRuntimePacketMode)
+    : undefined;
 
   const sidebarItems: SidebarNode[] = useMemo(() => {
     // Build menu-based sidebar items from INI menus
@@ -1184,16 +1227,16 @@ function AppContent() {
       type: "folder" as const,
       children: buildSidebarItems(menu.items, menu.name),
     }));
-    
-    return menuItems;
+
+    return withSidebarIcons(menuItems);
   }, [backendMenus]);
 
   const handleSidebarItemSelect = useCallback(
     (item: SidebarNode & { itemType?: string }, highlightTerm?: string) => {
-      console.log('[App] handleSidebarItemSelect called', { id: item.id, label: item.label, type: item.type, itemType: (item as any).itemType, highlightTerm });
+      if (item.disabled) {
+        return;
+      }
       if (item.type === "folder") {
-        // Folder clicked - expansion handled by Sidebar component
-        console.log('[App] Early return - item.type is folder');
         return;
       }
       // Handle based on the original item type
@@ -1206,7 +1249,7 @@ function AppContent() {
       } else {
         // Table or Dialog - pass highlightTerm for search result highlighting
         console.log('[App] Calling openTarget for Table/Dialog');
-        openTarget(item.id, item.label, highlightTerm);
+        openTarget(item.id, item.label, highlightTerm, false, item.itemType as OpenTargetKind);
       }
     },
     [openTarget, handleStdTarget, openHelpTopic]
@@ -1273,12 +1316,13 @@ function AppContent() {
         statusItems={statusItems}
         connected={status.state === "Connected"}
         ecuName={(status.state === "Connected" ? status.signature : (status.ini_name ? status.ini_name : undefined)) as string | undefined}
+        connectionPacketMode={connectionPacketMode}
         projectName={currentProject?.name}
         unitsSystem={unitsSystem}
         realtimeChannels={statusBarChannels}
         channelInfoMap={channelInfoMap}
       >
-        <ErrorBoundary>
+        <ErrorBoundary key={activeTabId ?? "welcome"}>
           <TabContentRouter
             currentProject={currentProject}
             availableProjects={availableProjects}
@@ -1296,10 +1340,7 @@ function AppContent() {
             setBurnDialogOpen={setBurnDialogOpen}
             handleTabClose={handleTabClose}
             openTarget={openTarget}
-            fetchConstants={fetchConstants}
-            fetchMenuTree={fetchMenuTree}
-            setConstantValues={setConstantValues}
-            constantValues={constantValues}
+            scheduleMenuRefresh={scheduleMenuRefresh}
             portEditorAssignments={portEditorAssignments}
             setPortEditorAssignments={setPortEditorAssignments}
             showToast={showToast}
@@ -1307,7 +1348,8 @@ function AppContent() {
         </ErrorBoundary>
       </TunerLayout>
 
-      <DialogOverlays
+      <Suspense fallback={null}>
+        <DialogOverlays
         status={status}
         currentProject={currentProject}
         theme={theme}
@@ -1415,7 +1457,8 @@ function AppContent() {
         setOnboardingOpen={setOnboardingOpen}
         pluginPanelOpen={pluginPanelOpen}
         setPluginPanelOpen={setPluginPanelOpen}
-      />
+        />
+      </Suspense>
     </>
   );
 }

@@ -404,6 +404,15 @@ pub async fn start_realtime_stream(
                                 &["vehicleSpeedKph", "speed", "Speed", "wheelSpeed"],
                             ),
                             ("oilPressure", &["oilPressure", "OilPressure", "oilpress"]),
+                            ("oilTemp", &["oilTemp", "OilTemp", "oil_temp"]),
+                            (
+                                "lowFuelPressure",
+                                &["lowFuelPressure", "LowFuelPressure", "lpfp", "fuelPressureLow"],
+                            ),
+                            (
+                                "highFuelPressure",
+                                &["highFuelPressure", "HighFuelPressure", "hpfp", "fuelPressureHigh"],
+                            ),
                             (
                                 "fuelLevel",
                                 &["fuelLevel", "FuelLevel", "fuel", "fuelTankLevel"],
@@ -664,6 +673,15 @@ pub async fn start_realtime_stream(
                                     &["vehicleSpeedKph", "speed", "Speed", "wheelSpeed"],
                                 ),
                                 ("oilPressure", &["oilPressure", "OilPressure", "oilpress"]),
+                            ("oilTemp", &["oilTemp", "OilTemp", "oil_temp"]),
+                            (
+                                "lowFuelPressure",
+                                &["lowFuelPressure", "LowFuelPressure", "lpfp", "fuelPressureLow"],
+                            ),
+                            (
+                                "highFuelPressure",
+                                &["highFuelPressure", "HighFuelPressure", "hpfp", "fuelPressureHigh"],
+                            ),
                                 (
                                     "fuelLevel",
                                     &["fuelLevel", "FuelLevel", "fuel", "fuelTankLevel"],

@@ -1,0 +1,33 @@
+/*
+ * Shell layout tokens — Phase 1 futuristic app chrome
+ * Applied globally; components pick up via CSS variables.
+ */
+
+.tuner-layout {
+  background: var(--bg-app);
+}
+
+.tuner-layout-main {
+  gap: 0;
+  padding: var(--shell-gap);
+  padding-top: 0;
+  background: var(--bg-app);
+}
+
+.tuner-layout-documents {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+.tuner-layout-content {
+  background: var(--bg-app);
+}
+
+.tuner-layout-content:empty::before {
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}

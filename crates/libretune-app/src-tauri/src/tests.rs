@@ -133,6 +133,7 @@ mod concurrency_tests {
             connection_factory: Mutex::new(None),
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
+            autosave_generation: Mutex::new(0),
         });
 
         // Simulate execute_controller_command pattern: lock def -> sleep -> lock conn
@@ -280,6 +281,7 @@ signature = "Speeduino 2023-04"
             connection_factory: Mutex::new(None),
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
+            autosave_generation: Mutex::new(0),
         };
 
         let matches = find_matching_inis_from_state(&state, "Speeduino 2023-05").await;
@@ -347,6 +349,7 @@ signature = "Speeduino 2023-04"
             connection_factory: Mutex::new(None),
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
+            autosave_generation: Mutex::new(0),
         };
 
         let matches = find_matching_inis_from_state(&state, "Speeduino 2023-05").await;
@@ -417,6 +420,7 @@ signature = "Speeduino 2023-04"
             connection_factory: Mutex::new(None),
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
+            autosave_generation: Mutex::new(0),
         };
 
         // Partial match case
@@ -499,6 +503,7 @@ signature = "Speeduino 2023-04"
             connection_factory: Mutex::new(None),
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
+            autosave_generation: Mutex::new(0),
         };
 
         // Install factory returning a partial matching signature

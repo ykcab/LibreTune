@@ -1,5 +1,8 @@
 //! Table z-values update command.
 
+use crate::commands::tune_persist::{
+    ensure_tune_cache, maybe_auto_save_project_tune, write_bytes_to_tune_pages,
+};
 use crate::AppState;
 
 #[tauri::command]
@@ -10,9 +13,11 @@ pub async fn update_table_data(
 ) -> Result<(), String> {
     let mut conn_guard = state.connection.lock().await;
     let def_guard = state.definition.lock().await;
-    let mut cache_guard = state.tune_cache.lock().await;
-
     let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+
+    ensure_tune_cache(&state, def).await;
+
+    let mut cache_guard = state.tune_cache.lock().await;
 
     let table = def
         .get_table_by_name_or_map(&table_name)
@@ -23,7 +28,6 @@ pub async fn update_table_data(
         .get(&table.map)
         .ok_or_else(|| format!("Constant {} not found for table {}", table.map, table_name))?;
 
-    // Flatten z_values
     let flat_values: Vec<f64> = z_values.into_iter().flatten().collect();
 
     if flat_values.len() != constant.shape.element_count() {
@@ -34,7 +38,6 @@ pub async fn update_table_data(
         ));
     }
 
-    // Convert display values to raw bytes
     let element_size = constant.data_type.size_bytes();
     let mut raw_data = vec![0u8; constant.size_bytes()];
 
@@ -46,38 +49,26 @@ pub async fn update_table_data(
             .write_to_bytes(&mut raw_data, offset, raw_val, def.endianness);
     }
 
-    // Always write to TuneCache if available (enables offline editing)
+    let mut persisted = false;
+
     if let Some(cache) = cache_guard.as_mut() {
-        if cache.write_bytes(constant.page, constant.offset, &raw_data) {
-            // Also update TuneFile in memory
-            let mut tune_guard = state.current_tune.lock().await;
-            if let Some(tune) = tune_guard.as_mut() {
-                // Get or create page data
-                let page_data = tune.pages.entry(constant.page).or_insert_with(|| {
-                    // Create empty page if it doesn't exist
-                    vec![
-                        0u8;
-                        def.page_sizes
-                            .get(constant.page as usize)
-                            .copied()
-                            .unwrap_or(256) as usize
-                    ]
-                });
+        persisted = cache.write_bytes(constant.page, constant.offset, &raw_data);
+    }
 
-                // Update the page data
-                let start = constant.offset as usize;
-                let end = start + raw_data.len();
-                if end <= page_data.len() {
-                    page_data[start..end].copy_from_slice(&raw_data);
-                }
-            }
-
-            // Mark tune as modified
-            *state.tune_modified.lock().await = true;
+    {
+        let mut tune_guard = state.current_tune.lock().await;
+        if let Some(tune) = tune_guard.as_mut() {
+            write_bytes_to_tune_pages(tune, def, constant.page, constant.offset, &raw_data);
+            persisted = true;
         }
     }
 
-    // Write to ECU if connected (optional - offline mode works without this)
+    if !persisted {
+        return Err("Failed to persist table data — no tune loaded".to_string());
+    }
+
+    *state.tune_modified.lock().await = true;
+
     if let Some(conn) = conn_guard.as_mut() {
         let params = libretune_core::protocol::commands::WriteMemoryParams {
             can_id: 0,
@@ -86,11 +77,16 @@ pub async fn update_table_data(
             data: raw_data.clone(),
         };
 
-        // Don't fail if ECU write fails - offline mode should still work
         if let Err(e) = conn.write_memory(params) {
             eprintln!("[WARN] Failed to write to ECU (offline mode?): {}", e);
         }
     }
+
+    drop(conn_guard);
+    drop(cache_guard);
+    drop(def_guard);
+
+    maybe_auto_save_project_tune(&state).await;
 
     Ok(())
 }

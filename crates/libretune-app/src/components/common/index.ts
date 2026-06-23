@@ -22,3 +22,14 @@ export { FormField } from './FormField';
 export type { FormFieldProps } from './FormField';
 
 export { default as ErrorBoundary } from './ErrorBoundary';
+
+export {
+  ConfiguratorShell,
+  ConfiguratorHeader,
+  ConfiguratorWarnings,
+  ConfiguratorSearch,
+  ConfiguratorBody,
+  ConfiguratorGroups,
+  ConfiguratorGroup,
+  ConfiguratorFooter,
+} from './ConfiguratorLayout';

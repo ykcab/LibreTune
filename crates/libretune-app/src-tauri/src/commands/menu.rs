@@ -9,24 +9,24 @@ pub async fn get_menu_tree(
     state: tauri::State<'_, AppState>,
     filter_context: Option<HashMap<String, f64>>,
 ) -> Result<Vec<Menu>, String> {
-    let def_guard = state.definition.lock().await;
-    let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+    let menus = {
+        let def_guard = state.definition.lock().await;
+        let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+        def.menus.clone()
+    };
 
-    // Always return all menu items - visibility conditions are evaluated but items are never filtered out
-    // This allows the frontend to show all items (grayed out if disabled) and enables search to find everything
     if let Some(context) = filter_context {
-        let mut all_menus = Vec::new();
-        for menu in &def.menus {
-            let items_with_flags = add_visibility_flags(&menu.items, &context);
-            all_menus.push(Menu {
+        let all_menus = menus
+            .iter()
+            .map(|menu| Menu {
                 name: menu.name.clone(),
                 title: menu.title.clone(),
-                items: items_with_flags,
-            });
-        }
+                items: add_visibility_flags(&menu.items, &context),
+            })
+            .collect();
         Ok(all_menus)
     } else {
-        Ok(def.menus.clone())
+        Ok(menus)
     }
 }
 

@@ -105,7 +105,7 @@ describe('App integration (toolbar connection-info)', () => {
       </LoadingProvider>
     );
 
-    // Packet mode label should show 'Auto' for connected state (wait for mount to stabilize)
+    // Packet mode label should show 'Auto' for connected state (in shell header)
     await waitFor(() => expect(screen.getByText('Auto')).toBeInTheDocument());
 
     // After our synthetic metrics event arrives (via the spy), the metrics element should show a unit like kB/s or MB/s
@@ -145,8 +145,11 @@ describe('App integration (toolbar connection-info)', () => {
       </LoadingProvider>
     );
 
-    // Packet mode should show placeholder '—'
-    await waitFor(() => expect(container.querySelector('.packet-mode')?.textContent).toBe('—'));
+    // Shell header hides live metrics when disconnected (no overlap with menu bar)
+    await waitFor(() => {
+      expect(container.querySelector('.app-shell-metrics')).toBeNull();
+      expect(container.querySelector('.toolbar-connection-info')).toBeNull();
+    });
   });
 
   it('proceeds to sync on partial signature mismatch (advisory)', async () => {

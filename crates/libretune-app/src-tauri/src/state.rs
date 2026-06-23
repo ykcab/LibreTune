@@ -165,4 +165,5 @@ pub struct AppState {
     pub rpm_state_tracker: Mutex<RpmStateTracker>,
     pub math_channels: Mutex<Vec<UserMathChannel>>,
     pub stream_stats: Mutex<StreamStats>,
+    pub autosave_generation: Mutex<u64>,
 }

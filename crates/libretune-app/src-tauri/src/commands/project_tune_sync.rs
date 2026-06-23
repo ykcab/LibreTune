@@ -1,5 +1,6 @@
 //! Project<->ECU tune sync commands.
 
+use crate::commands::tune_persist::{maybe_auto_save_project_tune, persist_tune_to_path};
 use crate::state::AppState;
 use libretune_core::tune::TuneFile;
 
@@ -144,26 +145,18 @@ pub async fn write_project_tune_to_ecu(
 /// Save the current tune to the project's tune file
 #[tauri::command]
 pub async fn save_tune_to_project(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let project_guard = state.current_project.lock().await;
-    let tune_guard = state.current_tune.lock().await;
+    let tune_path = {
+        let project_guard = state.current_project.lock().await;
+        let project = project_guard.as_ref().ok_or("No project open")?;
+        project.current_tune_path()
+    };
 
-    let project = project_guard.as_ref().ok_or("No project open")?;
-    let tune = tune_guard.as_ref().ok_or("No tune loaded")?.clone();
+    persist_tune_to_path(&state, tune_path).await
+}
 
-    let tune_path = project.current_tune_path();
-
-    drop(project_guard);
-    drop(tune_guard);
-
-    // Save tune to project path
-    tune.save(&tune_path)
-        .map_err(|e| format!("Failed to save tune to project: {}", e))?;
-
-    // Update path
-    *state.current_tune_path.lock().await = Some(tune_path);
-
-    // Mark as not modified
-    *state.tune_modified.lock().await = false;
-
+/// Auto-save tune to project if modified (no-op when no project or not dirty).
+#[tauri::command]
+pub async fn auto_save_project_tune(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    maybe_auto_save_project_tune(&state).await;
     Ok(())
 }

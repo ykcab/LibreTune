@@ -1,0 +1,372 @@
+/*
+ * ConfiguratorLayout — shared shell for Port Editor, INI dialogs, settings submenus.
+ */
+
+.configurator {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.configurator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.configurator-header-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.configurator-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+
+.configurator-back:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.configurator-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: rgba(var(--accent-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.configurator-header-icon svg {
+  filter: drop-shadow(0 0 6px rgba(var(--accent-rgb), 0.35));
+}
+
+.configurator-title {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+
+.configurator-subtitle {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.configurator-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.configurator-warnings {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-6);
+  background: rgba(var(--warning-rgb), 0.08);
+  border-bottom: 1px solid rgba(var(--warning-rgb), 0.25);
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.configurator-warnings-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
+.configurator-warnings-more {
+  opacity: 0.75;
+}
+
+.configurator-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) var(--space-6) 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.configurator-search:focus-within {
+  border-color: rgba(var(--primary-rgb), 0.45);
+  box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.1);
+}
+
+.configurator-search svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.configurator-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  outline: none;
+  min-width: 0;
+}
+
+.configurator-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.configurator-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+}
+
+.configurator-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 880px;
+}
+
+.configurator-group {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.configurator-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.configurator-group-header:hover {
+  background: var(--bg-hover);
+}
+
+.configurator-group-header > svg:first-child {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.configurator-group-icon {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.configurator-group-title {
+  flex: 1;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.configurator-group-count {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+}
+
+.configurator-group-body {
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-1) 0;
+}
+
+.configurator .settings-field,
+.configurator-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background var(--transition-fast);
+  max-width: none;
+  width: 100%;
+  background: transparent;
+  border-radius: 0;
+}
+
+.configurator .settings-field:last-child,
+.configurator-row:last-child {
+  border-bottom: none;
+}
+
+.configurator .settings-field:hover,
+.configurator-row:hover {
+  background: rgba(var(--primary-rgb), 0.04);
+}
+
+.configurator .settings-field label,
+.configurator-row-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  font-weight: 400;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.configurator-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.configurator-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  background: rgba(var(--warning-rgb), 0.15);
+  color: var(--warning);
+  border-radius: var(--radius-pill);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.configurator .settings-field--checkbox {
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+.configurator-footer {
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.configurator-footer strong {
+  color: var(--text-primary);
+  display: block;
+  margin-bottom: var(--space-1);
+}
+
+.configurator-footer p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.configurator-footer .description-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.configurator-btn-primary,
+.configurator-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.configurator-btn-primary {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--accent-text);
+}
+
+.configurator-btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.configurator-btn-secondary {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.configurator-btn-secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.configurator-btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.configurator .nested-panel {
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  max-width: none;
+  background: transparent;
+}
+
+.configurator .panel-title {
+  display: none;
+}
+
+.configurator .panel-content {
+  padding: 0;
+}
+
+.configurator .dialog-label {
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+}

@@ -94,6 +94,7 @@ export interface BackendTableData {
   z_values: number[][];
   x_output_channel?: string | null;
   y_output_channel?: string | null;
+  z_output_channel?: string | null;
 }
 
 export interface BackendCurveData {
@@ -126,6 +127,7 @@ export const toTunerTableData = (data: BackendTableData): TunerTableData => ({
   yLabel: data.y_axis_name || 'Y',
   xOutputChannel: data.x_output_channel ?? undefined,
   yOutputChannel: data.y_output_channel ?? undefined,
+  zOutputChannel: data.z_output_channel ?? undefined,
 });
 
 export const toCurveData = (data: BackendCurveData): CurveData => ({
@@ -159,6 +161,8 @@ export interface BackendMenuItem {
   enabled?: boolean;
   /** Original visibility condition expression for tooltip */
   visibility_condition?: string;
+  /** Original enable condition expression for tooltip */
+  enabled_condition?: string;
 }
 
 // Protocol defaults fetched from loaded INI

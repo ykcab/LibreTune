@@ -1,8 +1,15 @@
 import React, { useState, useCallback, useRef, useMemo, MouseEvent, useEffect } from 'react';
+import {
+  Search,
+  X,
+  ChevronsUpDown,
+  ChevronRight,
+  ChevronDown,
+  Cpu,
+} from 'lucide-react';
 import { SidebarNode } from './TunerLayout';
+import { SidebarNodeIcon } from './SidebarNodeIcon';
 import './Sidebar.css';
-
-type IconElement = React.ReactElement;
 
 interface SidebarProps {
   items: SidebarNode[];
@@ -281,35 +288,42 @@ export function Sidebar({ items, width, onResize, onItemSelect, searchIndex, pro
   return (
     <div className="sidebar" style={{ width }}>
       <div className="sidebar-header">
-        <span className="sidebar-title">{projectName || 'Project'}</span>
+        <div className="sidebar-project-badge" aria-hidden>
+          <Cpu size={16} strokeWidth={2} />
+        </div>
+        <div className="sidebar-title-wrap">
+          <span className="sidebar-title-label">Project</span>
+          <span className="sidebar-title" title={projectName || 'Project'}>
+            {projectName || 'Untitled'}
+          </span>
+        </div>
       </div>
       <div className="sidebar-search">
-        <svg className="search-icon" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.868-3.834zm-5.242.156a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/>
-        </svg>
+        <Search className="search-icon" size={15} strokeWidth={2} />
         <input
           ref={searchInputRef}
           type="text"
           className="search-input"
-          placeholder="Search... (Ctrl+K)"
+          placeholder="Search tables & settings…"
           value={searchQuery}
           onChange={handleSearchChange}
         />
         {searchQuery && (
-          <button className="search-clear" onClick={handleClearSearch} title="Clear search">
-            ×
+          <button type="button" className="search-clear" onClick={handleClearSearch} title="Clear search">
+            <X size={12} />
           </button>
         )}
-        <button 
-          className="expand-collapse-btn" 
+        <button
+          type="button"
+          className="expand-collapse-btn"
           onClick={() => {
             const allFolderIds = collectFolderIds(items);
             const isExpanded = expandedIds.size >= allFolderIds.size * 0.5;
             setExpandedIds(isExpanded ? new Set() : allFolderIds);
-          }} 
-          title={expandedIds.size >= collectFolderIds(items).size * 0.5 ? "Collapse All" : "Expand All"}
+          }}
+          title={expandedIds.size >= collectFolderIds(items).size * 0.5 ? 'Collapse all' : 'Expand all'}
         >
-          {expandedIds.size >= collectFolderIds(items).size * 0.5 ? '⊟' : '⊞'}
+          <ChevronsUpDown size={14} />
         </button>
       </div>
       <div className="sidebar-content">
@@ -398,9 +412,10 @@ function TreeView({
               title={isDisabled ? item.disabledReason || 'Not available' : ((!hasChildren) ? 'Drag to dashboard to create gauge' : undefined)}
             >
               <span className="tree-item-expander">
-                {hasChildren && (isExpanded ? '▼' : '▶')}
+                {hasChildren && (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
               </span>
-              <NodeIcon type={item.type} />
+              {!hasChildren && <span className="tree-item-expander-placeholder" />}
+              <NodeIcon type={item.type} icon={item.icon} />
               <span className="tree-item-label">
                 {highlightMatch(item.label, searchQuery)}
               </span>
@@ -422,44 +437,6 @@ function TreeView({
   );
 }
 
-function NodeIcon({ type }: { type?: string }) {
-  const icons: Record<string, IconElement> = {
-    folder: (
-      <svg viewBox="0 0 16 16" fill="currentColor" className="node-icon node-icon-folder">
-        <path d="M1 3h5l1 1h7v9H1V3zm1 1v8h11V5H6.5l-1-1H2z"/>
-      </svg>
-    ),
-    table: (
-      <svg viewBox="0 0 16 16" fill="currentColor" className="node-icon node-icon-table">
-        <path d="M1 2h14v12H1V2zm1 1v3h5V3H2zm6 0v3h6V3H8zM2 7v3h5V7H2zm6 0v3h6V7H8zM2 11v2h5v-2H2zm6 0v2h6v-2H8z"/>
-      </svg>
-    ),
-    dialog: (
-      <svg viewBox="0 0 16 16" fill="currentColor" className="node-icon node-icon-dialog">
-        <path d="M2 2h12v12H2V2zm1 1v10h10V3H3z"/>
-        <path d="M4 5h8v1H4zm0 2h6v1H4zm0 2h7v1H4z"/>
-      </svg>
-    ),
-    dashboard: (
-      <svg viewBox="0 0 16 16" fill="currentColor" className="node-icon node-icon-dashboard">
-        <path d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 1a5 5 0 1 1 0 10A5 5 0 0 1 8 3z"/>
-        <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-      </svg>
-    ),
-    log: (
-      <svg viewBox="0 0 16 16" fill="currentColor" className="node-icon node-icon-log">
-        <path d="M2 1h12v14H2V1zm1 1v12h10V2H3z"/>
-        <path d="M4 4h8M4 7h8M4 10h5" stroke="currentColor" strokeWidth="1"/>
-      </svg>
-    ),
-    help: (
-      <svg viewBox="0 0 16 16" fill="currentColor" className="node-icon node-icon-help">
-        <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1a6 6 0 1 1 0 12A6 6 0 0 1 8 2z"/>
-        <path d="M8 11.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5z"/>
-        <path d="M8 4.5c-1.1 0-2 .7-2 1.5h1c0-.3.4-.5 1-.5s1 .2 1 .5c0 .4-.5.7-1 1-.5.3-1 .8-1 1.5v.5h1v-.5c0-.3.3-.5.7-.7.7-.4 1.3-.9 1.3-1.8 0-.8-.9-1.5-2-1.5z"/>
-      </svg>
-    ),
-  };
-
-  return icons[type || 'folder'] || icons.folder;
+function NodeIcon({ type, icon }: { type?: string; icon?: string }) {
+  return <SidebarNodeIcon icon={icon} type={type} />;
 }

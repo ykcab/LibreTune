@@ -19,7 +19,7 @@ pub async fn load_tune(
     eprintln!("[INFO] LOADING TUNE FILE: {}", path);
     eprintln!("[INFO] ========================================");
 
-    let tune = TuneFile::load(&path).map_err(|e| format!("Failed to load tune: {}", e))?;
+    let mut tune = TuneFile::load(&path).map_err(|e| format!("Failed to load tune: {}", e))?;
 
     eprintln!("[INFO] ✓ Tune file loaded successfully");
     eprintln!("[INFO]   Signature: '{}'", tune.signature);
@@ -592,6 +592,13 @@ pub async fn load_tune(
             } else {
                 eprintln!("[DEBUG] load_tune: no definition loaded, skipping constant application");
             }
+        }
+    }
+
+    {
+        let def_guard = state.definition.lock().await;
+        if let Some(def) = def_guard.as_ref() {
+            crate::commands::constant_values::refresh_tune_constants_from_pages(&mut tune, def);
         }
     }
 

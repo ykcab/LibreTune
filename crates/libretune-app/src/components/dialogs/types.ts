@@ -58,6 +58,7 @@ export interface BackendTableData {
   z_values: number[][];
   x_output_channel?: string | null;
   y_output_channel?: string | null;
+  z_output_channel?: string | null;
 }
 
 export interface CurveData {

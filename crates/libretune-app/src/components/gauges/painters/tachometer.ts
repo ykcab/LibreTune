@@ -1,33 +1,35 @@
 /** Tachometer — specialized RPM gauge with redline zone and chrome bezel. */
 
 import { tsColorToHex } from '../../dashboards/dashTypes';
-import { createMetallicGradient } from '../drawUtils';
+import { createMetallicGradient, isFramelessGauge } from '../drawUtils';
 import type { Painter } from './types';
 
 export const tachometerPainter: Painter = (pctx) => {
   const { ctx, width, height, value, config, getValueColor, getFontSpec } = pctx;
 
-  const padding = Math.min(width, height) * 0.08;
+  const frameless = isFramelessGauge(config.back_color);
+  const padding = Math.min(width, height) * (frameless ? 0.04 : 0.08);
   const centerX = width / 2;
   const centerY = height / 2;
   const radius = Math.min(width, height) / 2 - padding;
 
-  // Outer chrome bezel
-  ctx.shadowColor = 'rgba(0,0,0,0.5)';
-  ctx.shadowBlur = 8;
+  if (!frameless) {
+    // Outer chrome bezel
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 8;
 
-  // Double ring effect
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-  const outerBezel = createMetallicGradient(ctx, centerX, centerY, 0, radius, config.trim_color);
-  ctx.fillStyle = outerBezel;
-  ctx.fill();
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    const outerBezel = createMetallicGradient(ctx, centerX, centerY, 0, radius, config.trim_color);
+    ctx.fillStyle = outerBezel;
+    ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius * 0.93, 0, Math.PI * 2);
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius * 0.93, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+  }
 
   // Tachometer typically spans 270 degrees
   const startAngle = Math.PI * 0.75;

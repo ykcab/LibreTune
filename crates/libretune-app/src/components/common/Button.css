@@ -66,17 +66,22 @@
 
 /* ----- Variants ----- */
 .lt-btn--primary {
-  background: var(--primary);
-  color: var(--primary-text);
-  border-color: var(--primary);
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: var(--font-size-sm);
 }
 .lt-btn--primary:hover:not(:disabled) {
-  background: var(--primary-hover);
-  border-color: var(--primary-hover);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  box-shadow: var(--shadow-accent);
 }
 .lt-btn--primary:active:not(:disabled) {
-  background: var(--primary-active);
-  border-color: var(--primary-active);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .lt-btn--secondary {

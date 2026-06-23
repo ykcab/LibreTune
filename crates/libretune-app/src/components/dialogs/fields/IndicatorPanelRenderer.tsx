@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import React, { useEffect, useMemo, useState } from 'react';
+import { evaluateIniBoolean, expressionContextKey } from '../../../utils/iniExpression';
+import { getConstantValues } from '../../../stores/constantValuesStore';
 import type { IndicatorPanel } from '../types';
 
 /// Renders an `IndicatorPanel` (grid of expression-driven lights). Re-evaluates
@@ -11,28 +12,30 @@ export function IndicatorPanelRenderer({
   panel: IndicatorPanel;
   context: Record<string, number>;
 }) {
+  const indicators = panel.indicators ?? [];
   const [indicatorValues, setIndicatorValues] = useState<Record<string, boolean>>({});
 
+  const ctxKey = useMemo(
+    () => indicators.map((ind) => expressionContextKey(ind.expression, context)).join(';'),
+    [indicators, context],
+  );
+
   useEffect(() => {
-    const evaluations = panel.indicators.map((ind) =>
-      invoke<boolean>('evaluate_expression', {
-        expression: ind.expression,
-        context,
-      })
-        .then((value) => ({ expression: ind.expression, value }))
-        .catch(() => ({ expression: ind.expression, value: false }))
+    const values: Record<string, boolean> = {};
+    const ctx = getConstantValues();
+    for (const ind of indicators) {
+      values[ind.expression] = evaluateIniBoolean(ind.expression, ctx);
+    }
+    setIndicatorValues(values);
+  }, [indicators, ctxKey]);
+
+  if (indicators.length === 0) {
+    return (
+      <div className="panel-loading">{panel.name ? `${panel.name}: no indicators` : 'No indicators'}</div>
     );
+  }
 
-    Promise.all(evaluations).then((results) => {
-      const values: Record<string, boolean> = {};
-      results.forEach(({ expression, value }) => {
-        values[expression] = value;
-      });
-      setIndicatorValues(values);
-    });
-  }, [panel.indicators, context]);
-
-  const columns = panel.columns || 2;
+  const columns = Math.max(1, panel.columns || 2);
   const gridStyle: React.CSSProperties = {
     display: 'grid',
     gridTemplateColumns: `repeat(${columns}, 1fr)`,
@@ -42,7 +45,7 @@ export function IndicatorPanelRenderer({
   return (
     <div className="indicator-panel">
       <div style={gridStyle}>
-        {panel.indicators.map((ind, i) => {
+        {indicators.map((ind, i) => {
           const isOn = indicatorValues[ind.expression] || false;
           const fgColor = isOn ? (ind.color_on_fg || 'red') : (ind.color_off_fg || 'white');
           const bgColor = isOn ? (ind.color_on_bg || 'black') : (ind.color_off_bg || 'black');

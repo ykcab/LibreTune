@@ -148,18 +148,20 @@ export default function NewProjectDialog({
               <label className="field-label">ECU Definition (INI)</label>
               <div className="ini-select-row">
                 {inis.length > 0 ? (
-                  <select
-                    className="ini-select"
-                    value={selectedIni}
-                    onChange={(e) => setSelectedIni(e.target.value)}
-                  >
-                    <option value="">Select ECU definition...</option>
-                    {inis.map((ini) => (
-                      <option key={ini.id} value={ini.id}>
-                        {ini.name} — {ini.signature}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="ini-select-wrap">
+                    <select
+                      className="ini-select"
+                      value={selectedIni}
+                      onChange={(e) => setSelectedIni(e.target.value)}
+                    >
+                      <option value="">Select ECU definition...</option>
+                      {inis.map((ini) => (
+                        <option key={ini.id} value={ini.id} title={`${ini.name} — ${ini.signature}`}>
+                          {ini.name} — {ini.signature}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 ) : (
                   <div className="no-ini-placeholder">
                     No INI files found — browse to import one

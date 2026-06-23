@@ -2,12 +2,13 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-  border-radius: 8px;
+  background: linear-gradient(135deg, var(--bg-app) 0%, var(--bg-surface) 100%);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  font-family: 'Courier New', monospace;
+  font-family: var(--font-mono);
   color: var(--text-primary);
-  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border-subtle);
 }
 
 .console-header {
@@ -29,9 +30,11 @@
 
 .title-text {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--accent);
-  text-shadow: 0 0 8px rgba(0, 217, 255, 0.3);
+  text-shadow: 0 0 8px rgba(var(--accent-rgb), 0.25);
 }
 
 .disconnected-badge {
@@ -57,15 +60,15 @@
   cursor: pointer;
   font-size: 12px;
   padding: 4px 8px;
-  border-radius: 4px;
-  background: rgba(0, 217, 255, 0.1);
-  border: 1px solid rgba(0, 217, 255, 0.3);
+  border-radius: var(--radius-sm);
+  background: rgba(var(--primary-rgb), 0.1);
+  border: 1px solid rgba(var(--primary-rgb), 0.3);
   transition: all 0.2s ease;
 }
 
 .fast-comms-toggle:hover {
-  background: rgba(0, 217, 255, 0.2);
-  border-color: rgba(0, 217, 255, 0.5);
+  background: rgba(var(--primary-rgb), 0.18);
+  border-color: rgba(var(--primary-rgb), 0.5);
 }
 
 .fast-comms-toggle input[type="checkbox"] {
@@ -152,7 +155,7 @@
 }
 
 .output-placeholder p.example code {
-  background: rgba(0, 217, 255, 0.1);
+  background: rgba(var(--primary-rgb), 0.1);
   padding: 2px 6px;
   border-radius: 3px;
   color: var(--accent);
@@ -202,7 +205,7 @@
 }
 
 .console-line.response .line-content {
-  color: #c0c0c0;
+  color: var(--text-secondary);
 }
 
 .console-line.error .line-content {
@@ -235,7 +238,7 @@
   flex: 1;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(0, 217, 255, 0.3);
+  border: 1px solid rgba(var(--primary-rgb), 0.3);
   border-radius: 4px;
   color: var(--text-primary);
   font-family: 'Courier New', monospace;
@@ -246,8 +249,8 @@
 
 .console-input:focus {
   background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(0, 217, 255, 0.6);
-  box-shadow: 0 0 8px rgba(0, 217, 255, 0.2);
+  border-color: rgba(var(--primary-rgb), 0.6);
+  box-shadow: 0 0 8px rgba(var(--primary-rgb), 0.2);
 }
 
 .console-input:disabled {
@@ -276,7 +279,7 @@
 
 .btn-send:hover:not(:disabled) {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
-  box-shadow: 0 0 12px rgba(0, 217, 255, 0.4);
+  box-shadow: 0 0 12px rgba(var(--primary-rgb), 0.4);
 }
 
 .btn-send:active:not(:disabled) {
@@ -300,10 +303,10 @@
 
 .quick-cmd-btn {
   padding: 4px 10px;
-  background: rgba(0, 217, 255, 0.08);
-  border: 1px solid rgba(0, 217, 255, 0.2);
+  background: rgba(var(--primary-rgb), 0.08);
+  border: 1px solid rgba(var(--primary-rgb), 0.2);
   border-radius: 3px;
-  color: rgba(0, 217, 255, 0.75);
+  color: rgba(var(--primary-rgb), 0.75);
   font-family: 'Courier New', monospace;
   font-size: 11px;
   cursor: pointer;
@@ -312,15 +315,15 @@
 }
 
 .quick-cmd-btn:hover:not(:disabled) {
-  background: rgba(0, 217, 255, 0.18);
-  border-color: rgba(0, 217, 255, 0.5);
+  background: rgba(var(--primary-rgb), 0.18);
+  border-color: rgba(var(--primary-rgb), 0.5);
   color: var(--accent);
-  box-shadow: 0 0 6px rgba(0, 217, 255, 0.15);
+  box-shadow: 0 0 6px rgba(var(--primary-rgb), 0.15);
 }
 
 .quick-cmd-btn:active:not(:disabled) {
   transform: scale(0.96);
-  background: rgba(0, 217, 255, 0.25);
+  background: rgba(var(--primary-rgb), 0.25);
 }
 
 .quick-cmd-btn:disabled {

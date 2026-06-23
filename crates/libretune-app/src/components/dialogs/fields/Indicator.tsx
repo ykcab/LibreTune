@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { evaluateIniBoolean, expressionContextKey } from '../../../utils/iniExpression';
+import { getConstantValues } from '../../../stores/constantValuesStore';
 import type { DialogComponent } from '../types';
 
 /// Renders a single boolean indicator (light + label) by evaluating
@@ -13,13 +14,13 @@ export function Indicator({
 }) {
   const [isOn, setIsOn] = useState(false);
 
+  const ctxKey = expressionContextKey(comp.expression, context);
+
   useEffect(() => {
     if (comp.expression) {
-      invoke<boolean>('evaluate_expression', { expression: comp.expression, context })
-        .then(setIsOn)
-        .catch(console.error);
+      setIsOn(evaluateIniBoolean(comp.expression, getConstantValues()));
     }
-  }, [comp.expression, context]);
+  }, [comp.expression, ctxKey]);
 
   return (
     <div className="indicator-field">

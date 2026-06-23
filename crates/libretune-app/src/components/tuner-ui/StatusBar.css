@@ -1,18 +1,19 @@
 /*
- * StatusBar - Bottom status bar with connection, logging, and custom indicators
+ * StatusBar — bottom telemetry strip with pill stat cells
  */
 
 .statusbar {
   display: flex;
   align-items: center;
-  height: 38px;
+  height: var(--statusbar-height);
   background: var(--bg-statusbar);
   border-top: 1px solid var(--border-subtle);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-5);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   user-select: none;
   flex-shrink: 0;
+  gap: var(--space-3);
 }
 
 .statusbar-section {
@@ -28,6 +29,8 @@
 .statusbar-section-center {
   flex: 1;
   justify-content: center;
+  gap: var(--space-2);
+  overflow: hidden;
 }
 
 .statusbar-section-right {
@@ -39,12 +42,17 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .statusbar-connection.connected {
   color: var(--success);
+  background: rgba(102, 187, 106, 0.08);
 }
 
 .statusbar-connection.disconnected {
@@ -52,16 +60,16 @@
 }
 
 .statusbar-icon {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 .statusbar-item {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
 }
 
 .statusbar-item-clickable {
@@ -74,7 +82,6 @@
   color: var(--text-primary);
 }
 
-/* Status channel indicators (realtime data display) */
 .statusbar-channel {
   display: inline-flex;
   align-items: center;
@@ -100,35 +107,41 @@
 .statusbar-channel-error .statusbar-channel-value { color: var(--error); }
 .statusbar-channel-info .statusbar-channel-value { color: var(--info); }
 
-/* TS-style grid cells for realtime data */
+/* Glowing stat cells */
 .statusbar-cell {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 70px;
-  padding: 2px 8px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-default);
-  border-radius: 2px;
+  min-width: 72px;
+  padding: 2px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+}
+
+.statusbar-cell:hover {
+  border-color: rgba(var(--primary-rgb), 0.3);
 }
 
 .statusbar-cell-label {
   font-size: 9px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
   line-height: 1;
-  margin-bottom: 1px;
+  margin-bottom: 2px;
 }
 
 .statusbar-cell-value {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
   color: var(--accent);
   line-height: 1.1;
+  text-shadow: 0 0 12px rgba(var(--accent-rgb), 0.35);
 }
 
 .statusbar-cell-unit {
@@ -138,13 +151,11 @@
   margin-left: 2px;
 }
 
-/* Color variants for cells */
-.statusbar-cell-success .statusbar-cell-value { color: var(--success); }
+.statusbar-cell-success .statusbar-cell-value { color: var(--success); text-shadow: var(--shadow-glow-green); }
 .statusbar-cell-warning .statusbar-cell-value { color: var(--warning); }
 .statusbar-cell-error .statusbar-cell-value { color: var(--error); }
-.statusbar-cell-info .statusbar-cell-value { color: var(--info); }
+.statusbar-cell-info .statusbar-cell-value { color: var(--info); text-shadow: var(--shadow-primary); }
 
-/* Logging indicator */
 .logging-indicator {
   display: flex;
   align-items: center;
@@ -164,17 +175,16 @@
   margin-left: var(--space-1);
 }
 
-/* Pagination controls for status bar channels */
 .pagination-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  height: 24px;
+  min-width: 26px;
+  height: 26px;
   padding: 0 6px;
-  background: transparent;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 14px;
@@ -186,7 +196,7 @@
 .pagination-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
-  border-color: var(--border-emphasis);
+  border-color: rgba(var(--accent-rgb), 0.3);
 }
 
 .pagination-btn:active {
@@ -204,9 +214,8 @@
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   white-space: nowrap;
   min-width: 32px;
   text-align: center;
 }
-

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AlertTriangle } from 'lucide-react';
+import { evaluateIniBoolean, expressionContextKey } from '../../../utils/iniExpression';
+import { getConstantValues } from '../../../stores/constantValuesStore';
 import { useToast } from '../../../contexts/ToastContext';
 import type { DialogComponent } from '../types';
 
@@ -50,17 +52,16 @@ export function CommandButton({
       .catch(console.error);
   }, []);
 
-  // Evaluate enable condition
+  const enableCtxKey = expressionContextKey(comp.enabled_condition, context);
+
+  // Evaluate enable condition locally (no IPC)
   useEffect(() => {
     if (comp.enabled_condition) {
-      invoke<boolean>('evaluate_expression', { expression: comp.enabled_condition, context })
-        .then(setIsEnabled)
-        .catch((err) => {
-          console.error('Error evaluating command button condition:', err);
-          setIsEnabled(true); // Default to enabled on error
-        });
+      setIsEnabled(evaluateIniBoolean(comp.enabled_condition, getConstantValues()));
+    } else {
+      setIsEnabled(true);
     }
-  }, [comp.enabled_condition, context]);
+  }, [comp.enabled_condition, enableCtxKey]);
 
   const executeCommand = async () => {
     if (!comp.command || isExecuting) return;

@@ -1,38 +1,59 @@
-/** RoundGauge — 360° circular gauge with segments. */
+/** RoundGauge — circular gauge; modern style = gradient progress ring. */
 
 import { tsColorToHex, tsColorToRgba } from '../../dashboards/dashTypes';
-import { lightenColor, createMetallicGradient } from '../drawUtils';
+import { lightenColor, createMetallicGradient, isFramelessGauge, drawModernRing } from '../drawUtils';
 import type { Painter } from './types';
 
 export const roundGaugePainter: Painter = (pctx) => {
   const { ctx, width, height, value, config, getValueColor, getFontSpec } = pctx;
 
-  const padding = Math.min(width, height) * 0.08;
+  if (config.gauge_style?.toLowerCase() === 'modern') {
+    drawModernRing(
+      ctx,
+      width,
+      height,
+      config.title,
+      value,
+      config.min,
+      config.max,
+      config.units,
+      config.value_digits,
+      tsColorToHex(config.needle_color),
+      tsColorToRgba(config.trim_color),
+      tsColorToHex(getValueColor()),
+      getFontSpec,
+      config.start_angle ?? 135,
+      config.sweep_angle ?? 270,
+    );
+    return;
+  }
+
+  const frameless = isFramelessGauge(config.back_color);
+  const padding = Math.min(width, height) * (frameless ? 0.04 : 0.08);
   const centerX = width / 2;
   const centerY = height / 2;
   const radius = Math.min(width, height) / 2 - padding;
 
-  // Metallic outer ring
-  const ringWidth = radius * 0.12;
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-  ctx.arc(centerX, centerY, radius - ringWidth, 0, Math.PI * 2, true);
-  ctx.closePath();
-  const ringGradient = createMetallicGradient(ctx, centerX, centerY, 0, radius, config.trim_color);
-  ctx.fillStyle = ringGradient;
-  ctx.fill();
+  if (!frameless) {
+    const ringWidth = radius * 0.12;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.arc(centerX, centerY, radius - ringWidth, 0, Math.PI * 2, true);
+    ctx.closePath();
+    const ringGradient = createMetallicGradient(ctx, centerX, centerY, 0, radius, config.trim_color);
+    ctx.fillStyle = ringGradient;
+    ctx.fill();
 
-  // Inner background
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius - ringWidth, 0, Math.PI * 2);
-  ctx.fillStyle = tsColorToRgba(config.back_color);
-  ctx.fill();
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius - ringWidth, 0, Math.PI * 2);
+    ctx.fillStyle = tsColorToRgba(config.back_color);
+    ctx.fill();
+  }
 
-  // Draw segments around the full 360 degrees
   const innerRadius = radius * 0.55;
   const outerRadius = radius * 0.85;
   const segments = 60;
-  const gapAngle = Math.PI / 180; // 1 degree gap
+  const gapAngle = Math.PI / 180;
 
   for (let i = 0; i < segments; i++) {
     const startAngle = (i / segments) * Math.PI * 2 - Math.PI / 2;
@@ -44,7 +65,6 @@ export const roundGaugePainter: Painter = (pctx) => {
     ctx.arc(centerX, centerY, innerRadius, endAngle, startAngle, true);
     ctx.closePath();
 
-    // Color based on value and warning zones
     let segmentColor = tsColorToHex(config.trim_color);
     if (segmentValue >= config.max - (config.max - config.min) * 0.1) {
       segmentColor = tsColorToHex(config.critical_color);
@@ -52,7 +72,6 @@ export const roundGaugePainter: Painter = (pctx) => {
       segmentColor = tsColorToHex(config.warn_color);
     }
 
-    // Dim segments beyond current value
     if (segmentValue > value) {
       ctx.fillStyle = lightenColor(segmentColor, -60);
     } else {
@@ -61,7 +80,6 @@ export const roundGaugePainter: Painter = (pctx) => {
     ctx.fill();
   }
 
-  // Value display in center
   const valueTextColorTs = getValueColor();
   const fontSize = Math.max(12, radius * 0.25);
   ctx.fillStyle = tsColorToHex(valueTextColorTs);
@@ -70,14 +88,12 @@ export const roundGaugePainter: Painter = (pctx) => {
   ctx.textBaseline = 'middle';
   ctx.fillText(value.toFixed(config.value_digits), centerX, centerY);
 
-  // Units below value
   if (config.units) {
     ctx.fillStyle = tsColorToHex(config.font_color);
     ctx.font = getFontSpec(fontSize * 0.5);
     ctx.fillText(config.units, centerX, centerY + fontSize * 0.6);
   }
 
-  // Title at top
   if (config.title) {
     ctx.fillStyle = tsColorToHex(config.font_color);
     ctx.font = getFontSpec(fontSize * 0.4);

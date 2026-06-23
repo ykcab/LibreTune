@@ -81,6 +81,9 @@ pub async fn list_available_dashes(app: tauri::AppHandle) -> Result<Vec<DashFile
             dash_dir
         );
         create_default_dashboard_files(&dash_dir)?;
+        write_dash_layout_version(&dash_dir)?;
+    } else {
+        ensure_dashboard_layout_current(&dash_dir)?;
     }
 
     let mut dashes = Vec::new();
@@ -128,6 +131,7 @@ pub async fn reset_dashboards_to_defaults(app: tauri::AppHandle) -> Result<(), S
 
     // Create the 3 defaults
     create_default_dashboard_files(&dash_dir)?;
+    write_dash_layout_version(&dash_dir)?;
 
     println!("[reset_dashboards_to_defaults] Reset complete - 3 default dashboards created");
     Ok(())
@@ -297,6 +301,46 @@ pub async fn import_dash_file(
     })
 }
 
+/// Layout version — bump when default dashboard templates change materially.
+const DASH_LAYOUT_VERSION: u32 = 4;
+const DASH_VERSION_FILE: &str = ".libretune-dash-version";
+
+fn read_dash_layout_version(dir: &Path) -> Option<u32> {
+    let content = std::fs::read_to_string(dir.join(DASH_VERSION_FILE)).ok()?;
+    content.trim().parse().ok()
+}
+
+fn write_dash_layout_version(dir: &Path) -> Result<(), String> {
+    std::fs::write(
+        dir.join(DASH_VERSION_FILE),
+        DASH_LAYOUT_VERSION.to_string(),
+    )
+    .map_err(|e| format!("Failed to write dash version file: {}", e))
+}
+
+fn ensure_dashboard_layout_current(dir: &Path) -> Result<(), String> {
+    let current = read_dash_layout_version(dir);
+    if current == Some(DASH_LAYOUT_VERSION) {
+        return Ok(());
+    }
+
+    println!(
+        "[ensure_dashboard_layout_current] Upgrading dashboards from {:?} to v{}",
+        current, DASH_LAYOUT_VERSION
+    );
+
+    // Remove stale default files only — preserve user-imported dashboards
+    for name in ["Basic.ltdash.xml", "Tuning.ltdash.xml", "Racing.ltdash.xml"] {
+        let path = dir.join(name);
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    create_default_dashboard_files(dir)?;
+    write_dash_layout_version(dir)
+}
+
 /// Create default dashboard XML files in the given directory
 pub(crate) fn create_default_dashboard_files(dir: &Path) -> Result<(), String> {
     // Basic Dashboard
@@ -331,17 +375,17 @@ pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, Str
         DashboardTemplateInfo {
             id: "basic".to_string(),
             name: "Basic Dashboard".to_string(),
-            description: "Essential gauges: RPM, AFR, Coolant, Throttle".to_string(),
+            description: "Command center: gradient RPM/AFR rings + stat cards".to_string(),
         },
         DashboardTemplateInfo {
             id: "racing".to_string(),
             name: "Racing Dashboard".to_string(),
-            description: "Large RPM with shift lights, oil pressure, water temp".to_string(),
+            description: "Hero RPM ring with oil, water, speed, boost stats".to_string(),
         },
         DashboardTemplateInfo {
             id: "tuning".to_string(),
             name: "Tuning Dashboard".to_string(),
-            description: "AFR, VE, Spark advance, and correction factors".to_string(),
+            description: "Dense telemetry strip, lambda trend, fuel/ignition stats".to_string(),
         },
     ])
 }

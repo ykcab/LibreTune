@@ -8,92 +8,102 @@
  */
 
 import { tsColorToRgba, tsColorToHex } from '../../dashboards/dashTypes';
-import { roundRect, lightenColor, darkenColor } from '../drawUtils';
+import {
+  roundRect,
+  applyNeonGlow,
+  clearNeonGlow,
+  drawHudPanel,
+  drawCompactTile,
+  drawModernStatCard,
+  isFramelessGauge,
+} from '../drawUtils';
 import type { Painter } from './types';
 
 export const basicReadoutPainter: Painter = (pctx) => {
   const { ctx, width, height, value, config, legacyMode, bgImage, getValueColor, getFontSpec } = pctx;
 
-  const padding = 6;
+  const style = config.gauge_style?.toLowerCase() ?? '';
+
+  if (style === 'stat' && !(legacyMode && bgImage)) {
+    drawModernStatCard(
+      ctx,
+      width,
+      height,
+      config.title,
+      value,
+      config.units,
+      config.value_digits,
+      tsColorToRgba(config.trim_color),
+      tsColorToHex(getValueColor()),
+      getFontSpec,
+    );
+    return;
+  }
+
+  const isCompact = style === 'compact' || style === 'command';
+
+  if (isCompact && !(legacyMode && bgImage)) {
+    drawCompactTile(
+      ctx,
+      width,
+      height,
+      config.title,
+      value,
+      config.units,
+      config.value_digits,
+      tsColorToRgba(config.trim_color),
+      tsColorToHex(getValueColor()),
+      getFontSpec,
+    );
+    return;
+  }
+
+  const padding = 8;
   const innerWidth = width - padding * 2;
   const innerHeight = height - padding * 2;
-  const cornerRadius = Math.min(8, width * 0.05);
+  const cornerRadius = 3;
 
-  // Use smaller dimension for balanced font scaling (prevents text clipping)
   const minDim = Math.min(width, height);
-  // Apply font_size_adjustment as a multiplier (typically -2 to +2, we scale by ~10% per unit)
   const fontScale = 1 + (config.font_size_adjustment ?? 0) * 0.1;
 
   const useLegacyBackground = legacyMode && !!bgImage;
   if (useLegacyBackground && bgImage) {
     ctx.drawImage(bgImage, 0, 0, width, height);
-  } else {
-    // Outer frame with gradient (metallic look)
-    const frameGradient = ctx.createLinearGradient(0, 0, width, height);
-    frameGradient.addColorStop(0, '#555555');
-    frameGradient.addColorStop(0.5, '#333333');
-    frameGradient.addColorStop(1, '#222222');
-    ctx.fillStyle = frameGradient;
-    roundRect(ctx, 0, 0, width, height, cornerRadius);
-    ctx.fill();
+  } else if (!isFramelessGauge(config.back_color)) {
+    drawHudPanel(ctx, 0, 0, width, height, cornerRadius);
 
-    // Inner LCD panel with subtle inset effect
-    const innerX = padding - 2;
-    const innerY = padding - 2;
-    const innerW = innerWidth + 4;
-    const innerH = innerHeight + 4;
-
-    // Inset shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    ctx.shadowBlur = 4;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 2;
-    ctx.fillStyle = tsColorToRgba(config.back_color);
-    roundRect(ctx, innerX, innerY, innerW, innerH, cornerRadius - 2);
+    // Inner LCD readout zone
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    roundRect(ctx, padding, padding + 2, innerWidth, innerHeight - 2, cornerRadius - 1);
     ctx.fill();
-    ctx.shadowColor = 'transparent';
-
-    // LCD background with slight gradient for depth
-    const lcdGradient = ctx.createLinearGradient(padding, padding, padding, height - padding);
-    const bgHex = tsColorToHex(config.back_color);
-    lcdGradient.addColorStop(0, lightenColor(bgHex, 5));
-    lcdGradient.addColorStop(1, darkenColor(bgHex, 10));
-    ctx.fillStyle = lcdGradient;
-    roundRect(ctx, padding, padding, innerWidth, innerHeight, cornerRadius - 2);
-    ctx.fill();
+    ctx.strokeStyle = 'rgba(100, 181, 246, 0.12)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, padding, padding + 2, innerWidth, innerHeight - 2, cornerRadius - 1);
+    ctx.stroke();
   }
 
-  // Calculate font sizes based on the smaller dimension for balanced scaling
-  const titleFontSize = Math.max(9, minDim * 0.12 * fontScale);
-  const valueFontSize = Math.max(14, minDim * 0.35 * fontScale);
-  const unitsFontSize = Math.max(8, minDim * 0.10 * fontScale);
+  const titleFontSize = Math.max(8, minDim * 0.1 * fontScale);
+  const valueFontSize = Math.max(14, minDim * 0.34 * fontScale);
+  const unitsFontSize = Math.max(8, minDim * 0.09 * fontScale);
 
-  // Title at top
   ctx.fillStyle = tsColorToRgba(config.trim_color);
-  ctx.font = getFontSpec(titleFontSize);
+  ctx.font = getFontSpec(titleFontSize, { bold: true });
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText(config.title, width / 2, padding + 2);
+  ctx.fillText(config.title.toUpperCase(), width / 2, padding + 3);
 
-  // Value in center (large, LCD-style)
   const valueColor = getValueColor();
   const valueText = value.toFixed(config.value_digits);
+  const valueHex = tsColorToHex(valueColor);
 
-  // Value glow effect for active values
-  if (valueColor !== config.font_color) {
-    ctx.shadowColor = tsColorToRgba(valueColor);
-    ctx.shadowBlur = 8;
-  }
-
+  applyNeonGlow(ctx, valueHex, valueColor !== config.font_color ? 14 : 6);
   ctx.fillStyle = tsColorToRgba(valueColor);
-  // Use monospace or LCD-style font for values
   ctx.font = getFontSpec(valueFontSize, { bold: true, monospace: true });
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(valueText, width / 2, height / 2 + titleFontSize * 0.3);
-  ctx.shadowColor = 'transparent';
+  ctx.fillText(valueText, width / 2, height / 2 + titleFontSize * 0.25);
+  clearNeonGlow(ctx);
 
-  // Units at bottom
   ctx.fillStyle = tsColorToRgba(config.trim_color);
   ctx.font = getFontSpec(unitsFontSize);
   ctx.textAlign = 'center';

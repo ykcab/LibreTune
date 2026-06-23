@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { HelpCircle } from 'lucide-react';
+import { evaluateIniBoolean } from '../../../utils/iniExpression';
+import { getConstantValues } from '../../../stores/constantValuesStore';
+import { getCachedConstantMetadata, mergeCachedConstantMetadata } from '../../../stores/constantsMetadataCache';
 import type { Constant, FieldInfo } from '../types';
 import { isIncompleteNumericInput } from '../types';
 
@@ -24,82 +27,116 @@ export default function DialogField({
   showAllHelpIcons?: boolean; // Show help icons on all fields (true) or only fields with help (false)
 }) {
   const [constant, setConstant] = useState<Constant | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [numValue, setNumValue] = useState<number | null>(null);
   const [numInputStr, setNumInputStr] = useState<string>(''); // Raw string value during editing
   const [strValue, setStrValue] = useState<string>('');
   const [selectedBit, setSelectedBit] = useState<number>(0);
   const [isEnabled, setIsEnabled] = useState<boolean>(true);
+  const isEditingRef = useRef(false);
 
   useEffect(() => {
-    invoke<Constant>('get_constant', { name }).then((c) => {
-      console.log(`[DialogField] Fetched constant '${name}':`, {
-        value_type: c.value_type,
-        bit_options_count: c.bit_options?.length || 0,
-        bit_options: c.bit_options?.slice(0, 5) || [],
-      });
+    let cancelled = false;
+    setLoadError(null);
+    setConstant(null);
+
+    const applyConstant = (c: Constant) => {
+      if (cancelled) return;
       setConstant(c);
-      // Fetch value based on type
+
       if (c.value_type === 'string') {
         invoke<string>('get_constant_string_value', { name })
-          .then(setStrValue)
-          .catch(() => setStrValue(''));
-      } else if (c.value_type === 'bits') {
-        invoke<number>('get_constant_value', { name })
-          .then((v) => {
-            console.log(`[DialogField] Got value for '${name}':`, v);
-            setSelectedBit(Math.round(v));
-          })
-          .catch((e) => {
-            console.error(`[DialogField] Failed to get value for '${name}':`, e);
-            setSelectedBit(0);
-          });
-      } else {
-        invoke<number>('get_constant_value', { name })
-          .then((v) => {
-            setNumValue(v);
-            setNumInputStr(v.toString());
-          })
-          .catch(() => {
-            setNumValue(0);
-            setNumInputStr('0');
-          });
+          .then((v) => { if (!cancelled) setStrValue(v); })
+          .catch(() => { if (!cancelled) setStrValue(''); });
+        return;
       }
+
+      const storeVal = getConstantValues()[name];
+      const contextVal = context[name] ?? storeVal;
+      const resolved = contextVal !== undefined && Number.isFinite(contextVal) ? contextVal : 0;
+
+      if (c.value_type === 'bits') {
+        setSelectedBit(Math.round(resolved));
+      } else {
+        setNumValue(resolved);
+        setNumInputStr(resolved.toString());
+      }
+    };
+
+    const cached = getCachedConstantMetadata(name);
+    if (cached) {
+      applyConstant(cached);
+      return () => { cancelled = true; };
+    }
+
+    const onMetadataUpdated = () => {
+      const hit = getCachedConstantMetadata(name);
+      if (hit) applyConstant(hit);
+    };
+    window.addEventListener('constants-metadata:updated', onMetadataUpdated);
+
+    invoke<Constant>('get_constant', { name }).then((c) => {
+      mergeCachedConstantMetadata({ [name]: c });
+      applyConstant(c);
     }).catch((e) => {
+      if (cancelled) return;
       console.error(`[DialogField] Failed to fetch constant '${name}':`, e);
+      setLoadError(e instanceof Error ? e.message : String(e));
     });
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('constants-metadata:updated', onMetadataUpdated);
+    };
   }, [name]);
+
+  // Sync displayed value when parent context updates (e.g. optimistic field edits).
+  useEffect(() => {
+    if (!constant || constant.value_type === 'string' || isEditingRef.current) return;
+    const contextVal = context[name];
+    if (contextVal === undefined || !Number.isFinite(contextVal)) return;
+
+    if (constant.value_type === 'bits') {
+      setSelectedBit(Math.round(contextVal));
+    } else {
+      setNumValue(contextVal);
+      setNumInputStr(contextVal.toString());
+    }
+  }, [context[name], name, constant?.value_type]);
 
   // Visibility is now handled by DialogFieldWrapper, not here
 
-  // Evaluate enable condition - combine field-level condition with constant visibility_condition
-  // This allows fields to be visible but disabled (per EFI Analytics spec and closed-source program suggestion)
-  useEffect(() => {
-    // Field-level enable condition (from DialogComponent::Field) takes precedence
+  // Evaluate enable condition locally — re-run when constants change
+  const recomputeEnabled = useCallback(() => {
     if (fieldEnabledCondition !== undefined) {
       setIsEnabled(fieldEnabledCondition);
       return;
     }
-    
-    // Fall back to constant's visibility_condition as enable condition
     if (constant?.visibility_condition) {
-      // Build context with current field value included
-      const fieldContext = { ...context };
-      if (constant.value_type === 'bits') {
-        fieldContext[name] = selectedBit;
-      } else if (constant.value_type === 'scalar' && numValue !== null) {
+      const fieldContext = { ...getConstantValues(), [name]: selectedBit };
+      if (constant.value_type === 'scalar' && numValue !== null) {
         fieldContext[name] = numValue;
       }
-      
-      invoke<boolean>('evaluate_expression', { 
-        expression: constant.visibility_condition, 
-        context: fieldContext
-      })
-        .then(setIsEnabled)
-        .catch(() => setIsEnabled(true)); // Enable on error
+      setIsEnabled(evaluateIniBoolean(constant.visibility_condition, fieldContext));
     } else {
-      setIsEnabled(true); // Enabled by default if no condition
+      setIsEnabled(true);
     }
-  }, [fieldEnabledCondition, constant?.visibility_condition, context, name, selectedBit, numValue, constant?.value_type]);
+  }, [fieldEnabledCondition, constant?.visibility_condition, constant?.value_type, name, selectedBit, numValue]);
+
+  useEffect(() => {
+    recomputeEnabled();
+    const onConstantsUpdated = () => recomputeEnabled();
+    window.addEventListener('constants:updated', onConstantsUpdated);
+    return () => window.removeEventListener('constants:updated', onConstantsUpdated);
+  }, [recomputeEnabled]);
+
+  if (loadError) {
+    return (
+      <div className="field-load-error" title={loadError}>
+        Failed to load {label || name}
+      </div>
+    );
+  }
 
   if (!constant) return <div className="field-loading">Loading {label}...</div>;
 
@@ -141,12 +178,10 @@ export default function DialogField({
     }
     // If all options were filtered out but we have options, keep at least the first one
     if (validBitOptions.length === 0 && bitOptions.length > 0) {
-      console.warn(`[DialogField] All options filtered for '${name}', keeping first option`);
       validBitOptions.push(bitOptions[0]);
       originalToFilteredMap.set(0, 0);
       filteredToOriginalMap.set(0, 0);
     }
-    console.log(`[DialogField] '${name}': ${bitOptions.length} total options, ${validBitOptions.length} valid options, selectedBit=${selectedBit}`);
   } else {
     // Not bits type, use all options
     validBitOptions.push(...bitOptions);
@@ -252,12 +287,8 @@ export default function DialogField({
       const checkedIndex = validIndices[1] ?? validIndices[0];
       const uncheckedIndex = validIndices[0];
       
-      // Get the option labels for display
-      const uncheckedLabel = bitOptions[uncheckedIndex]?.trim() || 'Off';
-      const checkedLabel = bitOptions[checkedIndex]?.trim() || 'On';
-      
       return (
-        <div className="settings-field">
+        <div className="settings-field settings-field--checkbox">
           <label>
             <input
               type="checkbox"
@@ -267,16 +298,13 @@ export default function DialogField({
               onChange={(e) => {
                 const newVal = e.target.checked ? checkedIndex : uncheckedIndex;
                 setSelectedBit(newVal);
+                onOptimisticUpdate?.(name, newVal);
+                onUpdate?.();
                 invoke('update_constant', { name, value: newVal })
-                  .then(() => {
-                    // Optimistically update context so sibling fields re-evaluate immediately
-                    onOptimisticUpdate?.(name, newVal);
-                    onUpdate?.();
-                  })
-                  .catch((e) => alert('Update failed: ' + e));
+                  .catch((err) => alert('Update failed: ' + err));
               }}
             />
-            {displayLabel}: {uncheckedLabel} / {checkedLabel}
+            {displayLabel}
             {(showAllHelpIcons || constant.help) && (
               <span className="help-icon" title={constant.help || 'Click for info'} onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleFocus(); }} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && handleFocus()}>
                 <HelpCircle size={16} />
@@ -311,25 +339,19 @@ export default function DialogField({
             onFocus={handleFocus}
             onChange={(e) => {
               const filteredVal = parseInt(e.target.value, 10);
-              // Convert filtered index back to original index using the map
               const originalVal = filteredToOriginalMap.get(filteredVal);
               if (originalVal !== undefined) {
                 setSelectedBit(originalVal);
+                onOptimisticUpdate?.(name, originalVal);
+                onUpdate?.();
                 invoke('update_constant', { name, value: originalVal })
-                  .then(() => {
-                    onOptimisticUpdate?.(name, originalVal);
-                    onUpdate?.();
-                  })
                   .catch((err) => alert('Update failed: ' + err));
               } else {
-                // Fallback: use the filtered value directly if not in map
                 console.warn(`[DialogField] No original index found for filtered index ${filteredVal}, using directly`);
                 setSelectedBit(filteredVal);
+                onOptimisticUpdate?.(name, filteredVal);
+                onUpdate?.();
                 invoke('update_constant', { name, value: filteredVal })
-                  .then(() => {
-                    onOptimisticUpdate?.(name, filteredVal);
-                    onUpdate?.();
-                  })
                   .catch((err) => alert('Update failed: ' + err));
               }
             }}
@@ -381,7 +403,10 @@ export default function DialogField({
           inputMode="decimal"
           value={numInputStr}
           disabled={!isEnabled}
-          onFocus={handleFocus}
+          onFocus={() => {
+            isEditingRef.current = true;
+            handleFocus();
+          }}
           onChange={(e) => {
             // Store raw string value to preserve partial input like "1." or ""
             // Allow numbers, decimal point, minus sign, and empty string using regex
@@ -391,6 +416,7 @@ export default function DialogField({
             }
           }}
           onBlur={() => {
+            isEditingRef.current = false;
             // Parse and validate on blur
             const parsed = parseFloat(numInputStr);
             if (!isNaN(parsed)) {

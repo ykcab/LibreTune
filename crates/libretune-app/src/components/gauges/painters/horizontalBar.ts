@@ -7,80 +7,59 @@
  */
 
 import { tsColorToRgba, tsColorToHex } from '../../dashboards/dashTypes';
-import { roundRect, lightenColor, darkenColor } from '../drawUtils';
+import { roundRect, lightenColor, darkenColor, drawHudPanel, applyNeonGlow, clearNeonGlow, HUD_COLORS } from '../drawUtils';
 import type { Painter } from './types';
 
 export const horizontalBarPainter: Painter = (pctx) => {
   const { ctx, width, height, value, config, getValueColor, getFontSpec } = pctx;
 
-  const padding = 6;
-  const barHeight = height * 0.35;
-  const barY = (height - barHeight) / 2 + height * 0.08;
+  const padding = 8;
+  const barHeight = height * 0.32;
+  const barY = (height - barHeight) / 2 + height * 0.1;
   const barWidth = width - padding * 2;
-  const cornerRadius = Math.min(4, barHeight * 0.3);
+  const cornerRadius = 2;
 
-  // Background with subtle gradient
-  const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
-  const bgHex = tsColorToHex(config.back_color);
-  bgGradient.addColorStop(0, lightenColor(bgHex, 10));
-  bgGradient.addColorStop(1, darkenColor(bgHex, 15));
-  ctx.fillStyle = bgGradient;
-  ctx.fillRect(0, 0, width, height);
+  drawHudPanel(ctx, 0, 0, width, height, 3);
 
-  // Title
   ctx.fillStyle = tsColorToRgba(config.trim_color);
-  ctx.font = getFontSpec(Math.max(9, height * 0.14));
+  ctx.font = getFontSpec(Math.max(8, height * 0.12), { bold: true });
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(config.title, padding, 3);
+  ctx.fillText(config.title.toUpperCase(), padding, 5);
 
-  // Bar background with inset effect
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-  ctx.shadowBlur = 3;
-  ctx.shadowOffsetX = 1;
-  ctx.shadowOffsetY = 1;
-  const barBgGradient = ctx.createLinearGradient(0, barY, 0, barY + barHeight);
-  barBgGradient.addColorStop(0, '#252525');
-  barBgGradient.addColorStop(0.5, '#404040');
-  barBgGradient.addColorStop(1, '#303030');
-  ctx.fillStyle = barBgGradient;
+  ctx.fillStyle = HUD_COLORS.track;
   roundRect(ctx, padding, barY, barWidth, barHeight, cornerRadius);
   ctx.fill();
-  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = HUD_COLORS.trackEdge;
+  ctx.lineWidth = 1;
+  roundRect(ctx, padding, barY, barWidth, barHeight, cornerRadius);
+  ctx.stroke();
 
-  // Bar fill with gradient
   const fillPercent = (value - config.min) / (config.max - config.min);
   const fillWidth = barWidth * Math.max(0, Math.min(1, fillPercent));
   if (fillWidth > 0) {
     const valueColor = getValueColor();
     const valueHex = tsColorToHex(valueColor);
-    const fillGradient = ctx.createLinearGradient(0, barY, 0, barY + barHeight);
-    fillGradient.addColorStop(0, lightenColor(valueHex, 30));
-    fillGradient.addColorStop(0.3, lightenColor(valueHex, 10));
-    fillGradient.addColorStop(0.7, valueHex);
-    fillGradient.addColorStop(1, darkenColor(valueHex, 20));
+    applyNeonGlow(ctx, valueHex, 10);
+    const fillGradient = ctx.createLinearGradient(padding, 0, padding + fillWidth, 0);
+    fillGradient.addColorStop(0, darkenColor(valueHex, 10));
+    fillGradient.addColorStop(0.5, valueHex);
+    fillGradient.addColorStop(1, lightenColor(valueHex, 20));
     ctx.fillStyle = fillGradient;
     roundRect(ctx, padding, barY, fillWidth, barHeight, cornerRadius);
     ctx.fill();
+    clearNeonGlow(ctx);
 
-    // Highlight stripe
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.fillRect(padding + 2, barY + 2, fillWidth - 4, barHeight * 0.3);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(padding + 1, barY + 1, fillWidth - 2, Math.max(2, barHeight * 0.25));
   }
 
-  // Bar border
-  ctx.strokeStyle = tsColorToRgba(config.trim_color);
-  ctx.lineWidth = 1;
-  roundRect(ctx, padding, barY, barWidth, barHeight, cornerRadius);
-  ctx.stroke();
-
-  // Value text with shadow
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-  ctx.shadowBlur = 2;
+  const valueHex = tsColorToHex(getValueColor());
+  applyNeonGlow(ctx, valueHex, 6);
   ctx.fillStyle = tsColorToRgba(config.font_color);
-  ctx.font = getFontSpec(Math.max(11, height * 0.18), { bold: true, monospace: true });
+  ctx.font = getFontSpec(Math.max(11, height * 0.17), { bold: true, monospace: true });
   ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
-  ctx.fillText(`${value.toFixed(config.value_digits)} ${config.units}`, width - padding, 3);
-  ctx.shadowColor = 'transparent';
+  ctx.fillText(`${value.toFixed(config.value_digits)} ${config.units}`, width - padding, 5);
+  clearNeonGlow(ctx);
 };

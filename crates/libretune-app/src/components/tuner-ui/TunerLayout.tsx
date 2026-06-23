@@ -1,6 +1,5 @@
 import { ReactNode, useState, useCallback } from 'react';
-import { MenuBar } from './MenuBar';
-import { Toolbar } from './Toolbar';
+import { AppShellHeader } from './AppShellHeader';
 import { TabBar, Tab } from './TabBar';
 import { Sidebar } from './Sidebar';
 import { StatusBar, ChannelInfoForStatusBar } from './StatusBar';
@@ -36,6 +35,7 @@ export interface TunerLayoutProps {
   // Connection status
   connected: boolean;
   ecuName?: string;
+  connectionPacketMode?: string;
 
   // Current project name (shown in sidebar header)
   projectName?: string;
@@ -58,6 +58,7 @@ export interface MenuItem {
   items?: MenuItem[];
   separator?: boolean;
   disabled?: boolean;
+  disabledReason?: string;
   checked?: boolean;
   onClick?: () => void;
 }
@@ -107,31 +108,36 @@ export function TunerLayout({
   onTabPopout,
   sidebarItems,
   sidebarVisible,
-  onSidebarToggle: _onSidebarToggle,
+  onSidebarToggle,
   onSidebarItemSelect,
   searchIndex,
   statusItems,
   connected,
   ecuName,
+  connectionPacketMode,
   projectName,
   unitsSystem,
   realtimeChannels,
   channelInfoMap,
   children,
 }: TunerLayoutProps) {
-  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [sidebarWidth, setSidebarWidth] = useState(260);
 
   const handleSidebarResize = useCallback((newWidth: number) => {
-    setSidebarWidth(Math.max(150, Math.min(400, newWidth)));
+    setSidebarWidth(Math.max(180, Math.min(420, newWidth)));
   }, []);
 
   return (
-    <div className="tuner-layout">
-      {/* Menu Bar */}
-      <MenuBar items={menuItems} />
-      
-      {/* Toolbar */}
-      <Toolbar items={toolbarItems} />
+    <div className="tuner-layout tuner-layout--shell">
+      <AppShellHeader
+        menuItems={menuItems}
+        toolbarItems={toolbarItems}
+        connected={connected}
+        ecuName={ecuName}
+        connectionPacketMode={connectionPacketMode}
+        sidebarVisible={sidebarVisible}
+        onSidebarToggle={onSidebarToggle}
+      />
       
       {/* Main content area */}
       <div className="tuner-layout-main">

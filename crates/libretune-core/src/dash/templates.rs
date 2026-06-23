@@ -16,11 +16,11 @@ const LT_DARKER_BG: TsColor = TsColor {
     green: 14,
     blue: 20,
 };
-const LT_GAUGE_BG: TsColor = TsColor {
-    alpha: 255,
-    red: 28,
-    green: 32,
-    blue: 40,
+const LT_CARD_BG: TsColor = TsColor {
+    alpha: 230,
+    red: 24,
+    green: 26,
+    blue: 36,
 };
 const LT_ACCENT_BLUE: TsColor = TsColor {
     alpha: 255,
@@ -77,9 +77,99 @@ const LT_CRITICAL_COLOR: TsColor = TsColor {
     blue: 68,
 };
 
+const LT_TRANSPARENT: TsColor = TsColor {
+    alpha: 0,
+    red: 0,
+    green: 0,
+    blue: 0,
+};
+
+/// Premium stat widget — dark card, large number (modern dashboard).
+fn stat_tile(
+    id: &str,
+    title: &str,
+    channel: &str,
+    units: &str,
+    min: f64,
+    max: f64,
+    value_digits: i32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    font_color: TsColor,
+) -> DashComponent {
+    DashComponent::Gauge(Box::new(GaugeConfig {
+        id: id.to_string(),
+        title: title.to_string(),
+        units: units.to_string(),
+        output_channel: channel.to_string(),
+        min,
+        max,
+        value_digits,
+        gauge_painter: GaugePainter::BasicReadout,
+        gauge_style: "stat".to_string(),
+        relative_x: x,
+        relative_y: y,
+        relative_width: w,
+        relative_height: h,
+        back_color: LT_CARD_BG,
+        font_color,
+        trim_color: LT_TEXT_SECONDARY,
+        warn_color: LT_WARN_COLOR,
+        critical_color: LT_CRITICAL_COLOR,
+        ..Default::default()
+    }))
+}
+
+/// Gradient ring gauge — modern circular progress (reference dashboard style).
+fn modern_ring(
+    id: &str,
+    title: &str,
+    channel: &str,
+    units: &str,
+    min: f64,
+    max: f64,
+    value_digits: i32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    accent: TsColor,
+    low_warning: Option<f64>,
+    high_warning: Option<f64>,
+) -> DashComponent {
+    DashComponent::Gauge(Box::new(GaugeConfig {
+        id: id.to_string(),
+        title: title.to_string(),
+        units: units.to_string(),
+        output_channel: channel.to_string(),
+        min,
+        max,
+        low_warning,
+        high_warning,
+        value_digits,
+        gauge_painter: GaugePainter::RoundGauge,
+        gauge_style: "modern".to_string(),
+        start_angle: 135,
+        sweep_angle: 270,
+        relative_x: x,
+        relative_y: y,
+        relative_width: w,
+        relative_height: h,
+        back_color: LT_TRANSPARENT,
+        font_color: LT_TEXT_PRIMARY,
+        needle_color: accent,
+        trim_color: LT_TEXT_SECONDARY,
+        warn_color: LT_WARN_COLOR,
+        critical_color: LT_CRITICAL_COLOR,
+        font_size_adjustment: 1,
+        ..Default::default()
+    }))
+}
+
 /// Create a basic dashboard layout - LibreTune default
-/// Clean 4x2 grid: Large RPM + AFR in center, supporting gauges around edges
-/// Perfect for general monitoring and everyday driving
+/// Modern command-center dashboard — gradient rings + stat cards, not TS-style gauges.
 pub fn create_basic_dashboard() -> DashFile {
     let mut dash = DashFile {
         bibliography: Bibliography {
@@ -110,288 +200,87 @@ pub fn create_basic_dashboard() -> DashFile {
         extra_attrs: std::collections::BTreeMap::new(),
     };
 
-    // CENTER LEFT: Large RPM tachometer
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "rpm".to_string(),
-            title: "ENGINE RPM".to_string(),
-            units: "".to_string(),
-            output_channel: "rpm".to_string(),
-            min: 0.0,
-            max: 8000.0,
-            high_warning: Some(6500.0),
-            high_critical: Some(7200.0),
-            gauge_painter: GaugePainter::Tachometer,
-            start_angle: 135,
-            sweep_angle: 270,
-            major_ticks: 8.0,
-            minor_ticks: 4.0,
-            value_digits: 0,
-            relative_x: 0.02,
-            relative_y: 0.10,
-            relative_width: 0.45,
-            relative_height: 0.80,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_AMBER,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 2,
-            ..Default::default()
-        })));
+    // TOP — live telemetry stat cards
+    let top_y = 0.02;
+    let top_h = 0.11;
+    let top_w = 0.118;
+    let mut col = 0.012;
+    for (id, title, ch, units, min, max, digits, color) in [
+        ("map", "MAP", "map", "kPa", 0.0, 250.0, 0, LT_ACCENT_TEAL),
+        ("tps", "TPS", "tps", "%", 0.0, 100.0, 0, LT_ACCENT_AMBER),
+        ("coolant", "CLT", "coolant", "°C", -40.0, 120.0, 0, LT_ACCENT_BLUE),
+        ("iat", "IAT", "iat", "°C", -40.0, 80.0, 0, LT_ACCENT_AMBER),
+        ("oilpres", "OIL P", "oilPressure", "kPa", 0.0, 800.0, 0, LT_ACCENT_AMBER),
+        ("oiltemp", "OIL T", "oilTemp", "°C", -40.0, 150.0, 0, LT_ACCENT_AMBER),
+        ("lpfp", "LPFP", "lowFuelPressure", "kPa", 0.0, 800.0, 0, LT_ACCENT_TEAL),
+        ("hpfp", "HPFP", "highFuelPressure", "bar", 0.0, 300.0, 0, LT_ACCENT_GREEN),
+    ] {
+        dash.gauge_cluster.components.push(stat_tile(
+            id, title, ch, units, min, max, digits, col, top_y, top_w, top_h, color,
+        ));
+        col += top_w + 0.006;
+    }
 
-    // CENTER RIGHT: Large AFR gauge
+    // CENTER — hero RPM ring + AFR ring + lambda trend
+    dash.gauge_cluster.components.push(modern_ring(
+        "rpm", "RPM", "rpm", "rpm", 0.0, 8000.0, 0, 0.03, 0.15, 0.34, 0.58, LT_ACCENT_AMBER,
+        None, Some(6500.0),
+    ));
+    dash.gauge_cluster.components.push(modern_ring(
+        "afr", "AFR", "afr", ":1", 10.0, 20.0, 1, 0.39, 0.15, 0.24, 0.42, LT_ACCENT_GREEN,
+        Some(11.5), Some(16.0),
+    ));
     dash.gauge_cluster
         .components
         .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "afr".to_string(),
-            title: "AIR/FUEL RATIO".to_string(),
-            units: ":1".to_string(),
-            output_channel: "afr".to_string(),
-            min: 10.0,
-            max: 20.0,
-            low_warning: Some(11.5),
-            low_critical: Some(10.5),
-            high_warning: Some(16.0),
-            value_digits: 1,
-            gauge_painter: GaugePainter::AnalogGauge,
-            start_angle: 225,
-            sweep_angle: 270,
-            major_ticks: 10.0,
-            minor_ticks: 5.0,
-            relative_x: 0.52,
-            relative_y: 0.10,
-            relative_width: 0.46,
-            relative_height: 0.80,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_GREEN,
-            needle_color: LT_ACCENT_GREEN,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // TOP LEFT: Coolant temp bar
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "coolant".to_string(),
-            title: "COOLANT".to_string(),
-            units: "°C".to_string(),
-            output_channel: "coolant".to_string(),
-            min: -40.0,
-            max: 120.0,
-            high_warning: Some(100.0),
-            high_critical: Some(110.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::HorizontalBarGauge,
-            relative_x: 0.02,
-            relative_y: 0.02,
-            relative_width: 0.23,
-            relative_height: 0.06,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_BLUE,
-            needle_color: LT_ACCENT_BLUE,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            ..Default::default()
-        })));
-
-    // TOP CENTER: MAP bar
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "map".to_string(),
-            title: "MAP".to_string(),
-            units: "kPa".to_string(),
-            output_channel: "map".to_string(),
-            min: 0.0,
-            max: 250.0,
-            high_warning: Some(200.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::HorizontalBarGauge,
-            relative_x: 0.27,
-            relative_y: 0.02,
-            relative_width: 0.23,
-            relative_height: 0.06,
-            back_color: LT_GAUGE_BG,
+            id: "lambda_trend".to_string(),
+            title: "LAMBDA".to_string(),
+            units: "λ".to_string(),
+            output_channel: "lambda".to_string(),
+            min: 0.7,
+            max: 1.3,
+            value_digits: 3,
+            gauge_painter: GaugePainter::LineGraph,
+            gauge_style: "modern".to_string(),
+            relative_x: 0.65,
+            relative_y: 0.15,
+            relative_width: 0.34,
+            relative_height: 0.58,
+            back_color: LT_CARD_BG,
             font_color: LT_ACCENT_TEAL,
             needle_color: LT_ACCENT_TEAL,
             trim_color: LT_TEXT_SECONDARY,
             warn_color: LT_WARN_COLOR,
             critical_color: LT_CRITICAL_COLOR,
+            show_history: true,
             ..Default::default()
         })));
 
-    // TOP RIGHT: TPS bar
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "tps".to_string(),
-            title: "THROTTLE".to_string(),
-            units: "%".to_string(),
-            output_channel: "tps".to_string(),
-            min: 0.0,
-            max: 100.0,
-            value_digits: 0,
-            gauge_painter: GaugePainter::HorizontalBarGauge,
-            relative_x: 0.52,
-            relative_y: 0.02,
-            relative_width: 0.23,
-            relative_height: 0.06,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_AMBER,
-            needle_color: LT_ACCENT_AMBER,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            ..Default::default()
-        })));
-
-    // TOP FAR RIGHT: Battery readout
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "battery".to_string(),
-            title: "BATT".to_string(),
-            units: "V".to_string(),
-            output_channel: "battery".to_string(),
-            min: 10.0,
-            max: 16.0,
-            low_warning: Some(11.5),
-            low_critical: Some(11.0),
-            value_digits: 1,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.77,
-            relative_y: 0.02,
-            relative_width: 0.21,
-            relative_height: 0.06,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_GREEN,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: -1,
-            ..Default::default()
-        })));
-
-    // BOTTOM LEFT: IAT readout
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "iat".to_string(),
-            title: "INTAKE TEMP".to_string(),
-            units: "°C".to_string(),
-            output_channel: "iat".to_string(),
-            min: -40.0,
-            max: 80.0,
-            high_warning: Some(50.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.02,
-            relative_y: 0.92,
-            relative_width: 0.23,
-            relative_height: 0.06,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_AMBER,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: -1,
-            ..Default::default()
-        })));
-
-    // BOTTOM CENTER: Ignition advance
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "advance".to_string(),
-            title: "TIMING".to_string(),
-            units: "°".to_string(),
-            output_channel: "advance".to_string(),
-            min: -10.0,
-            max: 50.0,
-            value_digits: 1,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.27,
-            relative_y: 0.92,
-            relative_width: 0.23,
-            relative_height: 0.06,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_TEAL,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: -1,
-            ..Default::default()
-        })));
-
-    // BOTTOM CENTER-RIGHT: VE percentage
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "ve".to_string(),
-            title: "VE".to_string(),
-            units: "%".to_string(),
-            output_channel: "ve".to_string(),
-            min: 0.0,
-            max: 150.0,
-            value_digits: 0,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.52,
-            relative_y: 0.92,
-            relative_width: 0.23,
-            relative_height: 0.06,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_GREEN,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: -1,
-            ..Default::default()
-        })));
-
-    // BOTTOM RIGHT: Pulse width
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "pw".to_string(),
-            title: "PULSE".to_string(),
-            units: "ms".to_string(),
-            output_channel: "pulseWidth".to_string(),
-            min: 0.0,
-            max: 25.0,
-            value_digits: 2,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.77,
-            relative_y: 0.92,
-            relative_width: 0.21,
-            relative_height: 0.06,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_BLUE,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: -1,
-            ..Default::default()
-        })));
+    // BOTTOM — engine load / fuel / ignition stats
+    let bot_y = 0.76;
+    let bot_h = 0.11;
+    let bot_w = 0.118;
+    col = 0.012;
+    for (id, title, ch, units, min, max, digits, color) in [
+        ("ve", "VE", "ve", "%", 0.0, 150.0, 0, LT_TEXT_PRIMARY),
+        ("advance", "TIMING", "advance", "°", -10.0, 50.0, 1, LT_ACCENT_AMBER),
+        ("pw", "PULSE", "pulseWidth", "ms", 0.0, 25.0, 2, LT_ACCENT_BLUE),
+        ("duty", "DUTY", "dutyCycle", "%", 0.0, 100.0, 0, LT_ACCENT_TEAL),
+        ("boost", "BOOST", "boost", "kPa", 0.0, 300.0, 0, LT_ACCENT_TEAL),
+        ("lambda", "LAMBDA", "lambda", "λ", 0.7, 1.3, 3, LT_ACCENT_GREEN),
+        ("battery", "BATT", "battery", "V", 10.0, 16.0, 1, LT_TEXT_PRIMARY),
+        ("speed", "SPEED", "speed", "km/h", 0.0, 300.0, 0, LT_ACCENT_GREEN),
+    ] {
+        dash.gauge_cluster.components.push(stat_tile(
+            id, title, ch, units, min, max, digits, col, bot_y, bot_w, bot_h, color,
+        ));
+        col += bot_w + 0.006;
+    }
 
     dash
 }
 
-/// Create a racing-focused dashboard
-/// Massive center RPM tachometer with critical racing metrics in bold readouts
-/// Optimized for quick glances while driving at speed
+/// Create a racing-focused dashboard — hero RPM ring with critical stat cards
 pub fn create_racing_dashboard() -> DashFile {
     let mut dash = DashFile {
         bibliography: Bibliography {
@@ -422,214 +311,56 @@ pub fn create_racing_dashboard() -> DashFile {
         extra_attrs: std::collections::BTreeMap::new(),
     };
 
-    // MASSIVE CENTER: RPM Tachometer - the star of the show
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "rpm".to_string(),
-            title: "".to_string(), // No title - let the gauge speak for itself
-            units: "RPM".to_string(),
-            output_channel: "rpm".to_string(),
-            min: 0.0,
-            max: 10000.0,
-            high_warning: Some(8000.0),
-            high_critical: Some(9000.0),
-            gauge_painter: GaugePainter::Tachometer,
-            start_angle: 135,
-            sweep_angle: 270,
-            major_ticks: 10.0,
-            minor_ticks: 5.0,
-            value_digits: 0,
-            relative_x: 0.20,
-            relative_y: 0.08,
-            relative_width: 0.60,
-            relative_height: 0.65,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_RED,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 4,
-            ..Default::default()
-        })));
+    // Side stat cards — oil / water / fuel pressure
+    dash.gauge_cluster.components.push(stat_tile(
+        "oilpres", "OIL P", "oilPressure", "kPa", 0.0, 800.0, 0, 0.02, 0.10, 0.14, 0.18,
+        LT_ACCENT_AMBER,
+    ));
+    dash.gauge_cluster.components.push(stat_tile(
+        "oiltemp", "OIL T", "oilTemp", "°C", -40.0, 150.0, 0, 0.02, 0.29, 0.14, 0.18,
+        LT_ACCENT_AMBER,
+    ));
+    dash.gauge_cluster.components.push(stat_tile(
+        "lpfp", "LPFP", "lowFuelPressure", "kPa", 0.0, 800.0, 0, 0.35, 0.02, 0.14, 0.10,
+        LT_ACCENT_TEAL,
+    ));
+    dash.gauge_cluster.components.push(stat_tile(
+        "hpfp", "HPFP", "highFuelPressure", "bar", 0.0, 300.0, 0, 0.51, 0.02, 0.14, 0.10,
+        LT_ACCENT_GREEN,
+    ));
+    dash.gauge_cluster.components.push(stat_tile(
+        "coolant", "WATER", "coolant", "°C", 0.0, 130.0, 0, 0.84, 0.10, 0.14, 0.37,
+        LT_ACCENT_BLUE,
+    ));
 
-    // LEFT SIDE: Oil pressure vertical bar - critical for racing
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "oilpres".to_string(),
-            title: "OIL".to_string(),
-            units: "PSI".to_string(),
-            output_channel: "oilPressure".to_string(),
-            min: 0.0,
-            max: 100.0,
-            low_warning: Some(20.0),
-            low_critical: Some(10.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::VerticalBarGauge,
-            relative_x: 0.02,
-            relative_y: 0.08,
-            relative_width: 0.14,
-            relative_height: 0.50,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_AMBER,
-            needle_color: LT_ACCENT_AMBER,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
+    // HERO — massive RPM gradient ring
+    dash.gauge_cluster.components.push(modern_ring(
+        "rpm", "RPM", "rpm", "rpm", 0.0, 10000.0, 0, 0.18, 0.06, 0.64, 0.68, LT_ACCENT_RED,
+        None, Some(8000.0),
+    ));
 
-    // RIGHT SIDE: Water temp vertical bar
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "coolant".to_string(),
-            title: "WATER".to_string(),
-            units: "°C".to_string(),
-            output_channel: "coolant".to_string(),
-            min: 0.0,
-            max: 130.0,
-            high_warning: Some(105.0),
-            high_critical: Some(115.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::VerticalBarGauge,
-            relative_x: 0.84,
-            relative_y: 0.08,
-            relative_width: 0.14,
-            relative_height: 0.50,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_BLUE,
-            needle_color: LT_ACCENT_BLUE,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // BOTTOM ROW: Large digital readouts for quick glances
-
-    // Speed - bottom far left
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "speed".to_string(),
-            title: "SPEED".to_string(),
-            units: "KM/H".to_string(),
-            output_channel: "speed".to_string(),
-            min: 0.0,
-            max: 300.0,
-            value_digits: 0,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.02,
-            relative_y: 0.78,
-            relative_width: 0.22,
-            relative_height: 0.20,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_TEAL,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 6,
-            ..Default::default()
-        })));
-
-    // AFR - bottom center-left
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "afr".to_string(),
-            title: "AFR".to_string(),
-            units: ":1".to_string(),
-            output_channel: "afr".to_string(),
-            min: 10.0,
-            max: 20.0,
-            low_warning: Some(11.0),
-            low_critical: Some(10.5),
-            high_warning: Some(16.0),
-            value_digits: 1,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.26,
-            relative_y: 0.78,
-            relative_width: 0.22,
-            relative_height: 0.20,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_GREEN,
-            needle_color: LT_ACCENT_GREEN,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 6,
-            ..Default::default()
-        })));
-
-    // Boost - bottom center-right
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "boost".to_string(),
-            title: "BOOST".to_string(),
-            units: "PSI".to_string(),
-            output_channel: "boost".to_string(),
-            min: -15.0,
-            max: 30.0,
-            high_warning: Some(22.0),
-            high_critical: Some(26.0),
-            value_digits: 1,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.50,
-            relative_y: 0.78,
-            relative_width: 0.22,
-            relative_height: 0.20,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_TEAL,
-            needle_color: LT_ACCENT_TEAL,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 6,
-            ..Default::default()
-        })));
-
-    // Fuel - bottom far right
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "fuel".to_string(),
-            title: "FUEL".to_string(),
-            units: "%".to_string(),
-            output_channel: "fuelLevel".to_string(),
-            min: 0.0,
-            max: 100.0,
-            low_warning: Some(20.0),
-            low_critical: Some(10.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::FuelMeter,
-            relative_x: 0.74,
-            relative_y: 0.78,
-            relative_width: 0.24,
-            relative_height: 0.20,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_AMBER,
-            needle_color: LT_ACCENT_AMBER,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 3,
-            ..Default::default()
-        })));
+    // Bottom racing readouts
+    let bot_y = 0.78;
+    let bot_h = 0.18;
+    let tile_w = 0.22;
+    let mut col = 0.02;
+    for (id, title, ch, units, min, max, digits, color) in [
+        ("speed", "SPEED", "speed", "km/h", 0.0, 300.0, 0, LT_TEXT_PRIMARY),
+        ("afr", "AFR", "afr", ":1", 10.0, 20.0, 1, LT_ACCENT_GREEN),
+        ("boost", "BOOST", "boost", "kPa", 0.0, 300.0, 0, LT_ACCENT_TEAL),
+        ("fuel", "FUEL", "fuelLevel", "%", 0.0, 100.0, 0, LT_ACCENT_AMBER),
+    ] {
+        dash.gauge_cluster.components.push(stat_tile(
+            id, title, ch, units, min, max, digits, col, bot_y, tile_w, bot_h, color,
+        ));
+        col += tile_w + 0.02;
+    }
 
     dash
 }
 
-/// Create a tuning-focused dashboard
-/// Create a tuning-focused dashboard
-/// Professional layout optimized for live tuning sessions
-/// Shows all critical metrics for VE/fuel table tuning
+/// Tuning command-center dashboard — dense ECU telemetry with frameless RPM dial
+/// and lambda trend as the main visual. MAP/TPS/temps are compact numbers, not bars.
 pub fn create_tuning_dashboard() -> DashFile {
     let mut dash = DashFile {
         bibliography: Bibliography {
@@ -660,182 +391,40 @@ pub fn create_tuning_dashboard() -> DashFile {
         extra_attrs: std::collections::BTreeMap::new(),
     };
 
-    // TOP ROW: Primary tuning metrics
+    // TOP TELEMETRY STRIP — stat cards
+    let top_y = 0.02;
+    let top_h = 0.10;
+    let top_w = 0.088;
+    let mut col = 0.02;
+    for (id, title, ch, units, min, max, digits, color) in [
+        ("map", "MAP", "map", "kPa", 0.0, 250.0, 0, LT_ACCENT_TEAL),
+        ("tps", "TPS", "tps", "%", 0.0, 100.0, 0, LT_ACCENT_AMBER),
+        ("coolant", "CLT", "coolant", "°C", -40.0, 120.0, 0, LT_ACCENT_BLUE),
+        ("iat", "IAT", "iat", "°C", -40.0, 80.0, 0, LT_ACCENT_AMBER),
+        ("oilpres", "OIL P", "oilPressure", "kPa", 0.0, 800.0, 0, LT_ACCENT_AMBER),
+        ("oiltemp", "OIL T", "oilTemp", "°C", -40.0, 150.0, 0, LT_ACCENT_AMBER),
+        ("lpfp", "LPFP", "lowFuelPressure", "kPa", 0.0, 800.0, 0, LT_ACCENT_TEAL),
+        ("hpfp", "HPFP", "highFuelPressure", "bar", 0.0, 300.0, 0, LT_ACCENT_GREEN),
+        ("battery", "BATT", "battery", "V", 10.0, 16.0, 1, LT_TEXT_PRIMARY),
+        ("baro", "BARO", "baro", "kPa", 80.0, 110.0, 0, LT_TEXT_SECONDARY),
+        ("speed", "SPEED", "speed", "km/h", 0.0, 300.0, 0, LT_ACCENT_GREEN),
+    ] {
+        dash.gauge_cluster.components.push(stat_tile(
+            id, title, ch, units, min, max, digits, col, top_y, top_w, top_h, color,
+        ));
+        col += top_w + 0.005;
+    }
 
-    // RPM - sweep gauge (top left)
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "rpm".to_string(),
-            title: "RPM".to_string(),
-            units: "".to_string(),
-            output_channel: "rpm".to_string(),
-            min: 0.0,
-            max: 8000.0,
-            high_warning: Some(6500.0),
-            high_critical: Some(7200.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::AsymmetricSweepGauge,
-            start_angle: 180,
-            sweep_angle: 180,
-            relative_x: 0.02,
-            relative_y: 0.02,
-            relative_width: 0.30,
-            relative_height: 0.30,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_TEAL,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
+    // PRIMARY — RPM + AFR rings, lambda trend
+    dash.gauge_cluster.components.push(modern_ring(
+        "rpm", "RPM", "rpm", "rpm", 0.0, 8000.0, 0, 0.02, 0.14, 0.28, 0.58, LT_ACCENT_AMBER,
+        None, Some(6500.0),
+    ));
+    dash.gauge_cluster.components.push(modern_ring(
+        "afr", "AFR", "afr", ":1", 10.0, 20.0, 1, 0.32, 0.14, 0.20, 0.42, LT_ACCENT_GREEN,
+        Some(11.5), Some(16.0),
+    ));
 
-    // AFR - analog gauge (top center)
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "afr".to_string(),
-            title: "AFR".to_string(),
-            units: ":1".to_string(),
-            output_channel: "afr".to_string(),
-            min: 10.0,
-            max: 20.0,
-            low_warning: Some(11.5),
-            low_critical: Some(10.5),
-            high_warning: Some(16.0),
-            value_digits: 2,
-            gauge_painter: GaugePainter::RoundGauge,
-            start_angle: 135,
-            sweep_angle: 270,
-            major_ticks: 10.0,
-            minor_ticks: 5.0,
-            relative_x: 0.34,
-            relative_y: 0.02,
-            relative_width: 0.30,
-            relative_height: 0.30,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_GREEN,
-            needle_color: LT_ACCENT_GREEN,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // MAP - horizontal bar (top right)
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "map".to_string(),
-            title: "MAP".to_string(),
-            units: "kPa".to_string(),
-            output_channel: "map".to_string(),
-            min: 0.0,
-            max: 250.0,
-            high_warning: Some(200.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::HorizontalBarGauge,
-            relative_x: 0.66,
-            relative_y: 0.02,
-            relative_width: 0.32,
-            relative_height: 0.12,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_TEAL,
-            needle_color: LT_ACCENT_TEAL,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 0,
-            ..Default::default()
-        })));
-
-    // TPS - horizontal bar (top right, below MAP)
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "tps".to_string(),
-            title: "TPS".to_string(),
-            units: "%".to_string(),
-            output_channel: "tps".to_string(),
-            min: 0.0,
-            max: 100.0,
-            value_digits: 0,
-            gauge_painter: GaugePainter::HorizontalBarGauge,
-            relative_x: 0.66,
-            relative_y: 0.16,
-            relative_width: 0.32,
-            relative_height: 0.12,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_AMBER,
-            needle_color: LT_ACCENT_AMBER,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 0,
-            ..Default::default()
-        })));
-
-    // MIDDLE ROW: Temperature monitoring
-
-    // Coolant - vertical bar (left)
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "coolant".to_string(),
-            title: "COOLANT".to_string(),
-            units: "°C".to_string(),
-            output_channel: "coolant".to_string(),
-            min: -40.0,
-            max: 120.0,
-            high_warning: Some(100.0),
-            high_critical: Some(110.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::VerticalBarGauge,
-            relative_x: 0.02,
-            relative_y: 0.35,
-            relative_width: 0.14,
-            relative_height: 0.38,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_BLUE,
-            needle_color: LT_ACCENT_BLUE,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 0,
-            ..Default::default()
-        })));
-
-    // IAT - vertical bar (next to coolant)
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "iat".to_string(),
-            title: "IAT".to_string(),
-            units: "°C".to_string(),
-            output_channel: "iat".to_string(),
-            min: -40.0,
-            max: 80.0,
-            high_warning: Some(50.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::VerticalBarGauge,
-            relative_x: 0.18,
-            relative_y: 0.35,
-            relative_width: 0.14,
-            relative_height: 0.38,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_ACCENT_AMBER,
-            needle_color: LT_ACCENT_AMBER,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 0,
-            ..Default::default()
-        })));
-
-    // Lambda trend - line graph (center section)
     dash.gauge_cluster
         .components
         .push(DashComponent::Gauge(Box::new(GaugeConfig {
@@ -849,13 +438,14 @@ pub fn create_tuning_dashboard() -> DashFile {
             high_warning: Some(1.1),
             value_digits: 3,
             gauge_painter: GaugePainter::LineGraph,
-            relative_x: 0.34,
-            relative_y: 0.35,
-            relative_width: 0.64,
-            relative_height: 0.38,
-            back_color: LT_GAUGE_BG,
+            gauge_style: "modern".to_string(),
+            relative_x: 0.54,
+            relative_y: 0.14,
+            relative_width: 0.44,
+            relative_height: 0.58,
+            back_color: LT_CARD_BG,
             font_color: LT_ACCENT_GREEN,
-            needle_color: LT_ACCENT_GREEN,
+            needle_color: LT_ACCENT_TEAL,
             trim_color: LT_TEXT_SECONDARY,
             warn_color: LT_WARN_COLOR,
             critical_color: LT_CRITICAL_COLOR,
@@ -863,222 +453,41 @@ pub fn create_tuning_dashboard() -> DashFile {
             ..Default::default()
         })));
 
-    // BOTTOM ROW: Tuning-specific metrics (all digital readouts)
+    // BOTTOM ROW 1 — fuel / ignition / engine load
+    let row1_y = 0.76;
+    let row_h = 0.10;
+    let tile_w = 0.115;
+    col = 0.02;
+    for (id, title, ch, units, min, max, digits, color) in [
+        ("ve", "VE", "ve", "%", 0.0, 150.0, 0, LT_TEXT_PRIMARY),
+        ("pw", "PULSE", "pulseWidth", "ms", 0.0, 25.0, 2, LT_ACCENT_BLUE),
+        ("duty", "DUTY", "dutyCycle", "%", 0.0, 100.0, 0, LT_ACCENT_AMBER),
+        ("advance", "TIMING", "advance", "°", -10.0, 50.0, 1, LT_ACCENT_TEAL),
+        ("egt", "EGT", "egt", "°C", 0.0, 1000.0, 0, LT_ACCENT_RED),
+        ("lambda", "LAMBDA", "lambda", "λ", 0.7, 1.3, 3, LT_ACCENT_GREEN),
+        ("boost", "BOOST", "boost", "kPa", 0.0, 300.0, 0, LT_ACCENT_TEAL),
+    ] {
+        dash.gauge_cluster.components.push(stat_tile(
+            id, title, ch, units, min, max, digits, col, row1_y, tile_w, row_h, color,
+        ));
+        col += tile_w + 0.005;
+    }
 
-    // VE percentage
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "ve".to_string(),
-            title: "VE".to_string(),
-            units: "%".to_string(),
-            output_channel: "ve".to_string(),
-            min: 0.0,
-            max: 150.0,
-            value_digits: 0,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.02,
-            relative_y: 0.76,
-            relative_width: 0.14,
-            relative_height: 0.11,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_GREEN,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // Pulse width
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "pw".to_string(),
-            title: "PULSE".to_string(),
-            units: "ms".to_string(),
-            output_channel: "pulseWidth".to_string(),
-            min: 0.0,
-            max: 25.0,
-            high_warning: Some(20.0),
-            value_digits: 2,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.18,
-            relative_y: 0.76,
-            relative_width: 0.14,
-            relative_height: 0.11,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_BLUE,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // Injector duty cycle
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "duty".to_string(),
-            title: "DUTY".to_string(),
-            units: "%".to_string(),
-            output_channel: "dutyCycle".to_string(),
-            min: 0.0,
-            max: 100.0,
-            high_warning: Some(85.0),
-            high_critical: Some(95.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.34,
-            relative_y: 0.76,
-            relative_width: 0.14,
-            relative_height: 0.11,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_AMBER,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // Ignition advance
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "advance".to_string(),
-            title: "TIMING".to_string(),
-            units: "°".to_string(),
-            output_channel: "advance".to_string(),
-            min: -10.0,
-            max: 50.0,
-            value_digits: 1,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.50,
-            relative_y: 0.76,
-            relative_width: 0.14,
-            relative_height: 0.11,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_TEAL,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // Battery voltage
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "battery".to_string(),
-            title: "BATT".to_string(),
-            units: "V".to_string(),
-            output_channel: "battery".to_string(),
-            min: 10.0,
-            max: 16.0,
-            low_warning: Some(11.5),
-            low_critical: Some(11.0),
-            value_digits: 1,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.66,
-            relative_y: 0.76,
-            relative_width: 0.14,
-            relative_height: 0.11,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_GREEN,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // EGT or knock count
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "egt".to_string(),
-            title: "EGT".to_string(),
-            units: "°C".to_string(),
-            output_channel: "egt".to_string(),
-            min: 0.0,
-            max: 1000.0,
-            high_warning: Some(850.0),
-            high_critical: Some(950.0),
-            value_digits: 0,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.82,
-            relative_y: 0.76,
-            relative_width: 0.16,
-            relative_height: 0.11,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_PRIMARY,
-            needle_color: LT_ACCENT_RED,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: 1,
-            ..Default::default()
-        })));
-
-    // AFR target readout (bottom second row, left)
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "afrtarget".to_string(),
-            title: "AFR TARGET".to_string(),
-            units: ":1".to_string(),
-            output_channel: "afrTarget".to_string(),
-            min: 10.0,
-            max: 20.0,
-            value_digits: 1,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.02,
-            relative_y: 0.89,
-            relative_width: 0.14,
-            relative_height: 0.09,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_SECONDARY,
-            needle_color: LT_TEXT_SECONDARY,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: -1,
-            ..Default::default()
-        })));
-
-    // Correction factor readout
-    dash.gauge_cluster
-        .components
-        .push(DashComponent::Gauge(Box::new(GaugeConfig {
-            id: "corr".to_string(),
-            title: "CORRECTION".to_string(),
-            units: "%".to_string(),
-            output_channel: "correction".to_string(),
-            min: 0.0,
-            max: 200.0,
-            value_digits: 0,
-            gauge_painter: GaugePainter::BasicReadout,
-            relative_x: 0.18,
-            relative_y: 0.89,
-            relative_width: 0.14,
-            relative_height: 0.09,
-            back_color: LT_GAUGE_BG,
-            font_color: LT_TEXT_SECONDARY,
-            needle_color: LT_TEXT_SECONDARY,
-            trim_color: LT_TEXT_SECONDARY,
-            warn_color: LT_WARN_COLOR,
-            critical_color: LT_CRITICAL_COLOR,
-            font_size_adjustment: -1,
-            ..Default::default()
-        })));
+    // BOTTOM ROW 2 — targets / corrections
+    let row2_y = 0.88;
+    let row2_h = 0.10;
+    col = 0.02;
+    for (id, title, ch, units, min, max, digits, color) in [
+        ("afrtarget", "AFR TGT", "afrTarget", ":1", 10.0, 20.0, 1, LT_TEXT_SECONDARY),
+        ("corr", "CORR", "correction", "%", 0.0, 200.0, 0, LT_TEXT_SECONDARY),
+        ("fuel", "FUEL", "fuelLevel", "%", 0.0, 100.0, 0, LT_ACCENT_AMBER),
+        ("sync", "SYNC", "sync", "", 0.0, 1.0, 0, LT_ACCENT_GREEN),
+    ] {
+        dash.gauge_cluster.components.push(stat_tile(
+            id, title, ch, units, min, max, digits, col, row2_y, 0.155, row2_h, color,
+        ));
+        col += 0.16;
+    }
 
     dash
 }

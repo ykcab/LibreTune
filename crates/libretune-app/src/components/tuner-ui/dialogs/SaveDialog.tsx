@@ -124,7 +124,7 @@ export function SaveDialog({ isOpen, onClose, onSaved, autoBurnOnClose }: SaveDi
           <Button
             variant="primary"
             onClick={handleSave}
-            disabled={isSaving || !tuneInfo?.path}
+            disabled={isSaving || !tuneInfo?.has_tune}
           >
             {isSaving ? 'Saving...' : 'Save'}
           </Button>

@@ -1,19 +1,13 @@
+import { Suspense } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ErrorBoundary from "./common/ErrorBoundary";
 import {
   TableEditor,
-  AutoTune,
-  DataLogView,
   type TableData as TunerTableData,
 } from "./tuner-ui";
-import TsDashboard from "./dashboards/TsDashboard";
-import { ToothLoggerView, CompositeLoggerView, OutputChannelStatus } from "./diagnostics";
-import { EcuConsole } from "./console/EcuConsole";
-import { LuaConsole } from "./console/LuaConsole";
-import DialogRenderer, { type DialogDefinition as RendererDialogDef } from "./dialogs/DialogRenderer";
-import CurveEditor, { type CurveData } from "./curves/CurveEditor";
+import { type CurveData } from "./curves/CurveEditor";
 import PortEditor, { type PinConfig } from "./hardware/PortEditor";
 import WelcomeView from "./WelcomeView";
-import { SettingsView } from "./SettingsView";
 import type {
   ConnectionStatus,
   CurrentProject,
@@ -22,6 +16,25 @@ import type {
   PortEditorConfig,
 } from "../types/app";
 import type { Tab } from "./tuner-ui";
+import { usePersistTableChange } from "../hooks/usePersistTableChange";
+import {
+  LazyTsDashboard,
+  LazyAutoTune,
+  LazyDataLogView,
+  LazyDialogRenderer,
+  LazyCurveEditor,
+  LazyToothLoggerView,
+  LazyCompositeLoggerView,
+  LazyOutputChannelStatus,
+  LazyEcuConsole,
+  LazyLuaConsole,
+  LazySettingsView,
+  TabLoadingFallback,
+  PendingDialogTab,
+} from "./TabContentLazy";
+import { type DialogDefinition as RendererDialogDef } from "./dialogs/DialogRenderer";
+import { useConstantValuesStore } from "../stores/constantValuesStore";
+import { isValidTableData } from "../utils/validateTableData";
 
 export interface TabContentRouterProps {
   // Project / connection state
@@ -34,7 +47,7 @@ export interface TabContentRouterProps {
   activeTabId: string | null;
   tabs: Tab[];
   tabContents: Record<string, TabContent>;
-  setTabContents: (next: Record<string, TabContent>) => void;
+  setTabContents: React.Dispatch<React.SetStateAction<Record<string, TabContent>>>;
 
   // Welcome view actions
   openProject: (path: string) => void | Promise<void>;
@@ -46,11 +59,14 @@ export interface TabContentRouterProps {
   // Editor / dialog actions
   setBurnDialogOpen: (open: boolean) => void;
   handleTabClose: (id: string) => void;
-  openTarget: (target: string, label?: string) => void;
-  fetchConstants: () => Promise<Record<string, number>>;
-  fetchMenuTree: (context?: Record<string, number>) => Promise<void>;
-  setConstantValues: React.Dispatch<React.SetStateAction<Record<string, number>>>;
-  constantValues: Record<string, number>;
+  openTarget: (
+    target: string,
+    label?: string,
+    highlightTerm?: string,
+    forceReload?: boolean,
+    targetKind?: "Table" | "Dialog",
+  ) => void;
+  scheduleMenuRefresh: (context?: Record<string, number>) => void;
 
   // Port editor
   portEditorAssignments: Record<string, PinConfig[]>;
@@ -82,14 +98,24 @@ export function TabContentRouter(props: TabContentRouterProps) {
     setBurnDialogOpen,
     handleTabClose,
     openTarget,
-    fetchConstants,
-    fetchMenuTree,
-    setConstantValues,
-    constantValues,
+    scheduleMenuRefresh,
     portEditorAssignments,
     setPortEditorAssignments,
     showToast,
   } = props;
+
+  const constantValues = useConstantValuesStore((s) => s.values);
+
+  const persistTableChange = usePersistTableChange(
+    (newData) => {
+      if (!activeTabId) return;
+      setTabContents((prev) => ({
+        ...prev,
+        [activeTabId]: { type: "table", data: newData },
+      }));
+    },
+    (msg) => showToast(msg, "error"),
+  );
 
   // If no project is open, show the welcome view
   if (!currentProject) {
@@ -111,70 +137,109 @@ export function TabContentRouter(props: TabContentRouterProps) {
 
   switch (content.type) {
     case "dashboard":
-      return <TsDashboard isConnected={status.state === "Connected"} />;
-    case "table":
+      return (
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyTsDashboard isConnected={status.state === "Connected"} />
+        </Suspense>
+      );
+    case "table": {
+      const tableData = content.data as TunerTableData | undefined;
+      if (!tableData) {
+        const activeTab = tabs.find((t) => t.id === activeTabId);
+        return (
+          <PendingDialogTab
+            label={activeTab?.title || activeTabId}
+            onRetry={() => openTarget(activeTabId, activeTab?.title, undefined, true, "Table")}
+          />
+        );
+      }
+      if (!isValidTableData(tableData)) {
+        const activeTab = tabs.find((t) => t.id === activeTabId);
+        return (
+          <div className="tab-loading tab-loading--slow">
+            <p>Table &ldquo;{activeTab?.title || activeTabId}&rdquo; has invalid or empty data.</p>
+            <p className="tab-loading-hint">
+              This can happen before ECU sync completes, or if the tune file is missing table values.
+            </p>
+            <button
+              type="button"
+              className="tab-loading-retry"
+              onClick={() => openTarget(activeTabId, activeTab?.title, undefined, true, "Table")}
+            >
+              Retry
+            </button>
+          </div>
+        );
+      }
       return (
         <TableEditor
-          data={content.data as TunerTableData}
-          onChange={(newData) => {
-            if (activeTabId) {
-              setTabContents({
-                ...tabContents,
-                [activeTabId]: { type: "table", data: newData },
-              });
-            }
-          }}
+          data={tableData}
+          onChange={persistTableChange}
           onBurn={() => setBurnDialogOpen(true)}
         />
       );
+    }
     case "curve":
       return (
-        <CurveEditor
-          data={content.data as CurveData}
-          embedded={false}
-          simpleGaugeInfo={content.gauge}
-          onValuesChange={async (yBins) => {
-            if (activeTabId) {
-              const curveData = content.data as CurveData;
-              const updatedData = { ...curveData, y_bins: yBins };
-              setTabContents({
-                ...tabContents,
-                [activeTabId]: { type: "curve", data: updatedData, gauge: content.gauge },
-              });
-              try {
-                await invoke("update_curve_data", {
-                  curveName: curveData.name,
-                  yValues: yBins,
-                });
-              } catch (err) {
-                console.error("Failed to save curve data:", err);
-                showToast("Failed to save curve changes", "error");
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyCurveEditor
+            data={content.data as CurveData}
+            embedded={false}
+            simpleGaugeInfo={content.gauge}
+            onValuesChange={async (yBins) => {
+              if (activeTabId) {
+                const curveData = content.data as CurveData;
+                const updatedData = { ...curveData, y_bins: yBins };
+                setTabContents((prev) => ({
+                  ...prev,
+                  [activeTabId]: { type: "curve", data: updatedData, gauge: content.gauge },
+                }));
+                try {
+                  await invoke("update_curve_data", {
+                    curveName: curveData.name,
+                    yValues: yBins,
+                  });
+                } catch (err) {
+                  console.error("Failed to save curve data:", err);
+                  showToast("Failed to save curve changes", "error");
+                }
               }
-            }
-          }}
-          onBack={() => activeTabId && handleTabClose(activeTabId)}
-        />
+            }}
+            onBack={() => activeTabId && handleTabClose(activeTabId)}
+          />
+        </Suspense>
       );
     case "dialog": {
       const activeTab = tabs.find((t) => t.id === activeTabId);
+      const dialogDef = content.data as RendererDialogDef | undefined;
+      if (!dialogDef) {
+        const tabLabel = activeTab?.title || activeTabId;
+        return (
+          <PendingDialogTab
+            label={tabLabel}
+            onRetry={() => openTarget(activeTabId, activeTab?.title, content.highlightTerm, true, "Dialog")}
+          />
+        );
+      }
       return (
-        <DialogRenderer
-          definition={content.data as RendererDialogDef}
-          onBack={() => activeTabId && handleTabClose(activeTabId)}
-          openTable={(tableName) => openTarget(tableName)}
-          context={constantValues}
-          displayTitle={activeTab?.title}
-          highlightTerm={content.highlightTerm}
-          onOptimisticUpdate={(name, value) => {
-            // Immediately update the context so sibling fields re-evaluate their conditions
-            setConstantValues((prev) => ({ ...prev, [name]: value }));
-          }}
-          onUpdate={async () => {
-            const values = await fetchConstants();
-            await fetchMenuTree(values);
-            setConstantValues(values);
-          }}
-        />
+        <ErrorBoundary key={activeTabId}>
+          <Suspense fallback={<TabLoadingFallback />}>
+            <LazyDialogRenderer
+              definition={dialogDef}
+              onBack={() => activeTabId && handleTabClose(activeTabId)}
+              openTable={(tableName) => openTarget(tableName, undefined, undefined, false, "Table")}
+              context={constantValues}
+              displayTitle={activeTab?.title}
+              highlightTerm={content.highlightTerm}
+              onOptimisticUpdate={(name, value) => {
+                useConstantValuesStore.getState().patch(name, value);
+              }}
+              onUpdate={() => {
+                scheduleMenuRefresh();
+              }}
+            />
+          </Suspense>
+        </ErrorBoundary>
       );
     }
     case "portEditor": {
@@ -203,26 +268,56 @@ export function TabContentRouter(props: TabContentRouterProps) {
       );
     }
     case "settings":
-      return <SettingsView />;
+      return (
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazySettingsView />
+        </Suspense>
+      );
     case "autotune":
       return (
-        <AutoTune
-          tableName={(content.data as string) || ""}
-          onClose={() => handleTabClose("autotune")}
-        />
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyAutoTune
+            tableName={(content.data as string) || ""}
+            onClose={() => handleTabClose("autotune")}
+          />
+        </Suspense>
       );
     case "datalog":
-      return <DataLogView />;
+      return (
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyDataLogView />
+        </Suspense>
+      );
     case "tooth-logger":
-      return <ToothLoggerView onClose={() => handleTabClose("tooth-logger")} />;
+      return (
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyToothLoggerView onClose={() => handleTabClose("tooth-logger")} />
+        </Suspense>
+      );
     case "composite-logger":
-      return <CompositeLoggerView onClose={() => handleTabClose("composite-logger")} />;
+      return (
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyCompositeLoggerView onClose={() => handleTabClose("composite-logger")} />
+        </Suspense>
+      );
     case "och-status":
-      return <OutputChannelStatus />;
+      return (
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyOutputChannelStatus />
+        </Suspense>
+      );
     case "console":
-      return <EcuConsole ecuType={ecuType} isConnected={status.state === "Connected"} />;
+      return (
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyEcuConsole ecuType={ecuType} isConnected={status.state === "Connected"} />
+        </Suspense>
+      );
     case "lua-console":
-      return <LuaConsole />;
+      return (
+        <Suspense fallback={<TabLoadingFallback />}>
+          <LazyLuaConsole />
+        </Suspense>
+      );
     default:
       return null;
   }

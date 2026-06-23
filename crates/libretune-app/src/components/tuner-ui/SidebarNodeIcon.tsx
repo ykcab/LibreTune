@@ -1,0 +1,112 @@
+import type { LucideIcon } from 'lucide-react';
+import {
+  Folder,
+  Table2,
+  PanelTop,
+  LayoutDashboard,
+  FileText,
+  HelpCircle,
+  Fuel,
+  Droplets,
+  Syringe,
+  Grid3x3,
+  Flame,
+  Crosshair,
+  Thermometer,
+  Wind,
+  CircleOff,
+  SlidersHorizontal,
+  TrendingUp,
+  Zap,
+  Gauge,
+  Waves,
+  KeyRound,
+  Play,
+  PauseCircle,
+  Timer,
+  Radio,
+  Network,
+  Cpu,
+  Wrench,
+  Cog,
+  ArrowLeftRight,
+  Activity,
+  LineChart,
+  Stethoscope,
+  FolderOpen,
+  Cable,
+  Car,
+  Battery,
+  MemoryStick,
+  Fan,
+  TriangleAlert,
+  Disc3,
+} from 'lucide-react';
+import type { SidebarIconKey } from '../../utils/sidebarIcons';
+
+const ICON_MAP: Record<SidebarIconKey, LucideIcon> = {
+  fuel: Fuel,
+  injection: Droplets,
+  injector: Syringe,
+  've-table': Grid3x3,
+  afr: Flame,
+  'target-afr': Crosshair,
+  warmup: Thermometer,
+  iat: Wind,
+  dfco: CircleOff,
+  'fuel-trim': SlidersHorizontal,
+  enrichment: TrendingUp,
+  acceleration: Zap,
+  throttle: Gauge,
+  'wall-wetting': Waves,
+  ignition: Zap,
+  cranking: KeyRound,
+  priming: Play,
+  idle: PauseCircle,
+  timing: Timer,
+  sensors: Radio,
+  can: Network,
+  controller: Cpu,
+  advanced: SlidersHorizontal,
+  expert: Wrench,
+  boost: Activity,
+  egt: Thermometer,
+  lambda: Flame,
+  correction: ArrowLeftRight,
+  switch: SlidersHorizontal,
+  table: Table2,
+  dialog: PanelTop,
+  dashboard: LayoutDashboard,
+  log: FileText,
+  help: HelpCircle,
+  folder: Folder,
+  settings: Cog,
+  tools: Wrench,
+  diagnostics: Stethoscope,
+  load: FolderOpen,
+  network: Cable,
+  curve: LineChart,
+  vehicle: Car,
+  battery: Battery,
+  alternator: Battery,
+  'sd-card': MemoryStick,
+  fan: Fan,
+  pump: Droplets,
+  'fuel-pump': Fuel,
+  'check-engine': TriangleAlert,
+  trigger: Disc3,
+};
+
+interface SidebarNodeIconProps {
+  icon?: string;
+  type?: string;
+  size?: number;
+}
+
+export function SidebarNodeIcon({ icon, type, size = 15 }: SidebarNodeIconProps) {
+  const key = (icon || type || 'folder') as SidebarIconKey;
+  const Icon = ICON_MAP[key] ?? (type === 'table' ? Table2 : type === 'dialog' ? PanelTop : Folder);
+  const className = `node-icon node-icon-${key}`;
+
+  return <Icon size={size} strokeWidth={1.75} className={className} />;
+}

@@ -1,25 +1,192 @@
 /**
- * TS Dashboard Styles
+ * TS Dashboard Styles — modern command-center environment
  */
 
+/* ---- Modern analytics cockpit ---- */
+.ts-dashboard-wrapper--modern {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+  padding: 16px;
+  min-height: 0;
+  background:
+    radial-gradient(ellipse 70% 55% at 15% 20%, rgba(100, 181, 246, 0.08) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 50% at 85% 75%, rgba(124, 77, 255, 0.07) 0%, transparent 50%),
+    radial-gradient(ellipse 90% 70% at 50% 50%, rgba(18, 20, 30, 0.4) 0%, transparent 70%),
+    #0c0e14;
+}
+
+.ts-dashboard-wrapper--modern::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(100, 181, 246, 0.04) 0%, transparent 40%);
+}
+
+.ts-dashboard--modern {
+  position: relative;
+  z-index: 2;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 16px !important;
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.45),
+    0 0 80px rgba(100, 181, 246, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+
+.ts-dashboard--modern .ts-component {
+  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.35));
+  transition: filter 0.2s ease, transform 0.2s ease;
+}
+
+.ts-dashboard--modern .ts-component:hover {
+  filter: drop-shadow(0 12px 28px rgba(100, 181, 246, 0.15));
+  z-index: 10;
+}
+
+/* ---- Legacy HUD cockpit (designer / legacy mode) ---- */
 .ts-dashboard-container {
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  background: var(--card-bg);
-  border-radius: 8px;
+  background: #0c0e14;
+  border-radius: 0;
   overflow: hidden;
+}
+
+.ts-dashboard-wrapper--hud {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+  padding: 12px;
+  min-height: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 40%, rgba(100, 181, 246, 0.06) 0%, transparent 65%),
+    radial-gradient(ellipse 100% 100% at 50% 100%, rgba(255, 179, 0, 0.04) 0%, transparent 50%),
+    #050508;
+}
+
+/* Scan-line overlay */
+.ts-dashboard-wrapper--hud::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.12) 2px,
+      rgba(0, 0, 0, 0.12) 4px
+    );
+  opacity: 0.35;
+}
+
+/* Subtle HUD grid */
+.ts-dashboard-wrapper--hud::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-image:
+    linear-gradient(rgba(255, 179, 0, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 179, 0, 0.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 45%, black 20%, transparent 75%);
+}
+
+.ts-dashboard--hud {
+  position: relative;
+  z-index: 3;
+  border: 1px solid rgba(255, 179, 0, 0.12) !important;
+  box-shadow:
+    0 0 40px rgba(0, 0, 0, 0.6),
+    inset 0 0 60px rgba(100, 181, 246, 0.03);
+}
+
+.ts-dashboard--hud .ts-component {
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45));
+}
+
+.ts-dashboard--hud .ts-component:hover {
+  filter: drop-shadow(0 0 16px rgba(255, 179, 0, 0.2));
+  z-index: 10;
 }
 
 .ts-dashboard-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 16px;
-  background: rgba(0, 0, 0, 0.3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 6px 14px;
+  background: rgba(8, 10, 16, 0.92);
+  border-bottom: 1px solid rgba(255, 179, 0, 0.2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  flex-shrink: 0;
 }
+
+.ts-dashboard-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.ts-dashboard-selector-btn,
+.ts-dashboard-action-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(255, 179, 0, 0.06);
+  border: 1px solid rgba(255, 179, 0, 0.2);
+  border-radius: 2px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ts-dashboard-selector-btn:hover,
+.ts-dashboard-action-btn:hover {
+  background: rgba(255, 179, 0, 0.12);
+  border-color: rgba(255, 179, 0, 0.4);
+  color: var(--text-primary);
+  box-shadow: 0 0 12px rgba(255, 179, 0, 0.1);
+}
+
+.ts-dashboard-action-btn.active {
+  background: rgba(100, 181, 246, 0.12);
+  border-color: rgba(100, 181, 246, 0.35);
+  color: var(--primary);
+}
+
+.ts-dashboard-action-btn.danger {
+  color: var(--error);
+  border-color: rgba(239, 83, 80, 0.3);
+}
+
+.ts-dashboard-action-btn.danger:hover {
+  background: rgba(239, 83, 80, 0.1);
+  border-color: rgba(239, 83, 80, 0.45);
+}
+
+/* Legacy duplicate rules below — kept for selector/dialogs */
 
 .ts-dashboard-compat {
   display: flex;
@@ -214,14 +381,14 @@
 }
 
 /* Dashboard scaling wrapper - fills available space and centers dashboard */
-.ts-dashboard-wrapper {
+.ts-dashboard-wrapper:not(.ts-dashboard-wrapper--hud) {
   flex: 1;
   display: flex;
   align-items: flex-start;
   justify-content: center;
   overflow: hidden;
   padding: 8px;
-  min-height: 0; /* Allow flex to shrink below content size */
+  min-height: 0;
 }
 
 /* Dashboard container - centers dashboard and handles scaling */
@@ -310,7 +477,7 @@
 }
 
 .ts-component:hover {
-  box-shadow: 0 0 12px rgba(74, 158, 255, 0.4);
+  box-shadow: 0 0 20px rgba(255, 179, 0, 0.15);
   z-index: 10;
 }
 

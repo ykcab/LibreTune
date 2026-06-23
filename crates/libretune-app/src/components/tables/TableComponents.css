@@ -12,13 +12,51 @@
   /* grid-template-columns set via inline style: auto repeat(N, 3rem) */
 }
 
-/* Corner cell where axes meet */
+/* Corner cell where axes meet — Y/X axis legend */
 .table-editor-2d .axis-corner {
   background: var(--surface);
   position: sticky;
   top: 0;
   left: 0;
   z-index: 3;
+  min-width: 5rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0.15rem;
+  border: 1px solid var(--border);
+  font-size: 0.65rem;
+  line-height: 1.2;
+  color: var(--text-secondary);
+}
+
+.table-editor-2d .axis-corner-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.table-editor-2d .axis-corner-tag {
+  flex: 0 0 auto;
+  font-weight: 700;
+  font-size: 0.6rem;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.table-editor-2d .axis-corner-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .table-editor-2d .table-cell {

@@ -27,6 +27,9 @@ interface TableGridProps {
   // Heatmap color props
   showColorShade?: boolean; // Whether to show heatmap colors
   heatmapScheme?: HeatmapScheme | string[]; // Scheme name or custom color stops
+  /** Resolved axis names for the corner legend (e.g. MAP / RPM) */
+  xAxisName?: string;
+  yAxisName?: string;
 }
 
 export default function TableGrid({
@@ -47,6 +50,8 @@ export default function TableGrid({
   showLiveCursor = false,
   showColorShade = true,
   heatmapScheme = 'tunerstudio',
+  xAxisName,
+  yAxisName,
 }: TableGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [editingCell, setEditingCell] = useState<[number, number] | null>(null);
@@ -300,8 +305,17 @@ export default function TableGrid({
       onMouseMove={handleCellMouseMove}
       style={{ gridTemplateColumns: `max-content repeat(${x_size}, 3rem)` }}
     >
-      {/* Corner cell (row 0, col 0) */}
-      <div className="axis-corner" />
+      {/* Corner cell (row 0, col 0) — Y / X axis legend */}
+      <div className="axis-corner" title={`Y axis: ${yAxisName || 'Y'}, X axis: ${xAxisName || 'X'}`}>
+        <div className="axis-corner-row">
+          <span className="axis-corner-tag">Y</span>
+          <span className="axis-corner-name">{yAxisName || 'Y'}</span>
+        </div>
+        <div className="axis-corner-row">
+          <span className="axis-corner-tag">X</span>
+          <span className="axis-corner-name">{xAxisName || 'X'}</span>
+        </div>
+      </div>
 
       {/* X-axis headers (row 0, cols 1..N) */}
       {x_bins.map((val, i) => {

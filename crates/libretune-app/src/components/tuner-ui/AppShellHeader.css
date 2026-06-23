@@ -1,0 +1,305 @@
+/*
+ * AppShellHeader — unified top navigation (Phase 1)
+ * Merges classic menubar + toolbar into a single futuristic command bar.
+ */
+
+.app-shell-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--shell-height);
+  min-height: var(--shell-height);
+  padding: 0 var(--space-5);
+  background: var(--bg-shell);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-shell);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 500;
+  /* Allow menu dropdowns (position:absolute below nav) to extend past the header bar */
+  overflow: visible;
+}
+
+.app-shell-header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(var(--accent-rgb), 0.35) 20%,
+    rgba(var(--primary-rgb), 0.25) 80%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+/* Brand */
+.app-shell-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  padding-right: var(--space-4);
+  border-right: 1px solid var(--border-subtle);
+  margin-right: var(--space-1);
+}
+
+.app-shell-logo {
+  color: var(--accent);
+  filter: drop-shadow(0 0 6px rgba(var(--accent-rgb), 0.45));
+}
+
+.app-shell-brand-name {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* Sidebar toggle */
+.app-shell-sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.app-shell-sidebar-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.app-shell-sidebar-toggle.active {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+  border-color: rgba(var(--accent-rgb), 0.25);
+}
+
+/* INI-driven menu strip */
+.app-shell-nav {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.app-shell-nav .menubar {
+  height: auto;
+  background: transparent;
+  border: none;
+  gap: var(--space-1);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: visible;
+  max-width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--accent-rgb), 0.25) transparent;
+}
+
+.app-shell-nav .menubar::-webkit-scrollbar {
+  height: 4px;
+}
+
+.app-shell-nav .menubar::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.25);
+  border-radius: 4px;
+}
+
+.app-shell-nav .menubar-item {
+  height: 32px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.app-shell-nav .menubar-item:hover,
+.app-shell-nav .menubar-item-focused {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.app-shell-nav .menubar-item-open {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.28);
+}
+
+.app-shell-spacer {
+  display: none;
+}
+
+/* Quick-action toolbar (inline) */
+.app-shell-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.app-shell-actions .toolbar {
+  height: auto;
+  background: transparent;
+  border: none;
+  padding: 0;
+  gap: var(--space-1);
+}
+
+.app-shell-actions .toolbar-button {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+}
+
+.app-shell-actions .toolbar-button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.app-shell-actions .toolbar-button-active {
+  color: var(--primary);
+  background: rgba(var(--primary-rgb), 0.12);
+  border-color: rgba(var(--primary-rgb), 0.3);
+}
+
+.app-shell-actions .toolbar-separator {
+  height: 22px;
+  margin: 0 var(--space-2);
+  background: var(--border-subtle);
+}
+
+.app-shell-actions .toolbar-content {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: rgba(var(--primary-rgb), 0.08);
+  border: 1px solid rgba(var(--primary-rgb), 0.15);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+}
+
+/* Live link metrics — separated from toolbar to avoid crowding menus */
+.app-shell-metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  background: rgba(var(--primary-rgb), 0.06);
+  border: 1px solid rgba(var(--primary-rgb), 0.12);
+  max-width: 200px;
+  line-height: 1.2;
+}
+
+.app-shell-metrics .conn-metrics {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.app-shell-packet-mode {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* Connection pill */
+.app-shell-connection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  max-width: 180px;
+}
+
+.app-shell-connection-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell-connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.app-shell-connection.connected {
+  color: var(--success);
+  border-color: rgba(102, 187, 106, 0.35);
+  background: rgba(102, 187, 106, 0.08);
+}
+
+.app-shell-connection.connected .app-shell-connection-dot {
+  background: var(--success);
+  box-shadow: 0 0 8px rgba(102, 187, 106, 0.7);
+}
+
+.app-shell-connection.disconnected {
+  color: var(--text-muted);
+}
+
+.app-shell-connection.disconnected .app-shell-connection-dot {
+  background: var(--text-muted);
+}
+
+/* Dropdown menus — rounded floating panels */
+.app-shell-header ~ * .menu-dropdown,
+.app-shell-nav .menu-dropdown {
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
+  box-shadow: var(--shadow-dropdown), var(--shadow-accent);
+  padding: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.app-shell-nav .menu-item {
+  border-radius: var(--radius-md);
+  border-left: none;
+  padding: var(--space-3) var(--space-4);
+}
+
+.app-shell-nav .menu-item:hover,
+.app-shell-nav .menu-item-focused {
+  border-left: none;
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.2);
+}
+
+.app-shell-nav .menu-separator {
+  margin: var(--space-2) var(--space-3);
+  background: var(--border-subtle);
+}

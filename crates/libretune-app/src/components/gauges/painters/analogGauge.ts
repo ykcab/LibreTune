@@ -1,7 +1,7 @@
 /** AnalogGauge — classic circular dial with metallic bezel, ticks, gradient needle, center cap. */
 
-import { tsColorToHex, tsColorToRgba } from '../../dashboards/dashTypes';
-import { roundRect, lightenColor, darkenColor, createMetallicGradient } from '../drawUtils';
+import { tsColorToHex } from '../../dashboards/dashTypes';
+import { roundRect, lightenColor, darkenColor, drawHudPanel, isFramelessGauge } from '../drawUtils';
 import type { Painter } from './types';
 
 export const analogGaugePainter: Painter = (pctx) => {
@@ -18,57 +18,29 @@ export const analogGaugePainter: Painter = (pctx) => {
 
   // Background - use image if available, otherwise use color
   if (bgImage) {
-    // Center the image in the square area
     ctx.drawImage(bgImage, centerX - size / 2, centerY - size / 2, size, size);
-  } else {
-    ctx.fillStyle = tsColorToRgba(config.back_color);
+  } else if (!isFramelessGauge(config.back_color)) {
+    drawHudPanel(ctx, 0, 0, width, height, 3);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
     ctx.fill();
+  } else {
+    ctx.clearRect(0, 0, width, height);
   }
 
-  // Outer shadow
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetX = 3;
-  ctx.shadowOffsetY = 3;
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-  ctx.fillStyle = '#333';
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
-
-  // Metallic bezel - outer ring
-  const bezelWidth = config.border_width > 0
-    ? Math.min(radius * 0.3, config.border_width)
-    : Math.max(6, radius * 0.08);
-  const bezelGradient = createMetallicGradient(ctx, centerX, centerY, radius + 2, radius - bezelWidth, config.trim_color);
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-  ctx.arc(centerX, centerY, radius - bezelWidth, 0, Math.PI * 2, true);
-  ctx.fillStyle = bezelGradient;
-  ctx.fill();
-
-  // Inner bezel highlight
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius - bezelWidth + 1, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Face background with subtle radial gradient
-  const faceRadius = radius - bezelWidth - 2;
-  const faceGradient = ctx.createRadialGradient(
-    centerX - faceRadius * 0.3, centerY - faceRadius * 0.3, 0,
-    centerX, centerY, faceRadius,
-  );
-  const backHex = tsColorToHex(config.back_color);
-  faceGradient.addColorStop(0, lightenColor(backHex, 15));
-  faceGradient.addColorStop(0.7, backHex);
-  faceGradient.addColorStop(1, darkenColor(backHex, 10));
+  if (!isFramelessGauge(config.back_color)) {
+    // Thin neon bezel ring (boxed gauges only)
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 179, 0, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  const faceRadius = radius - Math.max(8, radius * 0.06);
   ctx.beginPath();
   ctx.arc(centerX, centerY, faceRadius, 0, Math.PI * 2);
-  ctx.fillStyle = faceGradient;
+  ctx.fillStyle = 'rgba(4, 6, 12, 0.92)';
   ctx.fill();
 
   // Calculate angles (TS uses degrees, canvas uses radians)

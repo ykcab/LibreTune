@@ -7,10 +7,10 @@
  */
 
 :root {
-  /* Font families */
-  --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
-  --font-lcd: 'LCD', 'DSEG7 Classic', 'Consolas', monospace;
+  /* Font families — industrial: clean sans + mono for data */
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
+  --font-lcd: 'LCD', 'DSEG7 Classic', 'JetBrains Mono', monospace;
   
   /* Font sizes */
   --font-size-xs: 10px;
@@ -32,23 +32,32 @@
   --space-7: 20px;
   --space-8: 24px;
   
-  /* Border radius */
-  --radius-sm: 2px;
-  --radius-md: 3px;
-  --radius-lg: 4px;
+  /* Border radius — futuristic soft cards */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-pill: 999px;
   
   /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.5);
-  --shadow-dropdown: 0 4px 12px rgba(0, 0, 0, 0.6);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-dropdown: 0 12px 40px rgba(0, 0, 0, 0.65);
+  --shadow-accent: 0 0 20px rgba(255, 179, 0, 0.12);
+  --shadow-primary: 0 0 20px rgba(100, 181, 246, 0.12);
+  --shadow-shell: 0 2px 12px rgba(0, 0, 0, 0.35);
+  --shadow-glow-green: 0 0 16px rgba(102, 187, 106, 0.2);
   
   /* Layout dimensions */
-  --menubar-height: 24px;
-  --toolbar-height: 32px;
-  --statusbar-height: 22px;
-  --sidebar-width: 240px;
-  --tab-height: 28px;
+  --shell-height: 52px;
+  --menubar-height: 52px;
+  --toolbar-height: 52px;
+  --statusbar-height: 32px;
+  --sidebar-width: 260px;
+  --tab-height: 36px;
+  --shell-gap: 10px;
   
   /* Transitions */
   --transition-fast: 0.1s ease;
@@ -115,113 +124,126 @@
 }
 
 /* =============================================
-   DARK THEME (Default - TS Classic)
+   DARK THEME (Default — Industrial Golden Amber)
+   High-contrast pit-lane aesthetic: #121212 bg,
+   #FFB300 accent highlights, #64B5F6 secondary blue.
    ============================================= */
 [data-theme="dark"] {
   color-scheme: dark;
+
+  /* RGB helpers for translucent overlays */
+  --primary-rgb: 100, 181, 246;
+  --accent-rgb: 255, 179, 0;
+  --warning-rgb: 255, 179, 0;
   
   /* Background colors */
-  --bg-app: #1a1a1a;
-  --bg-surface: #242424;
-  --bg-elevated: #2d2d2d;
-  --bg-input: #2a2a2a;
-  --bg-hover: #383838;
-  --bg-active: #424242;
-  --bg-selected: #0d47a1;
+  --bg-app: #121212;
+  --bg-surface: #1a1a1a;
+  --bg-elevated: #1e1e1e;
+  --bg-input: #1a1a1a;
+  --bg-hover: #2a2a2a;
+  --bg-active: #333333;
+  --bg-selected: rgba(255, 179, 0, 0.16);
   --bg-dashboard: #000000;
   
   /* Menu/toolbar backgrounds */
-  --bg-menubar: #2d2d2d;
-  --bg-toolbar: #262626;
-  --bg-statusbar: #1e1e1e;
-  --bg-sidebar: #1e1e1e;
-  --bg-tab: #2a2a2a;
-  --bg-tab-active: #1e1e1e;
+  --bg-shell: #0f0f12;
+  --bg-menubar: #0f0f12;
+  --bg-toolbar: #121218;
+  --bg-statusbar: #0c0c10;
+  --bg-sidebar: #141418;
+  --bg-tab: transparent;
+  --bg-tab-active: rgba(var(--accent-rgb), 0.08);
   
-  /* Text colors - improved contrast */
-  --text-primary: #e8e8e8;
-  --text-secondary: #b0b0b0;
-  --text-muted: #909090;
-  --text-disabled: #606060;
-  --text-inverse: #1a1a1a;
+  /* Text colors */
+  --text-primary: #ffffff;
+  --text-secondary: #bdbdbd;
+  --text-muted: #9e9e9e;
+  --text-disabled: #616161;
+  --text-inverse: #121212;
   --text-link: #64b5f6;
   
-  /* Border colors - improved visibility */
-  --border-default: #555555;
-  --border-subtle: #444444;
-  --border-strong: #666666;
-  --border-focus: #1976d2;
+  /* Border colors */
+  --border-default: #424242;
+  --border-subtle: #2a2a2a;
+  --border-strong: #555555;
+  --border-focus: #ffb300;
+  --border-accent: #ffb300;
   
-  /* Accent colors */
-  --primary: #1976d2;
-  --primary-hover: #1e88e5;
-  --primary-active: #1565c0;
-  --primary-text: #ffffff;
+  /* Interactive blue + golden accent */
+  --primary: #64b5f6;
+  --primary-hover: #90caf9;
+  --primary-active: #42a5f5;
+  --primary-text: #121212;
   
-  --accent: #ff9800;
-  --accent-hover: #ffa726;
-  --accent-text: #000000;
+  --accent: #ffb300;
+  --accent-hover: #ffc107;
+  --accent-text: #121212;
+
+  /* Semantic directional colors (raise / lower) */
+  --color-raise: #ffb300;
+  --color-lower: #64b5f6;
   
   /* Status colors */
-  --success: #4caf50;
-  --success-bg: #1b5e20;
-  --warning: #ff9800;
-  --warning-bg: #e65100;
-  --error: #f44336;
-  --error-bg: #b71c1c;
-  --info: #2196f3;
-  --info-bg: #0d47a1;
+  --success: #66bb6a;
+  --success-bg: #1b3a1f;
+  --warning: #ffb300;
+  --warning-bg: #3d2e00;
+  --error: #ef5350;
+  --error-bg: #3a1515;
+  --info: #64b5f6;
+  --info-bg: #0d2a3d;
   
-  /* Gauge colors (matching TS) */
+  /* Gauge colors — amber needle, blue normal zone */
   --gauge-bg: #000000;
-  --gauge-face: #1a1a1a;
+  --gauge-face: #121212;
   --gauge-bezel: #333333;
-  --gauge-needle: #00ff00;
-  --gauge-needle-shadow: rgba(0, 255, 0, 0.3);
+  --gauge-needle: #ffb300;
+  --gauge-needle-shadow: rgba(255, 179, 0, 0.35);
   --gauge-text: #ffffff;
-  --gauge-tick: #808080;
-  --gauge-tick-major: #c0c0c0;
-  --gauge-warning: #ffff00;
-  --gauge-critical: #ff0000;
-  --gauge-normal: #00ff00;
+  --gauge-tick: #757575;
+  --gauge-tick-major: #bdbdbd;
+  --gauge-warning: #ffb300;
+  --gauge-critical: #ef5350;
+  --gauge-normal: #64b5f6;
   
   /* Table editor colors */
-  --table-bg: #1e1e1e;
-  --table-header-bg: #2a2a2a;
-  --table-cell-bg: #252525;
-  --table-cell-hover: #333333;
-  --table-cell-selected: #0d47a1;
-  --table-cell-editing: #1565c0;
-  --table-axis-bg: #2d2d2d;
-  --table-grid-line: #383838;
+  --table-bg: #141414;
+  --table-header-bg: #1a1a1a;
+  --table-cell-bg: #161616;
+  --table-cell-hover: #2a2a2a;
+  --table-cell-selected: rgba(255, 179, 0, 0.22);
+  --table-cell-editing: rgba(100, 181, 246, 0.28);
+  --table-axis-bg: #1e1e1e;
+  --table-grid-line: #2a2a2a;
   
-  /* Value change colors (richer = blue, leaner = red) */
-  --value-richer: #2196f3;
-  --value-leaner: #f44336;
-  --value-unchanged: #808080;
+  /* Value change colors */
+  --value-richer: #64b5f6;
+  --value-leaner: #ef5350;
+  --value-unchanged: #757575;
   
-  /* Heatmap colors - TunerStudio classic gradient */
-  --heatmap-stop-0: #0000FF;  /* Blue (cold/low) */
-  --heatmap-stop-1: #00FFFF;  /* Cyan */
-  --heatmap-stop-2: #00FF00;  /* Green */
-  --heatmap-stop-3: #FFFF00;  /* Yellow */
-  --heatmap-stop-4: #FF8000;  /* Orange */
-  --heatmap-stop-5: #FF0000;  /* Red (hot/high) */
+  /* Heatmap — blue → amber → red industrial gradient */
+  --heatmap-stop-0: #1565c0;
+  --heatmap-stop-1: #64b5f6;
+  --heatmap-stop-2: #ffb300;
+  --heatmap-stop-3: #ff8f00;
+  --heatmap-stop-4: #ff5722;
+  --heatmap-stop-5: #d32f2f;
   
   /* History trail */
-  --trail-color: #1976d2;
+  --trail-color: #ffb300;
   --trail-dot: #64b5f6;
   
   /* Live cursor */
-  --cursor-live: #00ff00;
-  --cursor-trail: #ffcc00;
-  --cursor-selected: #ff0000;
-  --cursor-active: #0088ff;
+  --cursor-live: #ffb300;
+  --cursor-trail: #64b5f6;
+  --cursor-selected: #ef5350;
+  --cursor-active: #64b5f6;
   
   /* Scrollbar */
-  --scrollbar-track: #1e1e1e;
-  --scrollbar-thumb: #404040;
-  --scrollbar-thumb-hover: #505050;
+  --scrollbar-track: #0e0e0e;
+  --scrollbar-thumb: #424242;
+  --scrollbar-thumb-hover: #555555;
   
   /* Alias variables for backward compatibility */
   --bg-primary: var(--bg-app);

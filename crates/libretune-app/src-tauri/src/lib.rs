@@ -36,7 +36,7 @@ pub(crate) use commands::types::{
 };
 pub(crate) use commands::util_helpers::{
     clean_axis_label, get_conn_lock_holder, parse_runtime_packet_mode, read_raw_value,
-    set_conn_lock_holder, stream_log,
+    resolve_table_axis_label, set_conn_lock_holder, stream_log, infer_z_output_channel,
 };
 
 // Tauri command imports — sorted alphabetically by module name.
@@ -53,7 +53,7 @@ use commands::autotune_misc::{
 };
 use commands::available_inis::get_available_inis;
 use commands::base_map::generate_base_map;
-use commands::cache_status::{get_table_info, get_tune_cache_status};
+use commands::cache_status::{get_curve_info, get_table_info, get_tune_cache_status};
 use commands::channels::{
     get_available_channels, get_output_channel_status, get_status_bar_defaults,
 };
@@ -64,7 +64,9 @@ use commands::console::{
 };
 use commands::constant_update::update_constant;
 use commands::constant_values::get_all_constant_values;
-use commands::constants_read::{get_constant, get_constant_string_value, get_constant_value};
+use commands::constants_read::{
+    get_constant, get_constant_string_value, get_constant_value, get_constants_batch,
+};
 use commands::csv_io::{export_tune_as_csv, import_tune_from_csv, reset_tune_to_defaults};
 use commands::curve_ops::{get_curve_data, update_curve_data};
 use commands::dash_files::{
@@ -125,6 +127,7 @@ use commands::project_mgmt::{
 use commands::project_misc::{delete_project, get_msq_info};
 use commands::project_tune_sync::{
     compare_project_and_ecu_tunes, mark_tune_modified, save_tune_to_project,
+    auto_save_project_tune,
     write_project_tune_to_ecu,
 };
 use commands::realtime_get::get_realtime_data;
@@ -196,6 +199,7 @@ pub fn run() {
             cached_output_channels: Mutex::new(None),
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
+            autosave_generation: Mutex::new(0),
         })
         .invoke_handler(tauri::generate_handler![
             get_serial_ports,
@@ -218,6 +222,7 @@ pub fn run() {
             stop_realtime_stream,
             get_table_data,
             get_table_info,
+            get_curve_info,
             get_curve_data,
             get_tables,
             get_curves,
@@ -249,6 +254,7 @@ pub fn run() {
             get_help_topic,
             get_build_info,
             get_constant,
+            get_constants_batch,
             get_constant_value,
             get_constant_string_value,
             update_constant,
@@ -317,6 +323,7 @@ pub fn run() {
             compare_project_and_ecu_tunes,
             write_project_tune_to_ecu,
             save_tune_to_project,
+            auto_save_project_tune,
             // Tune cache commands
             get_tune_cache_status,
             load_all_pages,

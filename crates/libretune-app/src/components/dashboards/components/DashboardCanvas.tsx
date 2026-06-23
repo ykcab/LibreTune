@@ -118,9 +118,9 @@ export default function DashboardCanvas({
   };
 
   return (
-    <div ref={wrapperRef} className="ts-dashboard-wrapper">
+    <div ref={wrapperRef} className="ts-dashboard-wrapper ts-dashboard-wrapper--modern">
       <div
-        className={`ts-dashboard ${designerMode ? 'designer-mode' : ''}`}
+        className={`ts-dashboard ts-dashboard--modern ${designerMode ? 'designer-mode' : ''}`}
         style={{
           backgroundColor: bgColor,
           backgroundImage: backgroundImageLayers || undefined,

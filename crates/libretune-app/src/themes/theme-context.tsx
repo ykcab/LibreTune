@@ -4,7 +4,7 @@ export type ThemeName = 'dark' | 'light' | 'midnight' | 'carbon' | 'synthwave' |
 
 // Theme metadata for UI display with preview colors
 export const THEME_INFO: Record<ThemeName, { label: string; bg: string; primary: string; accent: string }> = {
-  dark: { label: 'Dark', bg: '#1a1a1a', primary: '#1976d2', accent: '#ff9800' },
+  dark: { label: 'Industrial', bg: '#121212', primary: '#64B5F6', accent: '#FFB300' },
   light: { label: 'Light', bg: '#f5f5f5', primary: '#1976d2', accent: '#f57c00' },
   midnight: { label: 'Midnight', bg: '#0a0e14', primary: '#238636', accent: '#f78166' },
   carbon: { label: 'Carbon', bg: '#000000', primary: '#0f62fe', accent: '#ff832b' },

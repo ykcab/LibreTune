@@ -1,6 +1,6 @@
 //! get_table_data command (extracted from lib.rs).
 
-use crate::{clean_axis_label, AppState, TableData};
+use crate::{infer_z_output_channel, resolve_table_axis_label, set_conn_lock_holder, AppState, TableData};
 use libretune_core::ini::Constant;
 use libretune_core::protocol::Connection;
 use libretune_core::tune::{TuneCache, TuneFile};
@@ -193,17 +193,21 @@ pub async fn get_table_data(
         Ok(vec![0.0; element_count])
     }
 
-    // Get tune, cache and connection
+    // Get tune and cache; use try_lock on connection so realtime stream isn't blocked
     let tune_guard = state.current_tune.lock().await;
     let cache_guard = state.tune_cache.lock().await;
-    let mut conn_guard = state.connection.lock().await;
-    let mut conn = conn_guard.as_mut();
+    set_conn_lock_holder("get_table_data");
+    let mut conn_guard_result = state.connection.try_lock();
+    let mut conn_slot: Option<&mut Connection> = match &mut conn_guard_result {
+        Ok(guard) => guard.as_mut(),
+        Err(_) => None,
+    };
 
     let x_bins = read_const_from_source(
         &x_const,
         tune_guard.as_ref(),
         cache_guard.as_ref(),
-        &mut conn,
+        &mut conn_slot,
         endianness,
     )?;
     let y_bins = if let Some(ref y) = y_const {
@@ -211,7 +215,7 @@ pub async fn get_table_data(
             y,
             tune_guard.as_ref(),
             cache_guard.as_ref(),
-            &mut conn,
+            &mut conn_slot,
             endianness,
         )?
     } else {
@@ -221,12 +225,23 @@ pub async fn get_table_data(
         &z_const,
         tune_guard.as_ref(),
         cache_guard.as_ref(),
-        &mut conn,
+        &mut conn_slot,
         endianness,
     )?;
 
+    set_conn_lock_holder("(none)");
+    drop(conn_guard_result);
+
+    let (x_axis_name, y_axis_name) = {
+        let def_guard = state.definition.lock().await;
+        let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+        (
+            resolve_table_axis_label(&x_label, def, tune_guard.as_ref(), cache_guard.as_ref()),
+            resolve_table_axis_label(&y_label, def, tune_guard.as_ref(), cache_guard.as_ref()),
+        )
+    };
+
     drop(cache_guard);
-    drop(conn_guard);
 
     // Reshape Z values into 2D array [y][x]
     let x_size = x_bins.len();
@@ -242,15 +257,18 @@ pub async fn get_table_data(
         z_values.push(row);
     }
 
+    let z_output_channel = infer_z_output_channel(&x_output_channel);
+
     Ok(TableData {
         name: table_name_out,
         title: table_title,
         x_bins,
         y_bins,
         z_values,
-        x_axis_name: clean_axis_label(&x_label),
-        y_axis_name: clean_axis_label(&y_label),
+        x_axis_name,
+        y_axis_name,
         x_output_channel,
         y_output_channel,
+        z_output_channel,
     })
 }

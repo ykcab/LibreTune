@@ -221,6 +221,7 @@ mod demo_mode_tests {
             connection_factory: Mutex::new(None),
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
+            autosave_generation: Mutex::new(0),
         };
 
         let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

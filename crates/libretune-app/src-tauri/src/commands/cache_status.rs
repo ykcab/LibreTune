@@ -1,6 +1,6 @@
 //! Lightweight read-only commands: get_table_info, get_tune_cache_status.
 
-use crate::commands::ini_meta::TableInfo;
+use crate::commands::ini_meta::{CurveInfo, TableInfo};
 use crate::state::AppState;
 use libretune_core::tune::PageState;
 use serde::Serialize;
@@ -50,6 +50,36 @@ pub async fn get_table_info(
             table_name,
             def.tables.len(),
             def.table_map_to_name.len()
+        ))
+    }
+}
+
+/// Lightweight command to check if a curve exists in the definition.
+#[tauri::command]
+pub async fn get_curve_info(
+    state: tauri::State<'_, AppState>,
+    curve_name: String,
+) -> Result<CurveInfo, String> {
+    let def_guard = state.definition.lock().await;
+    let def = def_guard.as_ref().ok_or_else(|| {
+        eprintln!(
+            "[WARN] get_curve_info: Definition not loaded when looking for '{}'",
+            curve_name
+        );
+        "Definition not loaded".to_string()
+    })?;
+
+    if let Some(curve) = def.get_curve_by_name_or_map(&curve_name) {
+        Ok(CurveInfo {
+            name: curve.name.clone(),
+            title: curve.title.clone(),
+        })
+    } else {
+        Err(format!(
+            "Curve '{}' not found (checked {} curves, {} map entries)",
+            curve_name,
+            def.curves.len(),
+            def.curve_map_to_name.len()
         ))
     }
 }

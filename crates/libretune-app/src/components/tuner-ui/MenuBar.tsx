@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, useLayoutEffect, KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Check } from 'lucide-react';
 import { MenuItem } from './TunerLayout';
 import './MenuBar.css';
@@ -10,7 +11,38 @@ interface MenuBarProps {
 export function MenuBar({ items }: MenuBarProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [dropdownAnchor, setDropdownAnchor] = useState<DOMRect | null>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
+  const dropdownPortalRef = useRef<HTMLDivElement>(null);
+  const buttonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  const openMenu = useCallback((item: MenuItem, index: number) => {
+    const btn = buttonRefs.current.get(item.id);
+    setOpenMenuId(item.id);
+    setFocusedIndex(index);
+    setDropdownAnchor(btn?.getBoundingClientRect() ?? null);
+  }, []);
+
+  const closeMenu = useCallback(() => {
+    setOpenMenuId(null);
+    setFocusedIndex(-1);
+    setDropdownAnchor(null);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!openMenuId) return;
+    const btn = buttonRefs.current.get(openMenuId);
+    if (!btn) return;
+
+    const updateAnchor = () => setDropdownAnchor(btn.getBoundingClientRect());
+    updateAnchor();
+    window.addEventListener('resize', updateAnchor);
+    window.addEventListener('scroll', updateAnchor, true);
+    return () => {
+      window.removeEventListener('resize', updateAnchor);
+      window.removeEventListener('scroll', updateAnchor, true);
+    };
+  }, [openMenuId]);
 
   // Parse accelerator from label (e.g., "&File" -> { label: "File", accelerator: "F" })
   const parseLabel = (label: string) => {
@@ -27,18 +59,18 @@ export function MenuBar({ items }: MenuBarProps) {
     return { before: label, accelerator: null, after: '' };
   };
 
-  // Close menu when clicking outside
+  // Close menu when clicking outside (include portaled dropdown)
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuBarRef.current && !menuBarRef.current.contains(e.target as Node)) {
-        setOpenMenuId(null);
-        setFocusedIndex(-1);
-      }
+      const target = e.target as Node;
+      if (menuBarRef.current?.contains(target)) return;
+      if (dropdownPortalRef.current?.contains(target)) return;
+      closeMenu();
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [closeMenu]);
 
   // Handle Alt+key accelerators
   useEffect(() => {
@@ -51,34 +83,30 @@ export function MenuBar({ items }: MenuBarProps) {
         });
         if (index !== -1) {
           e.preventDefault();
-          setOpenMenuId(items[index].id);
-          setFocusedIndex(index);
+          openMenu(items[index], index);
         }
       }
       // Escape closes menu
       if (e.key === 'Escape' && openMenuId) {
-        setOpenMenuId(null);
-        setFocusedIndex(-1);
+        closeMenu();
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [items, openMenuId]);
+  }, [items, openMenuId, openMenu, closeMenu]);
 
   const handleMenuClick = (item: MenuItem, index: number) => {
     if (openMenuId === item.id) {
-      setOpenMenuId(null);
+      closeMenu();
     } else {
-      setOpenMenuId(item.id);
+      openMenu(item, index);
     }
-    setFocusedIndex(index);
   };
 
   const handleMenuHover = (item: MenuItem, index: number) => {
     if (openMenuId !== null) {
-      setOpenMenuId(item.id);
-      setFocusedIndex(index);
+      openMenu(item, index);
     }
   };
 
@@ -87,34 +115,52 @@ export function MenuBar({ items }: MenuBarProps) {
       case 'ArrowRight':
         e.preventDefault();
         const nextIndex = (index + 1) % items.length;
-        setFocusedIndex(nextIndex);
         if (openMenuId) {
-          setOpenMenuId(items[nextIndex].id);
+          openMenu(items[nextIndex], nextIndex);
+        } else {
+          setFocusedIndex(nextIndex);
         }
         break;
       case 'ArrowLeft':
         e.preventDefault();
         const prevIndex = (index - 1 + items.length) % items.length;
-        setFocusedIndex(prevIndex);
         if (openMenuId) {
-          setOpenMenuId(items[prevIndex].id);
+          openMenu(items[prevIndex], prevIndex);
+        } else {
+          setFocusedIndex(prevIndex);
         }
         break;
       case 'ArrowDown':
       case 'Enter':
       case ' ':
         e.preventDefault();
-        setOpenMenuId(items[index].id);
+        openMenu(items[index], index);
         break;
     }
   };
 
-  const closeMenu = useCallback(() => {
-    setOpenMenuId(null);
-    setFocusedIndex(-1);
-  }, []);
+  const openMenuItem = items.find((item) => item.id === openMenuId);
+  const portaledDropdown =
+    openMenuItem?.items && openMenuItem.items.length > 0 && dropdownAnchor
+      ? createPortal(
+          <div
+            ref={dropdownPortalRef}
+            className="menu-dropdown-portal"
+            style={{ top: dropdownAnchor.bottom, left: dropdownAnchor.left }}
+          >
+            <MenuDropdown
+              items={openMenuItem.items}
+              onClose={closeMenu}
+              onDismissAll={closeMenu}
+              parentLabel={openMenuItem.label}
+            />
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
+    <>
     <div className="menubar" ref={menuBarRef} role="menubar">
       {items.map((item, index) => {
         const parsed = parseLabel(item.label);
@@ -123,6 +169,10 @@ export function MenuBar({ items }: MenuBarProps) {
         return (
           <div key={item.id} className="menubar-item-wrapper">
             <button
+              ref={(el) => {
+                if (el) buttonRefs.current.set(item.id, el);
+                else buttonRefs.current.delete(item.id);
+              }}
               className={`menubar-item ${isOpen ? 'menubar-item-open' : ''} ${
                 focusedIndex === index ? 'menubar-item-focused' : ''
               }`}
@@ -130,7 +180,7 @@ export function MenuBar({ items }: MenuBarProps) {
               onMouseEnter={() => handleMenuHover(item, index)}
               onKeyDown={(e) => handleMenuKeyDown(e, index)}
               role="menuitem"
-              aria-haspopup="true"
+              aria-haspopup={!!item.items?.length}
               aria-expanded={isOpen}
             >
               {parsed.before}
@@ -139,29 +189,24 @@ export function MenuBar({ items }: MenuBarProps) {
               )}
               {parsed.after}
             </button>
-            
-            {isOpen && item.items && (
-              <MenuDropdown
-                items={item.items}
-                onClose={closeMenu}
-                parentLabel={item.label}
-              />
-            )}
           </div>
         );
       })}
     </div>
+    {portaledDropdown}
+    </>
   );
 }
 
 interface MenuDropdownProps {
   items: MenuItem[];
   onClose: () => void;
+  onDismissAll: () => void;
   parentLabel: string;
   level?: number;
 }
 
-function MenuDropdown({ items, onClose, level = 0 }: MenuDropdownProps) {
+function MenuDropdown({ items, onClose, onDismissAll, level = 0 }: MenuDropdownProps) {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -181,7 +226,7 @@ function MenuDropdown({ items, onClose, level = 0 }: MenuDropdownProps) {
       setOpenSubmenuId(openSubmenuId === item.id ? null : item.id);
     } else if (item.onClick) {
       item.onClick();
-      onClose();
+      onDismissAll();
     }
   };
 
@@ -296,6 +341,7 @@ function MenuDropdown({ items, onClose, level = 0 }: MenuDropdownProps) {
                 }
               }}
               disabled={item.disabled}
+              title={item.disabled ? item.disabledReason || "Not available" : undefined}
               role="menuitem"
               aria-haspopup={hasSubmenu}
               aria-expanded={isOpen}
@@ -322,6 +368,7 @@ function MenuDropdown({ items, onClose, level = 0 }: MenuDropdownProps) {
               <MenuDropdown
                 items={item.items!}
                 onClose={() => setOpenSubmenuId(null)}
+                onDismissAll={onDismissAll}
                 parentLabel={item.label}
                 level={level + 1}
               />

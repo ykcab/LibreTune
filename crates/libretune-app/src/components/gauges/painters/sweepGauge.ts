@@ -1,27 +1,24 @@
 /** AsymmetricSweepGauge — curved sweep gauge with glowing tip and warning zones. */
 
 import { tsColorToHex } from '../../dashboards/dashTypes';
-import { lightenColor, darkenColor } from '../drawUtils';
+import { lightenColor, darkenColor, drawHudPanel, applyNeonGlow, clearNeonGlow, HUD_COLORS, isFramelessGauge } from '../drawUtils';
 import type { Painter } from './types';
 
 export const sweepGaugePainter: Painter = (pctx) => {
   const { ctx, width, height, value, config, getValueColor, getFontSpec } = pctx;
 
-  // Allow configurable pivot offset (for TunerStudio compatibility), default to center
   const pivotOffsetX = config.needle_pivot_offset_x ?? 0;
   const pivotOffsetY = config.needle_pivot_offset_y ?? 0;
   const centerX = width / 2 + pivotOffsetX;
   const centerY = height * 0.58 + pivotOffsetY;
   const radius = Math.min(width, height * 1.15) / 2 - 8;
-  const arcWidth = Math.max(16, radius * 0.18);
+  const arcWidth = Math.max(14, radius * 0.16);
 
-  // Background with gradient
-  const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
-  const bgHex = tsColorToHex(config.back_color);
-  bgGradient.addColorStop(0, lightenColor(bgHex, 8));
-  bgGradient.addColorStop(1, darkenColor(bgHex, 12));
-  ctx.fillStyle = bgGradient;
-  ctx.fillRect(0, 0, width, height);
+  if (!isFramelessGauge(config.back_color)) {
+    drawHudPanel(ctx, 0, 0, width, height, 3);
+  } else {
+    ctx.clearRect(0, 0, width, height);
+  }
 
   // Calculate angles - use actual values, only fallback if truly undefined
   const startDeg = config.sweep_begin_degree ?? config.start_angle ?? 210;
@@ -37,23 +34,18 @@ export const sweepGaugePainter: Painter = (pctx) => {
     ? startAngle - percent * sweepAngle
     : startAngle + percent * sweepAngle;
 
-  // Arc track background with inset effect
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetX = 2;
-  ctx.shadowOffsetY = 2;
-
-  const trackGradient = ctx.createLinearGradient(0, centerY - radius, 0, centerY + radius);
-  trackGradient.addColorStop(0, '#252525');
-  trackGradient.addColorStop(0.5, '#404040');
-  trackGradient.addColorStop(1, '#303030');
+  // Arc track — dark HUD channel
   ctx.beginPath();
   ctx.arc(centerX, centerY, radius, startAngle, endAngle, ccw);
-  ctx.strokeStyle = trackGradient;
+  ctx.strokeStyle = HUD_COLORS.track;
   ctx.lineWidth = arcWidth;
   ctx.lineCap = 'round';
   ctx.stroke();
-  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = HUD_COLORS.trackEdge;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, startAngle, endAngle, ccw);
+  ctx.stroke();
 
   // Warning/critical zones
   if (config.high_warning !== null) {
@@ -100,11 +92,11 @@ export const sweepGaugePainter: Painter = (pctx) => {
     ctx.strokeStyle = fillGradient;
     ctx.lineWidth = arcWidth - 4;
     ctx.lineCap = 'round';
+    applyNeonGlow(ctx, valueHex, 12);
     ctx.stroke();
+    clearNeonGlow(ctx);
 
-    // Glow effect at tip
-    ctx.shadowColor = valueHex;
-    ctx.shadowBlur = 8;
+    applyNeonGlow(ctx, valueHex, 10);
     ctx.beginPath();
     ctx.arc(
       centerX + Math.cos(valueAngle) * radius,
@@ -115,7 +107,7 @@ export const sweepGaugePainter: Painter = (pctx) => {
     );
     ctx.fillStyle = lightenColor(valueHex, 20);
     ctx.fill();
-    ctx.shadowColor = 'transparent';
+    clearNeonGlow(ctx);
   }
 
   // Tick marks

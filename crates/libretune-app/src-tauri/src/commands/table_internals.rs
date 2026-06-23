@@ -1,6 +1,6 @@
 //! TableData struct and internal table helpers (extracted from lib.rs).
 
-use crate::{clean_axis_label, AppState};
+use crate::{infer_z_output_channel, resolve_table_axis_label, AppState};
 use libretune_core::ini::Constant;
 use libretune_core::tune::{TuneFile, TuneValue};
 use serde::Serialize;
@@ -18,6 +18,8 @@ pub(crate) struct TableData {
     pub x_output_channel: Option<String>,
     /// Output channel name for Y-axis (used for live cell highlighting)
     pub y_output_channel: Option<String>,
+    /// Output channel name for Z/table result (live output value readout)
+    pub z_output_channel: Option<String>,
 }
 
 // Tune health/anomaly/predicted_fills/dyno_overlay extracted to commands/tune_health.rs
@@ -118,6 +120,15 @@ pub(crate) async fn get_table_data_internal(
     };
     let z_flat = read_const_values(&z_const, tune_guard.as_ref(), endianness);
 
+    let (x_axis_name, y_axis_name) = {
+        let def_guard = state.definition.lock().await;
+        let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+        (
+            resolve_table_axis_label(&x_label, def, tune_guard.as_ref(), None),
+            resolve_table_axis_label(&y_label, def, tune_guard.as_ref(), None),
+        )
+    };
+
     drop(tune_guard);
 
     // Reshape Z values into 2D array [y][x]
@@ -134,16 +145,19 @@ pub(crate) async fn get_table_data_internal(
         z_values.push(row);
     }
 
+    let z_output_channel = infer_z_output_channel(&x_output_channel);
+
     Ok(TableData {
         name: table_name_out,
         title: table_title,
         x_bins,
         y_bins,
         z_values,
-        x_axis_name: clean_axis_label(&x_label),
-        y_axis_name: clean_axis_label(&y_label),
+        x_axis_name,
+        y_axis_name,
         x_output_channel,
         y_output_channel,
+        z_output_channel,
     })
 }
 
@@ -155,9 +169,11 @@ pub(crate) async fn update_table_z_values_internal(
 ) -> Result<(), String> {
     let mut conn_guard = state.connection.lock().await;
     let def_guard = state.definition.lock().await;
-    let mut cache_guard = state.tune_cache.lock().await;
 
     let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+    crate::commands::tune_persist::ensure_tune_cache(state, def).await;
+
+    let mut cache_guard = state.tune_cache.lock().await;
 
     let table = def
         .get_table_by_name_or_map(table_name)
@@ -191,30 +207,23 @@ pub(crate) async fn update_table_z_values_internal(
             .write_to_bytes(&mut raw_data, offset, raw_val, def.endianness);
     }
 
-    // Write to TuneCache if available
     if let Some(cache) = cache_guard.as_mut() {
-        if cache.write_bytes(constant.page, constant.offset, &raw_data) {
-            // Also update TuneFile in memory
-            let mut tune_guard = state.current_tune.lock().await;
-            if let Some(tune) = tune_guard.as_mut() {
-                let page_data = tune.pages.entry(constant.page).or_insert_with(|| {
-                    vec![
-                        0u8;
-                        def.page_sizes
-                            .get(constant.page as usize)
-                            .copied()
-                            .unwrap_or(256) as usize
-                    ]
-                });
-                let start = constant.offset as usize;
-                let end = start + raw_data.len();
-                if end <= page_data.len() {
-                    page_data[start..end].copy_from_slice(&raw_data);
-                }
-            }
-            *state.tune_modified.lock().await = true;
+        cache.write_bytes(constant.page, constant.offset, &raw_data);
+    }
+
+    {
+        let mut tune_guard = state.current_tune.lock().await;
+        if let Some(tune) = tune_guard.as_mut() {
+            crate::commands::tune_persist::write_bytes_to_tune_pages(
+                tune,
+                def,
+                constant.page,
+                constant.offset,
+                &raw_data,
+            );
         }
     }
+    *state.tune_modified.lock().await = true;
 
     // Write to ECU if connected (optional)
     if let Some(conn) = conn_guard.as_mut() {
@@ -228,6 +237,12 @@ pub(crate) async fn update_table_z_values_internal(
             eprintln!("[WARN] Failed to write to ECU: {}", e);
         }
     }
+
+    drop(conn_guard);
+    drop(cache_guard);
+    drop(def_guard);
+
+    crate::commands::tune_persist::maybe_auto_save_project_tune(state).await;
 
     Ok(())
 }

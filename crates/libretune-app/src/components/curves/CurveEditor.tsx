@@ -12,6 +12,7 @@ import TsGauge from '../gauges/TsGauge';
 import { TsGaugeConfig } from '../dashboards/dashTypes';
 import { valueToHeatmapColor } from '../../utils/heatmapColors';
 import { useChannelValue } from '../../stores/realtimeStore';
+import { buildAxisTickValues, safeAxisRange } from './curveAxisUtils';
 import './CurveEditor.css';
 
 /** Simple gauge info from backend INI [GaugeConfigurations] */
@@ -132,26 +133,33 @@ export default function CurveEditor({
   onBack,
   menuLabel,
 }: CurveEditorProps) {
-  // Normalize data in case curve data is provided in table-shaped format (xAxis/zValues)
-  let data = rawData as CurveData & {
-    xAxis?: number[];
-    yAxis?: number[];
-    zValues?: number[][];
-    xLabel?: string;
-    yLabel?: string;
-  };
-  if (data && (!Array.isArray(data.x_bins) || data.x_bins.length === 0) && Array.isArray(data.xAxis)) {
-    const normalizedYBins = Array.isArray(data.y_bins)
-      ? data.y_bins
-      : (Array.isArray(data.zValues) ? (data.zValues[0] ?? []) : []);
-    data = {
-      ...data,
-      x_bins: data.xAxis,
-      y_bins: normalizedYBins,
-      x_label: data.x_label || data.xLabel || '',
-      y_label: data.y_label || data.yLabel || '',
+  const data = useMemo((): CurveData => {
+    const raw = rawData as CurveData & {
+      xAxis?: number[];
+      yAxis?: number[];
+      zValues?: number[][];
+      xLabel?: string;
+      yLabel?: string;
     };
-  }
+
+    if (
+      raw &&
+      (!Array.isArray(raw.x_bins) || raw.x_bins.length === 0) &&
+      Array.isArray(raw.xAxis)
+    ) {
+      const normalizedYBins = Array.isArray(raw.y_bins)
+        ? raw.y_bins
+        : (Array.isArray(raw.zValues) ? (raw.zValues[0] ?? []) : []);
+      return {
+        ...raw,
+        x_bins: raw.xAxis,
+        y_bins: normalizedYBins,
+        x_label: raw.x_label || raw.xLabel || '',
+        y_label: raw.y_label || raw.yLabel || '',
+      };
+    }
+    return raw;
+  }, [rawData]);
   // Determine if data is valid - used for conditional rendering after hooks
   const hasValidData = 
     data &&
@@ -187,12 +195,19 @@ export default function CurveEditor({
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Update local values when data changes
+  const resolvedGaugeConfig = useMemo(() => {
+    if (gaugeConfig) return gaugeConfig;
+    if (simpleGaugeInfo) return toTsGaugeConfig(simpleGaugeInfo);
+    return null;
+  }, [gaugeConfig, simpleGaugeInfo]);
+
+  // Update local values when curve data changes
+  const yBinsSignature = hasValidData ? data.y_bins.join(',') : '';
   useEffect(() => {
     if (hasValidData) {
       setLocalYBins([...data.y_bins]);
     }
-  }, [hasValidData, data?.y_bins]);
+  }, [hasValidData, data?.name, yBinsSignature]);
 
   // Click-outside handler for context menu
   useEffect(() => {
@@ -240,56 +255,62 @@ export default function CurveEditor({
 
   // Calculate axis bounds (respecting overrides)
   const xAxis = useMemo(() => {
-    // Guard against invalid data - use safe defaults
     if (!hasValidData || !data.x_bins || data.x_bins.length === 0) {
       return { min: 0, max: 100, step: 10 };
     }
-    
-    const base = data.x_axis 
+
+    const base = data.x_axis
       ? { min: data.x_axis[0], max: data.x_axis[1], step: data.x_axis[2] }
       : (() => {
           const min = Math.min(...data.x_bins);
           const max = Math.max(...data.x_bins);
-          return { min, max, step: getNiceStep(min, max) };
+          const { min: safeMin, max: safeMax } = safeAxisRange(min, max);
+          return { min: safeMin, max: safeMax, step: 10 };
         })();
-    
+
     if (!xAxisOverride.auto) {
-      return {
-        min: xAxisOverride.min ?? base.min,
-        max: xAxisOverride.max ?? base.max,
-        step: base.step
-      };
+      const { min: safeMin, max: safeMax } = safeAxisRange(
+        xAxisOverride.min ?? base.min,
+        xAxisOverride.max ?? base.max,
+      );
+      return { min: safeMin, max: safeMax, step: base.step };
     }
     return base;
-  }, [hasValidData, data?.x_axis, data?.x_bins, xAxisOverride]);
+  }, [hasValidData, data.x_axis, data.x_bins, xAxisOverride]);
 
   const yAxis = useMemo(() => {
-    // Guard against invalid data - use safe defaults
     if (!hasValidData || !localYBins || localYBins.length === 0) {
       return { min: 0, max: 100, step: 10 };
     }
-    
+
     const yMin = Math.min(...localYBins);
     const yMax = Math.max(...localYBins);
     const dataPadding = (yMax - yMin) * 0.1 || 0.5;
-    
-    const base = data.y_axis 
-      ? { min: data.y_axis[0], max: data.y_axis[1], step: data.y_axis[2] }
+
+    const base = data.y_axis
+      ? (() => {
+          const { min: safeMin, max: safeMax } = safeAxisRange(
+            data.y_axis[0],
+            data.y_axis[1],
+            Math.max(Math.abs(data.y_axis[1] - data.y_axis[0]), 1),
+          );
+          return { min: safeMin, max: safeMax, step: data.y_axis[2] };
+        })()
       : (() => {
           const min = yMin - dataPadding;
           const max = yMax + dataPadding;
           return { min, max, step: getNiceStep(min, max) };
         })();
-    
+
     if (!yAxisOverride.auto) {
-      return {
-        min: yAxisOverride.min ?? base.min,
-        max: yAxisOverride.max ?? base.max,
-        step: base.step
-      };
+      const { min: safeMin, max: safeMax } = safeAxisRange(
+        yAxisOverride.min ?? base.min,
+        yAxisOverride.max ?? base.max,
+      );
+      return { min: safeMin, max: safeMax, step: base.step };
     }
     return base;
-  }, [hasValidData, data?.y_axis, localYBins, yAxisOverride]);
+  }, [hasValidData, data.y_axis, localYBins, yAxisOverride, getNiceStep]);
 
   // Scale functions
   const scaleX = useCallback((x: number) => {
@@ -311,41 +332,26 @@ export default function CurveEditor({
   // Generate grid lines with limited labels for readability
   const gridLines = useMemo(() => {
     const lines: { x1: number; y1: number; x2: number; y2: number; label?: string; isAxis?: boolean }[] = [];
-    
-    // X-axis: INI step value is the number of divisions, not the step size
-    // Limit to ~7 labels max for readability
-    const xRange = xAxis.max - xAxis.min;
-    const xDivisions = Math.min(xAxis.step || 10, 10); // step is actually division count
-    const xStep = xRange / xDivisions;
-    
-    // Calculate a nice round step value
-    const xNiceStep = Math.ceil(xStep / 10) * 10 || xStep; // Round to nearest 10
-    const xLabelStep = xRange / Math.min(7, Math.ceil(xRange / xNiceStep));
-    
-    for (let x = xAxis.min; x <= xAxis.max + 0.001; x += xLabelStep) {
-      const roundedX = Math.round(x);
+
+    for (const x of buildAxisTickValues(xAxis.min, xAxis.max)) {
+      const roundedX = Math.round(x * 1000) / 1000;
       lines.push({
         x1: scaleX(roundedX), y1: padding.top,
         x2: scaleX(roundedX), y2: chartHeight - padding.bottom,
         label: roundedX.toFixed(0),
-        isAxis: roundedX === xAxis.min
+        isAxis: Math.abs(roundedX - xAxis.min) < 0.001,
       });
     }
-    
-    // Y-axis: Similar treatment - step is division count
-    const yRange = yAxis.max - yAxis.min;
-    const yDivisions = Math.min(yAxis.step || 10, 10);
-    const yLabelStep = yRange / yDivisions;
-    
-    for (let y = yAxis.min; y <= yAxis.max + 0.001; y += yLabelStep) {
+
+    for (const y of buildAxisTickValues(yAxis.min, yAxis.max)) {
       lines.push({
         x1: padding.left, y1: scaleY(y),
         x2: chartWidth - padding.right, y2: scaleY(y),
         label: y.toFixed(2),
-        isAxis: Math.abs(y - yAxis.min) < 0.001
+        isAxis: Math.abs(y - yAxis.min) < 0.001,
       });
     }
-    
+
     return lines;
   }, [xAxis, yAxis, scaleX, scaleY, chartWidth, chartHeight, padding]);
 
@@ -648,8 +654,6 @@ Suggestion: {errorInfo.suggestion}
   // Gauge value from store
   const gaugeValue = xOutputChannelValue ?? 0;
 
-  console.log(`[CurveEditor] Rendering curve '${data.name}' in ${embedded ? 'embedded' : 'standalone'} mode with ${data.x_bins.length} points`);
-
   return (
     <div 
       className={`curve-editor ${embedded ? 'embedded' : 'standalone'}`}
@@ -837,10 +841,10 @@ Suggestion: {errorInfo.suggestion}
         {embedded ? (
           <div className="curve-bottom-section">
             {/* Gauge */}
-            {(gaugeConfig || simpleGaugeInfo) && (
+            {(resolvedGaugeConfig) && (
               <div className="curve-gauge-container">
                 <TsGauge 
-                  config={gaugeConfig || toTsGaugeConfig(simpleGaugeInfo!)} 
+                  config={resolvedGaugeConfig} 
                   value={gaugeValue} 
                 />
               </div>
