@@ -4,6 +4,7 @@ import { DialogComponentRenderer } from './PanelComponents';
 import {
   applyTableSettingsLayout,
   applyConfigLiveStateLayout,
+  groupDialogComponents,
   isHardwareTestDialog,
   isReferenceGaugePanel,
   organizeComponents,
@@ -62,6 +63,20 @@ export function DialogComponentsLayout({
     />
   );
 
+  const renderGrouped = (components: DialogComponent[], keyPrefix: string) =>
+    groupDialogComponents(components).map((group, i) => {
+      if (group.kind === 'command-row') {
+        return (
+          <div key={`${keyPrefix}-cmd-row-${i}`} className="command-button-row">
+            {group.components.map((comp, j) =>
+              renderComponent(comp, `${keyPrefix}-cmd-${i}-${j}`),
+            )}
+          </div>
+        );
+      }
+      return renderComponent(group.component, `${keyPrefix}-${i}`);
+    });
+
   const hardwareTestLayout = isHardwareTestDialog(dialogName);
 
   return (
@@ -70,9 +85,7 @@ export function DialogComponentsLayout({
         const hasPositioned = row.west.length > 0 || row.east.length > 0;
 
         if (!hasPositioned) {
-          const items = row.unpositioned.map((comp, i) =>
-            renderComponent(comp, `unpositioned-${rowIndex}-${i}`),
-          );
+          const items = renderGrouped(row.unpositioned, `unpositioned-${rowIndex}`);
           if (hardwareTestLayout && items.length > 0) {
             const { compact, auxiliary } = partitionHardwareTestComponents(row.unpositioned);
             const wrapCell = (comp: DialogComponent, key: string) => {

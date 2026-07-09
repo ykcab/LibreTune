@@ -86,7 +86,7 @@ export function IndicatorPanelRenderer({
     return {
       display: 'grid',
       gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
-      gap: '8px',
+      gap: statusTiles ? '0' : '8px',
     };
   }, [statusTiles, columns, panel.indicators.length]);
 

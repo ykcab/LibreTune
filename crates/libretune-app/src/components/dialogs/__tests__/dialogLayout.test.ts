@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyTableSettingsLayout,
   applyConfigLiveStateLayout,
+  groupDialogComponents,
   inferLiveStateGateExpression,
   isConfigLiveStateDialog,
   isGppwmLiveChannel,
@@ -100,6 +101,21 @@ describe('config + live-state dialog layout', () => {
       unpositioned: [],
     };
     expect(rowHasDualSettingsSplit(row)).toBe(false);
+  });
+
+  it('groups consecutive command buttons for side-by-side layout', () => {
+    const components = [
+      { type: 'Field' as const, name: 'enablePumpPrime', label: 'Enable pump prime' },
+      { type: 'CommandButton' as const, label: 'Start Pump Prime', command: 'cmd_pump_prime_start' },
+      { type: 'CommandButton' as const, label: 'Cancel Pump Prime', command: 'cmd_pump_prime_cancel' },
+    ];
+    expect(groupDialogComponents(components)).toEqual([
+      { kind: 'single', component: components[0] },
+      {
+        kind: 'command-row',
+        components: [components[1], components[2]],
+      },
+    ]);
   });
 });
 

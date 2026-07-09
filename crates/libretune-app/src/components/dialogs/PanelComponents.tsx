@@ -28,7 +28,24 @@ import { DialogGaugeStack } from './fields/DialogGauge';
 import { CommandButton } from './fields/CommandButton';
 import DialogField from './fields/DialogField';
 import { RuntimeValueReadout } from './fields/RuntimeValueReadout';
-import { isUserTableLiveChannel, isGppwmLiveChannel, isCommandButtonPanel, inferLiveStateGateExpression } from './dialogLayout';
+import { isUserTableLiveChannel, isGppwmLiveChannel, isCommandButtonPanel, inferLiveStateGateExpression, groupDialogComponents } from './dialogLayout';
+
+function renderGroupedComponents(
+  components: DialogComponent[],
+  render: (comp: DialogComponent, key: string) => React.ReactNode,
+  keyPrefix: string,
+): React.ReactNode[] {
+  return groupDialogComponents(components).map((group, i) => {
+    if (group.kind === 'command-row') {
+      return (
+        <div key={`${keyPrefix}-cmd-row-${i}`} className="command-button-row">
+          {group.components.map((comp, j) => render(comp, `${keyPrefix}-cmd-${i}-${j}`))}
+        </div>
+      );
+    }
+    return render(group.component, `${keyPrefix}-${i}`);
+  });
+}
 
 export const RecursivePanel = memo(function RecursivePanel({
   name,
@@ -304,9 +321,17 @@ export const RecursivePanel = memo(function RecursivePanel({
         <div
           className={`panel-content${multiColumn ? ' panel-content--multi' : ''}${commandGrid ? ' panel-content--command-grid' : ''}${testOtherPanel ? ' panel-content--test-other' : ''}`}
         >
-          {definition.components.map((comp, i) => (
-            <DialogComponentRenderer key={i} comp={comp} openTable={openTable} context={context} onUpdate={onUpdate} onFieldFocus={onFieldFocus} showAllHelpIcons={showAllHelpIcons} />
-          ))}
+          {renderGroupedComponents(definition.components, (comp, key) => (
+            <DialogComponentRenderer
+              key={key}
+              comp={comp}
+              openTable={openTable}
+              context={context}
+              onUpdate={onUpdate}
+              onFieldFocus={onFieldFocus}
+              showAllHelpIcons={showAllHelpIcons}
+            />
+          ), name)}
         </div>
       </div>
     );

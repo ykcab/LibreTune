@@ -115,10 +115,9 @@
   container-type: inline-size;
 }
 
-/* Live-state side panel (WMI, launch control, etc.) — config left, compact readouts right.
-   Applied only via dialog-row-container--config-live (not :has(.readout-panel)). */
+/* Live-state side panel (WMI, launch control, etc.) — equal split: settings | live state. */
 .dialog-view .dialog-row-container--config-live {
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 340px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .dialog-view .dialog-row-container--config-live .dialog-column:last-child {
@@ -129,6 +128,7 @@
 
 .dialog-view .dialog-row-container--config-live .nested-panel {
   max-width: 100%;
+  width: 100%;
 }
 
 .dialog-view .dialog-row-container .dialog-column:not(:has(*)) {
@@ -414,8 +414,29 @@
 .dialog-view .panel-content--multi > .dialog-label.dialog-link,
 .dialog-view .panel-content--multi > .embedded-graph-placeholder,
 .dialog-view .panel-content--multi > .command-button-field,
+.dialog-view .panel-content--multi > .command-button-row,
 .dialog-view .panel-content--multi > .runtime-value-row {
   grid-column: 1 / -1;
+}
+
+.dialog-view .command-button-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.dialog-view .command-button-row .command-button-field {
+  padding: 0;
+  min-width: 0;
+}
+
+.dialog-view .command-button-row .command-button {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
 }
 
 .dialog-view .panel-content--multi .settings-field {
@@ -596,6 +617,35 @@
 
 .dialog-view .panel-content .indicator-panel--tiles {
   border-bottom: 1px solid var(--border-subtle);
+}
+
+/* WMI / launch-control live state — flat segmented status bar */
+.dialog-view .dialog-row-container--config-live .indicator-panel--tiles {
+  padding: 0;
+}
+
+.dialog-view .dialog-row-container--config-live .indicator-panel-grid {
+  gap: 0;
+}
+
+.dialog-view .dialog-row-container--config-live .indicator-tile {
+  min-height: 42px;
+  padding: 10px 8px;
+  border: none;
+  border-right: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.dialog-view .dialog-row-container--config-live .indicator-tile:last-child {
+  border-right: none;
+}
+
+.dialog-view .dialog-row-container--config-live .indicator-tile-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .dialog-view .panel-content .readout-panel {

@@ -298,3 +298,31 @@ export function isCommandButtonPanel(components: DialogComponent[]): boolean {
   if (interactive.length === 0) return false;
   return interactive.every((c) => c.type === 'CommandButton');
 }
+
+export type DialogComponentGroup =
+  | { kind: 'single'; component: DialogComponent }
+  | { kind: 'command-row'; components: DialogComponent[] };
+
+/** Group consecutive command buttons for side-by-side layout (e.g. pump prime start/cancel). */
+export function groupDialogComponents(components: DialogComponent[]): DialogComponentGroup[] {
+  const groups: DialogComponentGroup[] = [];
+  let i = 0;
+  while (i < components.length) {
+    if (components[i].type === 'CommandButton') {
+      const run: DialogComponent[] = [];
+      while (i < components.length && components[i].type === 'CommandButton') {
+        run.push(components[i]);
+        i++;
+      }
+      if (run.length >= 2) {
+        groups.push({ kind: 'command-row', components: run });
+      } else {
+        run.forEach((c) => groups.push({ kind: 'single', component: c }));
+      }
+    } else {
+      groups.push({ kind: 'single', component: components[i] });
+      i++;
+    }
+  }
+  return groups;
+}

@@ -84,9 +84,8 @@ export function CommandButton({
     executeCommand();
   };
 
-  const isAbortAction =
-    comp.label?.toLowerCase().includes('abort') ||
-    comp.command?.toLowerCase().includes('cancel');
+  // Hardware-test panels only — pump-prime start/cancel stay inline in a pair.
+  const isAbortAction = /\babort\s*test\b/i.test(comp.label ?? '');
 
   return (
     <>
