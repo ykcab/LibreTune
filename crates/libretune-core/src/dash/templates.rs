@@ -1158,6 +1158,7 @@ pub fn create_tuning_dashboard() -> DashFile {
 // ---------------------------------------------------------------------------
 
 /// Compact live-value tile for the telemetry grid.
+#[derive(Clone)]
 struct LogStatSpec {
     id: &'static str,
     title: &'static str,
@@ -1174,6 +1175,7 @@ struct LogStatSpec {
 }
 
 /// Single-channel scrolling sparkline panel.
+#[derive(Clone)]
 struct LogSparkSpec {
     id: &'static str,
     title: &'static str,
@@ -1261,6 +1263,150 @@ fn log_series_attrs(extra: &[LogSeriesEntry]) -> std::collections::BTreeMap<Stri
         attrs.insert(format!("lt_series{n}_max"), entry.max.to_string());
     }
     attrs
+}
+
+const LT_TRANSPARENT: TsColor = TsColor {
+    alpha: 0,
+    red: 0,
+    green: 0,
+    blue: 0,
+};
+
+fn log_plain_stat(spec: LogStatSpec) -> DashComponent {
+    let mut attrs = std::collections::BTreeMap::new();
+    attrs.insert("lt_plain_text".to_string(), "1".to_string());
+    DashComponent::Gauge(Box::new(GaugeConfig {
+        id: spec.id.to_string(),
+        title: spec.title.to_string(),
+        units: spec.units.to_string(),
+        output_channel: spec.channel.to_string(),
+        min: spec.min,
+        max: spec.max,
+        value_digits: spec.digits,
+        gauge_painter: GaugePainter::TelemetryStat,
+        relative_x: spec.x,
+        relative_y: spec.y,
+        relative_width: spec.w,
+        relative_height: spec.h,
+        back_color: LT_TRANSPARENT,
+        font_color: spec.color.clone(),
+        needle_color: spec.color,
+        trim_color: LT_LOG_GRAY,
+        border_width: 0,
+        extra_attrs: attrs,
+        ..Default::default()
+    }))
+}
+
+fn plain_at(cluster: &mut GaugeCluster, mut spec: LogStatSpec, x: f64, y: f64, w: f64, h: f64) {
+    spec.x = x;
+    spec.y = y;
+    spec.w = w;
+    spec.h = h;
+    cluster.components.push(log_plain_stat(spec));
+}
+
+fn log_flat_chart(spec: LogSparkSpec) -> DashComponent {
+    DashComponent::Gauge(Box::new(GaugeConfig {
+        id: spec.id.to_string(),
+        title: spec.title.to_string(),
+        units: spec.units.to_string(),
+        output_channel: spec.channel.to_string(),
+        min: spec.min,
+        max: spec.max,
+        value_digits: spec.digits,
+        gauge_painter: GaugePainter::LineGraph,
+        relative_x: spec.x,
+        relative_y: spec.y,
+        relative_width: spec.w,
+        relative_height: spec.h,
+        back_color: LT_TRANSPARENT,
+        font_color: spec.color.clone(),
+        needle_color: spec.color,
+        trim_color: LT_LOG_GRAY,
+        border_width: 0,
+        show_history: true,
+        ..Default::default()
+    }))
+}
+
+fn push_plain_pairs(
+    cluster: &mut GaugeCluster,
+    col_x: f64,
+    y0: f64,
+    row_h: f64,
+    half_w: f64,
+    gap: f64,
+    pairs: &[(LogStatSpec, LogStatSpec)],
+) {
+    for (i, (left, right)) in pairs.iter().enumerate() {
+        let y = y0 + row_h * i as f64;
+        plain_at(cluster, left.clone(), col_x, y, half_w, row_h - 0.004);
+        plain_at(
+            cluster,
+            right.clone(),
+            col_x + half_w + gap,
+            y,
+            half_w,
+            row_h - 0.004,
+        );
+    }
+}
+
+fn spark_spec(
+    id: &'static str,
+    title: &'static str,
+    channel: &'static str,
+    units: &'static str,
+    min: f64,
+    max: f64,
+    digits: i32,
+    color: TsColor,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> LogSparkSpec {
+    LogSparkSpec {
+        id,
+        title,
+        channel,
+        units,
+        min,
+        max,
+        digits,
+        x,
+        y,
+        w,
+        h,
+        color,
+    }
+}
+
+fn cc_stat(
+    id: &'static str,
+    title: &'static str,
+    channel: &'static str,
+    units: &'static str,
+    min: f64,
+    max: f64,
+    digits: i32,
+    color: TsColor,
+) -> LogStatSpec {
+    LogStatSpec {
+        id,
+        title,
+        channel,
+        units,
+        min,
+        max,
+        digits,
+        x: 0.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+        color,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2444,6 +2590,257 @@ pub fn create_telemetry_compact_dashboard() -> DashFile {
     dash
 }
 
+// ---------------------------------------------------------------------------
+// Command Center — Link ECU live dashboard layout
+// ---------------------------------------------------------------------------
+
+fn command_center_shell() -> DashFile {
+    DashFile {
+        bibliography: Bibliography {
+            author: "LibreTune".to_string(),
+            company: "LibreTune Project".to_string(),
+            write_date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+        },
+        version_info: VersionInfo {
+            file_format: "3.0".to_string(),
+            firmware_signature: None,
+        },
+        gauge_cluster: GaugeCluster {
+            anti_aliasing: true,
+            force_aspect: true,
+            force_aspect_width: 16.0,
+            force_aspect_height: 9.0,
+            cluster_background_color: LT_LOG_BG,
+            background_dither_color: None,
+            cluster_background_image_file_name: None,
+            cluster_background_image_style: BackgroundStyle::Stretch,
+            embedded_images: Vec::new(),
+            components: Vec::new(),
+            cluster_layout: None,
+            enabled_condition: None,
+            extra_attrs: std::collections::BTreeMap::new(),
+        },
+        additional_clusters: Vec::new(),
+        extra_attrs: std::collections::BTreeMap::new(),
+    }
+}
+
+/// Bump when the built-in layout changes so existing installs pick up the new file.
+pub const COMMAND_CENTER_TEMPLATE_VERSION: &str = "4";
+
+/// Link ECU live dashboard: top ticker, 3 large trends, paired text grid, sparkline wall.
+pub fn create_command_center_dashboard() -> DashFile {
+    let mut dash = command_center_shell();
+    let cluster = &mut dash.gauge_cluster;
+    cluster.extra_attrs.insert(
+        "lt_template_version".to_string(),
+        COMMAND_CENTER_TEMPLATE_VERSION.to_string(),
+    );
+
+    // --- Top status ticker (10 channels, plain text) -------------------------
+    const TICKER_Y: f64 = 0.008;
+    const TICKER_H: f64 = 0.036;
+    const TICKER_W: f64 = 0.096;
+    let ticker = [
+        cc_stat("cc_tk_rpm", "RPM", "rpm", "", 0.0, 9000.0, 0, LT_ACCENT_GREEN),
+        cc_stat("cc_tk_map", "MAP", "map", "kPa", 0.0, 250.0, 0, LT_LOG_CYAN),
+        cc_stat("cc_tk_tps", "TPS", "tps", "%", 0.0, 100.0, 0, LT_LOG_ORANGE),
+        cc_stat("cc_tk_spd", "SPD", "speed", "km/h", 0.0, 260.0, 0, LT_LOG_WHITE),
+        cc_stat("cc_tk_afr", "AFR", "afr", ":1", 10.0, 20.0, 1, LT_LOG_PURPLE),
+        cc_stat("cc_tk_lam", "LAM", "lambda", "λ", 0.7, 1.3, 3, LT_LOG_GREEN),
+        cc_stat("cc_tk_clt", "CLT", "coolant", "°C", -20.0, 120.0, 0, LT_LOG_ORANGE),
+        cc_stat("cc_tk_iat", "IAT", "iat", "°C", -20.0, 80.0, 0, LT_LOG_YELLOW),
+        cc_stat("cc_tk_bat", "BATT", "battery", "V", 10.0, 16.0, 1, LT_ACCENT_GREEN),
+        cc_stat("cc_tk_dty", "DUTY", "dutyCycle", "%", 0.0, 100.0, 0, LT_LOG_WHITE),
+    ];
+    for (i, spec) in ticker.iter().enumerate() {
+        plain_at(
+            cluster,
+            spec.clone(),
+            0.012 + TICKER_W * i as f64,
+            TICKER_Y,
+            TICKER_W - 0.004,
+            TICKER_H,
+        );
+    }
+
+    // --- Three large trend charts (ENGINE LIVE / LAMBDA / PRESSURE) ------------
+    const TREND_Y: f64 = 0.052;
+    const TREND_H: f64 = 0.295;
+    const TREND_W: f64 = 0.313;
+    let trends = [
+        spark_spec(
+            "cc_tr_engine",
+            "ENGINE LIVE",
+            "rpm",
+            "",
+            0.0,
+            9000.0,
+            0,
+            LT_ACCENT_GREEN,
+            0.012,
+            TREND_Y,
+            TREND_W,
+            TREND_H,
+        ),
+        spark_spec(
+            "cc_tr_lambda",
+            "LAMBDA",
+            "lambda",
+            "λ",
+            0.7,
+            1.3,
+            3,
+            LT_LOG_PURPLE,
+            0.343,
+            TREND_Y,
+            TREND_W,
+            TREND_H,
+        ),
+        spark_spec(
+            "cc_tr_press",
+            "PRESSURE",
+            "map",
+            "kPa",
+            0.0,
+            250.0,
+            0,
+            LT_LOG_ORANGE,
+            0.674,
+            TREND_Y,
+            TREND_W,
+            TREND_H,
+        ),
+    ];
+    for spec in trends {
+        cluster.components.push(log_flat_chart(spec));
+    }
+
+    // --- Middle paired text grid (3 columns × 4 rows) ------------------------
+    const GRID_Y: f64 = 0.358;
+    const GRID_ROW_H: f64 = 0.048;
+    const HALF_W: f64 = 0.145;
+    const PAIR_GAP: f64 = 0.012;
+
+    push_plain_pairs(
+        cluster,
+        0.018,
+        GRID_Y,
+        GRID_ROW_H,
+        HALF_W,
+        PAIR_GAP,
+        &[
+            (
+                cc_stat("cc_g_rpm", "RPM", "rpm", "", 0.0, 9000.0, 0, LT_ACCENT_GREEN),
+                cc_stat("cc_g_map", "MAP", "map", "kPa", 0.0, 250.0, 0, LT_LOG_CYAN),
+            ),
+            (
+                cc_stat("cc_g_tps", "TPS", "tps", "%", 0.0, 100.0, 0, LT_LOG_ORANGE),
+                cc_stat("cc_g_spd", "SPD", "speed", "km/h", 0.0, 260.0, 0, LT_LOG_WHITE),
+            ),
+            (
+                cc_stat("cc_g_adv", "ADV", "advance", "°", -10.0, 50.0, 1, LT_LOG_CYAN),
+                cc_stat("cc_g_bst", "BOOST", "boost", "kPa", 0.0, 300.0, 0, LT_LOG_ORANGE),
+            ),
+            (
+                cc_stat("cc_g_baro", "BARO", "baro", "kPa", 70.0, 110.0, 0, LT_LOG_GRAY),
+                cc_stat("cc_g_sync", "SYNC", "sync", "", 0.0, 1.0, 0, LT_ACCENT_GREEN),
+            ),
+        ],
+    );
+    push_plain_pairs(
+        cluster,
+        0.343,
+        GRID_Y,
+        GRID_ROW_H,
+        HALF_W,
+        PAIR_GAP,
+        &[
+            (
+                cc_stat("cc_g_afr", "AFR", "afr", ":1", 10.0, 20.0, 1, LT_LOG_PURPLE),
+                cc_stat("cc_g_lam", "LAM", "lambda", "λ", 0.7, 1.3, 3, LT_LOG_GREEN),
+            ),
+            (
+                cc_stat("cc_g_ve", "VE", "ve", "%", 0.0, 150.0, 0, LT_LOG_YELLOW),
+                cc_stat("cc_g_pw", "PW", "pulseWidth", "ms", 0.0, 25.0, 2, LT_LOG_BLUE),
+            ),
+            (
+                cc_stat("cc_g_corr", "CORR", "correction", "%", 50.0, 150.0, 0, LT_LOG_GRAY),
+                cc_stat("cc_g_tgt", "TGT", "afrTarget", ":1", 10.0, 20.0, 1, LT_LOG_PURPLE),
+            ),
+            (
+                cc_stat("cc_g_duty", "DUTY", "dutyCycle", "%", 0.0, 100.0, 0, LT_LOG_WHITE),
+                cc_stat("cc_g_fuel", "FUEL", "fuelLevel", "%", 0.0, 100.0, 0, LT_LOG_YELLOW),
+            ),
+        ],
+    );
+    push_plain_pairs(
+        cluster,
+        0.668,
+        GRID_Y,
+        GRID_ROW_H,
+        HALF_W,
+        PAIR_GAP,
+        &[
+            (
+                cc_stat("cc_g_clt", "CLT", "coolant", "°C", -20.0, 120.0, 0, LT_LOG_ORANGE),
+                cc_stat("cc_g_iat", "IAT", "iat", "°C", -20.0, 80.0, 0, LT_LOG_YELLOW),
+            ),
+            (
+                cc_stat("cc_g_oilt", "OIL T", "oilTemp", "°C", 0.0, 150.0, 0, LT_LOG_RED),
+                cc_stat("cc_g_oilp", "OIL P", "oilPressure", "kPa", 0.0, 700.0, 0, LT_LOG_BLUE),
+            ),
+            (
+                cc_stat("cc_g_egt", "EGT", "egt", "°C", 0.0, 1000.0, 0, LT_LOG_RED),
+                cc_stat("cc_g_bat", "BATT", "battery", "V", 10.0, 16.0, 1, LT_ACCENT_GREEN),
+            ),
+            (
+                cc_stat("cc_g_bst2", "BOOST", "boost", "kPa", 0.0, 300.0, 0, LT_LOG_ORANGE),
+                cc_stat("cc_g_flvl", "FUEL LVL", "fuelLevel", "%", 0.0, 100.0, 0, LT_LOG_YELLOW),
+            ),
+        ],
+    );
+
+    // --- Bottom sparkline wall (2 × 6) -----------------------------------------
+    const SPARK_Y1: f64 = 0.575;
+    const SPARK_Y2: f64 = 0.785;
+    const SPARK_H: f64 = 0.195;
+    const SPARK_W: f64 = 0.155;
+    const SPARK_X0: f64 = 0.012;
+    const SPARK_DX: f64 = 0.163;
+
+    let row1 = [
+        ("cc_sp_rpm", "RPM", "rpm", "", 0.0, 9000.0, 0, LT_ACCENT_GREEN),
+        ("cc_sp_map", "MAP", "map", "kPa", 0.0, 250.0, 0, LT_LOG_CYAN),
+        ("cc_sp_afr", "AFR", "afr", ":1", 10.0, 20.0, 1, LT_LOG_PURPLE),
+        ("cc_sp_lam", "LAM", "lambda", "λ", 0.7, 1.3, 3, LT_LOG_GREEN),
+        ("cc_sp_clt", "CLT", "coolant", "°C", -20.0, 120.0, 0, LT_LOG_ORANGE),
+        ("cc_sp_iat", "IAT", "iat", "°C", -20.0, 80.0, 0, LT_LOG_YELLOW),
+    ];
+    let row2 = [
+        ("cc_sp_tps", "TPS", "tps", "%", 0.0, 100.0, 0, LT_LOG_ORANGE),
+        ("cc_sp_spd", "SPD", "speed", "km/h", 0.0, 260.0, 0, LT_LOG_WHITE),
+        ("cc_sp_ve", "VE", "ve", "%", 0.0, 150.0, 0, LT_LOG_YELLOW),
+        ("cc_sp_pw", "PW", "pulseWidth", "ms", 0.0, 25.0, 2, LT_LOG_BLUE),
+        ("cc_sp_oilt", "OIL T", "oilTemp", "°C", 0.0, 150.0, 0, LT_LOG_RED),
+        ("cc_sp_bat", "BATT", "battery", "V", 10.0, 16.0, 1, LT_ACCENT_GREEN),
+    ];
+
+    for (i, (id, title, ch, units, min, max, digits, color)) in row1.iter().enumerate() {
+        cluster.components.push(log_flat_chart(spark_spec(
+            id, title, ch, units, *min, *max, *digits, color.clone(),
+            SPARK_X0 + SPARK_DX * i as f64, SPARK_Y1, SPARK_W, SPARK_H,
+        )));
+    }
+    for (i, (id, title, ch, units, min, max, digits, color)) in row2.iter().enumerate() {
+        cluster.components.push(log_flat_chart(spark_spec(
+            id, title, ch, units, *min, *max, *digits, color.clone(),
+            SPARK_X0 + SPARK_DX * i as f64, SPARK_Y2, SPARK_W, SPARK_H,
+        )));
+    }
+
+    dash
+}
 /// Backward-compatible alias — the old "F1 Telemetry" name pointed here.
 pub fn create_f1_telemetry_dashboard() -> DashFile {
     create_telemetry_live_dashboard()

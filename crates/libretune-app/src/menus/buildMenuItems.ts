@@ -206,6 +206,7 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
   toolItems.push({ id: "autotune", label: "&AutoTune", onClick: () => openTarget("autotune", "AutoTune"), disabled: !currentProject });
   if (caps?.has_datalog_entries || caps?.has_output_channels) {
     toolItems.push({ id: "datalog", label: "&Data Logging", onClick: () => openTarget("datalog", "Data Logging"), disabled: !currentProject });
+    toolItems.push({ id: "virtual-dyno", label: "&Virtual Dyno", onClick: () => openTarget("virtual-dyno", "Virtual Dyno"), disabled: !currentProject });
     toolItems.push({ id: "och-status", label: "&Output Channel Status", onClick: () => openTarget("och-status", "Output Channel Status"), disabled: !currentProject });
   }
   if (caps?.has_logger_definitions) {

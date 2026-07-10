@@ -3,6 +3,7 @@
 //! Records and plays back ECU real-time data.
 
 pub mod dyno;
+pub mod virtual_dyno;
 mod format;
 mod playback;
 mod recorder;
@@ -10,6 +11,10 @@ mod recorder;
 pub use format::LogFormat;
 pub use playback::LogPlayer;
 pub use recorder::DataLogger;
+pub use virtual_dyno::{
+    assess_vss_readiness, compute_virtual_dyno, resolve_speed_channel, tire_diameter_from_specs,
+    VirtualDynoProfile, VirtualDynoResult, VirtualDynoSample, VssReadiness,
+};
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

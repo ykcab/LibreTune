@@ -2,8 +2,9 @@
 
 use crate::paths::get_dashboards_dir;
 use libretune_core::dash::{
-    self, create_basic_dashboard, create_racing_dashboard, create_telemetry_compact_dashboard,
-    create_telemetry_live_dashboard, create_tuning_dashboard,
+    self, create_basic_dashboard, create_command_center_dashboard, create_racing_dashboard,
+    create_telemetry_compact_dashboard, create_telemetry_live_dashboard, create_tuning_dashboard,
+    COMMAND_CENTER_TEMPLATE_VERSION,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -300,6 +301,7 @@ fn default_dashboard_specs() -> Vec<(&'static str, DefaultDashBuilder)> {
             "Telemetry Compact.ltdash.xml",
             create_telemetry_compact_dashboard,
         ),
+        ("Command Center.ltdash.xml", create_command_center_dashboard),
     ]
 }
 
@@ -328,27 +330,49 @@ pub(crate) fn create_default_dashboard_files(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Additive, non-destructive version of [`create_default_dashboard_files`]:
-/// writes only the built-in defaults that don't already exist in `dir`,
-/// leaving any present (including user-edited copies) untouched. This lets
-/// newly-added built-in templates (e.g. a future 5th default) reach existing
-/// installs without wiping user customizations, unlike a full reset.
+/// Additive default seeding: writes missing built-ins and refreshes versioned
+/// templates (e.g. Command Center) when the layout changes.
 pub(crate) fn ensure_missing_default_dashboards(dir: &Path) -> Result<(), String> {
     let mut created = 0;
+    let mut refreshed = 0;
     for (file_name, builder) in default_dashboard_specs() {
-        if dir.join(file_name).exists() {
+        let path = dir.join(file_name);
+        if path.exists() && !built_in_dashboard_needs_refresh(file_name, &path) {
             continue;
         }
+        let existed = path.exists();
         write_default_dashboard(dir, file_name, &builder())?;
-        created += 1;
+        if existed {
+            refreshed += 1;
+        } else {
+            created += 1;
+        }
     }
-    if created > 0 {
+    if created > 0 || refreshed > 0 {
         println!(
-            "[ensure_missing_default_dashboards] Added {} missing default dashboard(s) in {:?}",
-            created, dir
+            "[ensure_missing_default_dashboards] Added {} / refreshed {} default dashboard(s) in {:?}",
+            created, refreshed, dir
         );
     }
     Ok(())
+}
+
+fn built_in_dashboard_needs_refresh(file_name: &str, path: &Path) -> bool {
+    if file_name == "Command Center.ltdash.xml" {
+        match dash::load_dash_file(path) {
+            Ok(existing) => {
+                existing
+                    .gauge_cluster
+                    .extra_attrs
+                    .get("lt_template_version")
+                    .map(|s| s.as_str())
+                    != Some(COMMAND_CENTER_TEMPLATE_VERSION)
+            }
+            Err(_) => true,
+        }
+    } else {
+        false
+    }
 }
 
 /// Get list of available dashboard templates
@@ -382,6 +406,13 @@ pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, Str
             name: "Telemetry Compact".to_string(),
             description:
                 "Laptop-friendly live view: key stats, 4 trend charts, 6 sparklines (scrollable)"
+                    .to_string(),
+        },
+        DashboardTemplateInfo {
+            id: "command_center".to_string(),
+            name: "Command Center".to_string(),
+            description:
+                "Link ECU live layout: top ticker, 3 trend charts, paired text grid, sparkline wall"
                     .to_string(),
         },
     ])

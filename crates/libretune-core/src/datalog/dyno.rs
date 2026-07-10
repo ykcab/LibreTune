@@ -270,7 +270,7 @@ impl DynoRun {
     }
 
     /// Compute peak HP and torque from data
-    fn compute_peaks(&mut self) {
+    pub fn compute_peaks(&mut self) {
         self.peak_hp = self
             .data
             .iter()

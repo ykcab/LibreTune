@@ -28,6 +28,7 @@ pub mod debug_realtime;
 pub mod demo;
 pub mod diagnostic_loggers;
 pub mod dyno;
+pub mod virtual_dyno;
 pub mod find_inis;
 pub mod firmware_update;
 pub mod get_table_data;

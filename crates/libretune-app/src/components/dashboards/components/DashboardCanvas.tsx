@@ -1,6 +1,6 @@
 import React from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { DashFile, GaugeCluster, TsGaugeConfig, isGauge, isIndicator } from '../dashTypes';
+import { DashFile, GaugeCluster, TsGaugeConfig, isGauge, isIndicator, isFlatDashboardComponent } from '../dashTypes';
 import TsGauge from '../../gauges/TsGauge';
 import LiveTsIndicator from './LiveTsIndicator';
 import { buildDefaultGauge } from '../utils/defaultGauge';
@@ -170,10 +170,12 @@ export default function DashboardCanvas({
               aspectRatio: gauge.shape_locked_to_aspect ? '1 / 1' : undefined,
             };
 
+            const isPlain = isFlatDashboardComponent(gauge);
+
             return (
               <ConditionalWrapper key={gauge.id || `gauge-${index}`} condition={gauge.enabled_condition ?? null}>
                 <div
-                  className={`ts-component ts-gauge ${designerMode ? 'editable' : ''}`}
+                  className={`ts-component ts-gauge${isPlain ? ' ts-component--plain' : ''} ${designerMode ? 'editable' : ''}`}
                   style={gaugeStyle}
                   onContextMenu={(e) => onContextMenu(e, gauge.id)}
                 >

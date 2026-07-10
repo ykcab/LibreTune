@@ -341,6 +341,10 @@ fn write_gauge_component<W: Write>(
     write_string_property(writer, "GaugePainter", gauge.gauge_painter.to_ts_string())?;
     write_boolean_property(writer, "RunDemo", gauge.run_demo)?;
 
+    for (k, v) in &gauge.extra_attrs {
+        write_string_property(writer, k, v)?;
+    }
+
     writer.write_event(Event::End(BytesEnd::new("dashComp")))?;
     Ok(())
 }
@@ -650,6 +654,36 @@ mod tests {
             let p = super::super::parser::parse_dash_file(&xml).unwrap();
             assert_eq!(p.gauge_cluster.cluster_background_image_style, style);
         }
+    }
+
+    #[test]
+    fn test_gauge_extra_attrs_roundtrip() {
+        let mut dash = DashFile::default();
+        let mut gauge = GaugeConfig::default();
+        gauge.id = "plain-stat".to_string();
+        gauge.gauge_painter = GaugePainter::TelemetryStat;
+        gauge.border_width = 0;
+        gauge
+            .extra_attrs
+            .insert("lt_plain_text".to_string(), "1".to_string());
+        gauge
+            .extra_attrs
+            .insert("lt_zone_header".to_string(), "1".to_string());
+        dash.gauge_cluster
+            .components
+            .push(DashComponent::Gauge(Box::new(gauge)));
+
+        let xml = write_dash_file(&dash).unwrap();
+        assert!(xml.contains("lt_plain_text"));
+        assert!(xml.contains("lt_zone_header"));
+
+        let parsed = super::super::parser::parse_dash_file(&xml).unwrap();
+        let g = match &parsed.gauge_cluster.components[0] {
+            DashComponent::Gauge(g) => g.as_ref(),
+            _ => panic!("Expected Gauge"),
+        };
+        assert_eq!(g.extra_attrs.get("lt_plain_text"), Some(&"1".to_string()));
+        assert_eq!(g.extra_attrs.get("lt_zone_header"), Some(&"1".to_string()));
     }
 
     #[test]

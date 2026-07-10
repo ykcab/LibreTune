@@ -224,6 +224,37 @@ export interface TsGaugeConfig {
   extra_attrs?: Record<string, string>;
 }
 
+/** True when a TelemetryStat should render as Link ECU–style plain text (no tile box). */
+export function isPlainTelemetryStat(config: {
+  gauge_painter: GaugePainter;
+  border_width: number;
+  back_color: TsColor;
+  extra_attrs?: Record<string, string>;
+}): boolean {
+  if (config.extra_attrs?.lt_plain_text === '1') {
+    return true;
+  }
+  // Fallback for dashboards saved before gauge extra_attrs round-tripped in XML.
+  return (
+    config.gauge_painter === 'TelemetryStat' &&
+    config.border_width === 0 &&
+    (config.back_color.alpha ?? 255) === 0
+  );
+}
+
+/** True when a dashboard widget should not show hover chrome (plain text or flat chart). */
+export function isFlatDashboardComponent(config: {
+  gauge_painter: GaugePainter;
+  border_width: number;
+  back_color: TsColor;
+  extra_attrs?: Record<string, string>;
+}): boolean {
+  if (isPlainTelemetryStat(config)) {
+    return true;
+  }
+  return config.border_width === 0 && (config.back_color.alpha ?? 255) === 0;
+}
+
 /** Indicator configuration */
 export interface TsIndicatorConfig {
   id: string;

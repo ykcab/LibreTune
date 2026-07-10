@@ -33,6 +33,12 @@ interface RealtimeState {
  * each animation frame via getChannelHistoryBuffer().
  */
 const HISTORY_SIZE = 300;
+/** Approximate ms between history samples (matches useRealtimeStream poll floor). */
+export const CHANNEL_HISTORY_MS_PER_SAMPLE = 100;
+
+export function getChannelHistoryWindowSec(): number {
+  return (HISTORY_SIZE * CHANNEL_HISTORY_MS_PER_SAMPLE) / 1000;
+}
 
 interface CircularBuffer {
   data: Float64Array;

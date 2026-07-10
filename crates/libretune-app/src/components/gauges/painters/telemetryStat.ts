@@ -10,12 +10,77 @@
  * "modern HUD" rather than a skeuomorphic gauge.
  */
 
-import { tsColorToHex } from '../../dashboards/dashTypes';
+import { tsColorToHex, isPlainTelemetryStat } from '../../dashboards/dashTypes';
 import { roundRect, darkenColor } from '../drawUtils';
 import type { Painter } from './types';
 
 export const telemetryStatPainter: Painter = (pctx) => {
   const { ctx, width, height, value, config, getValueColor, getFontSpec } = pctx;
+
+  const isPlainText = isPlainTelemetryStat(config);
+  const isZoneHeader = config.extra_attrs?.lt_zone_header === '1';
+
+  if (isPlainText && isZoneHeader) {
+    const accentHex = tsColorToHex(config.needle_color);
+    const padding = Math.max(6, width * 0.03);
+    ctx.fillStyle = accentHex;
+    ctx.fillRect(0, height - 2, width, 2);
+    ctx.fillStyle = accentHex;
+    ctx.font = getFontSpec(Math.max(10, height * 0.5), { bold: true, monospace: true });
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(config.title.toUpperCase(), padding, height - 4);
+    return;
+  }
+
+  if (isPlainText) {
+    const padding = Math.max(6, width * 0.03);
+    const labelSize = Math.max(10, height * 0.48);
+    const valueSize = Math.max(11, height * 0.52);
+    ctx.fillStyle = tsColorToHex(config.trim_color);
+    ctx.font = getFontSpec(labelSize, { monospace: true });
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(config.title.toUpperCase(), padding, height / 2);
+    const valueText = value.toFixed(config.value_digits);
+    const valueLine = config.units ? `${valueText} ${config.units}` : valueText;
+    ctx.fillStyle = tsColorToHex(getValueColor());
+    ctx.font = getFontSpec(valueSize, { bold: true, monospace: true });
+    ctx.textAlign = 'right';
+    ctx.fillText(valueLine, width - padding, height / 2);
+    return;
+  }
+
+  if (isZoneHeader) {
+    const accentHex = tsColorToHex(config.needle_color);
+    const padding = Math.max(8, width * 0.04);
+    const barH = Math.max(3, height * 0.08);
+
+    ctx.fillStyle = tsColorToHex(config.back_color);
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = accentHex;
+    ctx.fillRect(0, 0, width, barH);
+
+    const titleSize = Math.max(11, height * 0.42);
+    ctx.fillStyle = accentHex;
+    ctx.font = getFontSpec(titleSize, { bold: true, monospace: true });
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(config.title.toUpperCase(), padding, height * 0.55);
+
+    const valueSize = Math.max(12, height * 0.38);
+    const valueColor = getValueColor();
+    const valueHex = tsColorToHex(valueColor);
+    const valueText = value.toFixed(config.value_digits);
+    ctx.fillStyle = valueHex;
+    ctx.font = getFontSpec(valueSize, { bold: true, monospace: true });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    const valueLine = config.units ? `${valueText} ${config.units}` : valueText;
+    ctx.fillText(valueLine, width - padding, height * 0.55);
+    return;
+  }
 
   const compact = height < 42 || height < width * 0.45;
   const cornerRadius = compact ? 2 : Math.min(6, width * 0.04, height * 0.08);

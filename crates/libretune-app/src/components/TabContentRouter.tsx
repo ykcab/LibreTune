@@ -3,6 +3,7 @@ import {
   TableEditor,
   AutoTune,
   DataLogView,
+  VirtualDynoView,
   type TableData as TunerTableData,
 } from "./tuner-ui";
 import TsDashboard from "./dashboards/TsDashboard";
@@ -221,6 +222,8 @@ export function TabContentRouter(props: TabContentRouterProps) {
       );
     case "datalog":
       return <DataLogView />;
+    case "virtual-dyno":
+      return <VirtualDynoView />;
     case "tooth-logger":
       return <ToothLoggerView onClose={() => handleTabClose("tooth-logger")} />;
     case "composite-logger":

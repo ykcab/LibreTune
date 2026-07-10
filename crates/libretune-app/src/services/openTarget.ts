@@ -62,6 +62,17 @@ export async function openTargetImpl(
     return;
   }
 
+  if (name === "virtual-dyno") {
+    if (!iniCapabilities?.has_output_channels) {
+      showToast("Virtual Dyno requires output channels in the ECU definition.", "warning");
+      return;
+    }
+    setTabs([...tabs, { id: "virtual-dyno", title: "Virtual Dyno", icon: "gauge" }]);
+    setTabContents({ ...tabContents, "virtual-dyno": { type: "virtual-dyno" } });
+    setActiveTabId("virtual-dyno");
+    return;
+  }
+
   if (name === "console") {
     if (!iniCapabilities?.supports_console) {
       showToast("ECU Console is not available for this ECU definition.", "warning");

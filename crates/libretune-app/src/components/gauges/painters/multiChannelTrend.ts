@@ -17,8 +17,8 @@
 
 import { tsColorToHex } from '../../dashboards/dashTypes';
 import type { TsGaugeConfig } from '../../dashboards/dashTypes';
-import { roundRect, lightenColor, darkenColor } from '../drawUtils';
-import { getChannelHistoryBuffer, useRealtimeStore } from '../../../stores/realtimeStore';
+import { roundRect, lightenColor, darkenColor, drawHistoryTimeAxis } from '../drawUtils';
+import { getChannelHistoryBuffer, useRealtimeStore, getChannelHistoryWindowSec } from '../../../stores/realtimeStore';
 import type { Painter } from './types';
 
 interface TrendSeries {
@@ -91,18 +91,22 @@ export const multiChannelTrendPainter: Painter = (pctx) => {
   const legendCols = Math.max(2, Math.floor((width - padding * 2) / 110));
   const legendRows = Math.max(1, Math.ceil(series.length / legendCols));
   const legendHeight = legendRows * legendRowHeight + 4;
+  const axisHeight = 14;
 
   const graphWidth = width - padding * 2;
   const graphY = titleHeight + legendHeight + padding * 0.5;
-  const graphHeight = height - graphY - padding;
+  const graphHeight = height - graphY - padding - axisHeight;
+  const flatChart = config.border_width === 0;
 
   // Background.
-  const bgHex = tsColorToHex(config.back_color);
-  const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
-  bgGradient.addColorStop(0, lightenColor(bgHex, 4));
-  bgGradient.addColorStop(1, darkenColor(bgHex, 8));
-  ctx.fillStyle = bgGradient;
-  ctx.fillRect(0, 0, width, height);
+  if (!flatChart) {
+    const bgHex = tsColorToHex(config.back_color);
+    const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
+    bgGradient.addColorStop(0, lightenColor(bgHex, 4));
+    bgGradient.addColorStop(1, darkenColor(bgHex, 8));
+    ctx.fillStyle = bgGradient;
+    ctx.fillRect(0, 0, width, height);
+  }
 
   // Title.
   ctx.fillStyle = tsColorToHex(config.trim_color);
@@ -137,13 +141,15 @@ export const multiChannelTrendPainter: Painter = (pctx) => {
   }
 
   // Graph panel (inset).
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-  ctx.shadowBlur = 3;
-  ctx.shadowOffsetY = 1;
-  ctx.fillStyle = '#141414';
-  roundRect(ctx, padding - 2, graphY - 2, graphWidth + 4, graphHeight + 4, 4);
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
+  if (!flatChart) {
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+    ctx.shadowBlur = 3;
+    ctx.shadowOffsetY = 1;
+    ctx.fillStyle = '#141414';
+    roundRect(ctx, padding - 2, graphY - 2, graphWidth + 4, graphHeight + 4, 4);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+  }
 
   // Grid lines.
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
@@ -199,4 +205,14 @@ export const multiChannelTrendPainter: Painter = (pctx) => {
       ctx.shadowColor = 'transparent';
     }
   }
+
+  drawHistoryTimeAxis(
+    ctx,
+    padding,
+    graphY + graphHeight + 3,
+    graphWidth,
+    tsColorToHex(config.trim_color),
+    getFontSpec(Math.max(7, axisHeight * 0.65), { monospace: true }),
+    getChannelHistoryWindowSec(),
+  );
 };

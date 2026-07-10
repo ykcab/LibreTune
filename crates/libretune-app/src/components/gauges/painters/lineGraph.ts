@@ -1,26 +1,30 @@
 /** LineGraph — time-series line chart with filled gradient area and current value dot. */
 
 import { tsColorToHex } from '../../dashboards/dashTypes';
-import { roundRect, lightenColor, darkenColor } from '../drawUtils';
-import { getChannelHistoryBuffer } from '../../../stores/realtimeStore';
+import { roundRect, lightenColor, darkenColor, drawHistoryTimeAxis } from '../drawUtils';
+import { getChannelHistoryBuffer, getChannelHistoryWindowSec } from '../../../stores/realtimeStore';
 import type { Painter } from './types';
 
 export const lineGraphPainter: Painter = (pctx) => {
   const { ctx, width, height, value, config, getValueColor, getFontSpec } = pctx;
 
   const padding = 8;
+  const axisHeight = 14;
   const titleHeight = height * 0.12;
   const graphWidth = width - padding * 2;
-  const graphHeight = height - titleHeight - padding * 2;
+  const graphHeight = height - titleHeight - padding * 2 - axisHeight;
   const graphY = titleHeight + padding;
+  const flatChart = config.border_width === 0;
 
   // Background with gradient
-  const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
-  const bgHex = tsColorToHex(config.back_color);
-  bgGradient.addColorStop(0, lightenColor(bgHex, 5));
-  bgGradient.addColorStop(1, darkenColor(bgHex, 10));
-  ctx.fillStyle = bgGradient;
-  ctx.fillRect(0, 0, width, height);
+  if (!flatChart) {
+    const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
+    const bgHex = tsColorToHex(config.back_color);
+    bgGradient.addColorStop(0, lightenColor(bgHex, 5));
+    bgGradient.addColorStop(1, darkenColor(bgHex, 10));
+    ctx.fillStyle = bgGradient;
+    ctx.fillRect(0, 0, width, height);
+  }
 
   // Title and value
   ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
@@ -38,13 +42,15 @@ export const lineGraphPainter: Painter = (pctx) => {
   ctx.shadowColor = 'transparent';
 
   // Graph background with inset
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-  ctx.shadowBlur = 3;
-  ctx.shadowOffsetY = 1;
-  ctx.fillStyle = '#1a1a1a';
-  roundRect(ctx, padding - 2, graphY - 2, graphWidth + 4, graphHeight + 4, 4);
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
+  if (!flatChart) {
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+    ctx.shadowBlur = 3;
+    ctx.shadowOffsetY = 1;
+    ctx.fillStyle = '#1a1a1a';
+    roundRect(ctx, padding - 2, graphY - 2, graphWidth + 4, graphHeight + 4, 4);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+  }
 
   // Grid lines
   ctx.strokeStyle = 'rgba(80, 80, 80, 0.3)';
@@ -143,4 +149,14 @@ export const lineGraphPainter: Painter = (pctx) => {
   ctx.fillText(config.max.toFixed(0), padding + 2, graphY + 2);
   ctx.textBaseline = 'bottom';
   ctx.fillText(config.min.toFixed(0), padding + 2, graphY + graphHeight - 2);
+
+  drawHistoryTimeAxis(
+    ctx,
+    padding,
+    graphY + graphHeight + 3,
+    graphWidth,
+    tsColorToHex(config.trim_color),
+    getFontSpec(Math.max(7, axisHeight * 0.65), { monospace: true }),
+    getChannelHistoryWindowSec(),
+  );
 };

@@ -72,3 +72,29 @@ export function createMetallicGradient(
   gradient.addColorStop(1, darkenColor(hex, 40));
   return gradient;
 }
+
+/** Draw a time axis under a history chart (oldest → newest). */
+export function drawHistoryTimeAxis(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  color: string,
+  font: string,
+  windowSec: number,
+): void {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.font = font;
+  ctx.textBaseline = 'top';
+  const marks = [
+    { t: 0, label: `−${windowSec}s` },
+    { t: 0.5, label: `−${Math.round(windowSec / 2)}s` },
+    { t: 1, label: 'now' },
+  ];
+  for (const mark of marks) {
+    ctx.textAlign = mark.t === 0 ? 'left' : mark.t === 1 ? 'right' : 'center';
+    ctx.fillText(mark.label, x + width * mark.t, y);
+  }
+  ctx.restore();
+}
