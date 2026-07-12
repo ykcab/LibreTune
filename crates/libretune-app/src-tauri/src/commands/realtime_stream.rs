@@ -160,6 +160,66 @@ pub(crate) fn apply_channel_aliases(data: &mut HashMap<String, f64>) {
             data.insert("correction".to_string(), v * 100.0);
         }
     }
+
+    // Derive AFR from lambda when the ECU only exposes lambda (common on rusEFI).
+    if !data.contains_key("afr") {
+        let lambda = data
+            .get("lambda")
+            .or_else(|| data.get("lambdaValue"))
+            .or_else(|| data.get("lambda1"))
+            .or_else(|| data.get("Lambda"))
+            .or_else(|| data.get("wbo2"))
+            .copied();
+        if let Some(l) = lambda {
+            if (0.5..5.0).contains(&l) {
+                data.insert("afr".to_string(), l * 14.7);
+            } else if (5.0..25.0).contains(&l) {
+                // Already AFR-scaled on a "lambda" channel name
+                data.insert("afr".to_string(), l);
+            }
+        }
+    }
+}
+
+/// Resolve measured AFR for AutoTune. Returns (afr, valid).
+/// Prefers an explicit channel hint from VeAnalyze, then common AFR/lambda names.
+fn resolve_autotune_afr(data: &HashMap<String, f64>, hint: Option<&str>) -> (f64, bool) {
+    let mut candidates: Vec<&str> = Vec::new();
+    if let Some(h) = hint {
+        if !h.is_empty() {
+            candidates.push(h);
+        }
+    }
+    candidates.extend([
+        "afr",
+        "AFR",
+        "afr1",
+        "AFRValue",
+        "RealAFRValue",
+        "lambda",
+        "lambdaValue",
+        "lambda1",
+        "Lambda",
+        "wbo2",
+    ]);
+
+    for key in candidates {
+        if let Some(&v) = data.get(key) {
+            if !v.is_finite() || v <= 0.0 {
+                continue;
+            }
+            // Lambda range
+            if (0.5..5.0).contains(&v) {
+                return (v * 14.7, true);
+            }
+            // AFR range
+            if (5.0..25.0).contains(&v) {
+                return (v, true);
+            }
+        }
+    }
+
+    (0.0, false)
 }
 
 pub(crate) async fn feed_autotune_data(
@@ -219,14 +279,7 @@ pub(crate) async fn feed_autotune_data(
         }
     };
 
-    let afr = data
-        .get("afr")
-        .or_else(|| data.get("AFR"))
-        .or_else(|| data.get("afr1"))
-        .or_else(|| data.get("AFRValue"))
-        .or_else(|| data.get("lambda1"))
-        .map(|v| if *v < 2.0 { *v * 14.7 } else { *v }) // Convert lambda to AFR
-        .unwrap_or(14.7);
+    let (afr, afr_valid) = resolve_autotune_afr(data, config.afr_channel_hint.as_deref());
 
     let ve = data
         .get("ve")
@@ -267,6 +320,11 @@ pub(crate) async fn feed_autotune_data(
     // Update last values for next iteration
     config.last_tps = Some(tps);
     config.last_timestamp_ms = Some(current_time_ms);
+    if afr_valid {
+        config.saw_valid_afr = true;
+    } else {
+        config.missing_afr_samples = config.missing_afr_samples.saturating_add(1);
+    }
 
     // Check for accel enrichment flag
     let accel_enrich_active = data
@@ -288,6 +346,7 @@ pub(crate) async fn feed_autotune_data(
         tps_rate,
         accel_enrich_active,
         timestamp_ms: current_time_ms,
+        afr_valid,
     };
 
     // Clone the config values before we release the guard

@@ -168,6 +168,9 @@ interface VeAnalyzeConfig {
 export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTuneProps) {
   // State
   const [isRunning, setIsRunning] = useState(false);
+  const [sessionWarnings, setSessionWarnings] = useState<string[]>([]);
+  const [usingTargetTable, setUsingTargetTable] = useState(false);
+  const [afrHealthy, setAfrHealthy] = useState<boolean | null>(null);
   const [selectedTable, setSelectedTable] = useState(initialTableName);
   const [secondaryTableEnabled, setSecondaryTableEnabled] = useState(false);
   const [secondaryTable, setSecondaryTable] = useState('');
@@ -453,7 +456,11 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
 
   const startAutoTune = useCallback(async () => {
     try {
-      await invoke('start_autotune', {
+      const result = await invoke<{
+        warnings: string[];
+        using_target_table: boolean;
+        afr_channel_hint: string | null;
+      }>('start_autotune', {
         tableName: selectedTable,
         secondaryTableName:
           secondaryTableEnabled && secondaryTable && secondaryTable !== selectedTable
@@ -465,6 +472,9 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
         authorityLimits: authority,
       });
       setIsRunning(true);
+      setSessionWarnings(result.warnings ?? []);
+      setUsingTargetTable(!!result.using_target_table);
+      setAfrHealthy(null);
       setError(null);
     } catch (e) {
       setError(`Failed to start AutoTune: ${e}`);
@@ -475,10 +485,45 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
     try {
       await invoke('stop_autotune');
       setIsRunning(false);
+      setAfrHealthy(null);
     } catch (e) {
       setError(`Failed to stop AutoTune: ${e}`);
     }
   }, []);
+
+  // Poll AFR health while running
+  useEffect(() => {
+    if (!isRunning) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const status = await invoke<{
+          saw_valid_afr: boolean;
+          missing_afr_samples: number;
+          using_target_table: boolean;
+        }>('get_autotune_status');
+        if (!cancelled) {
+          setAfrHealthy(status.saw_valid_afr);
+          setUsingTargetTable(status.using_target_table);
+          if (!status.saw_valid_afr && status.missing_afr_samples > 20) {
+            setSessionWarnings((prev) => {
+              const msg =
+                'No valid AFR/lambda readings yet — check wideband channel / connection.';
+              return prev.includes(msg) ? prev : [...prev, msg];
+            });
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [isRunning]);
 
   const sendRecommendations = useCallback(async () => {
     try {
@@ -684,6 +729,23 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
       </div>
 
       {error && <div className="autotune-error">{error}</div>}
+      {sessionWarnings.length > 0 && (
+        <div className="autotune-warnings">
+          {sessionWarnings.map((w, i) => (
+            <div key={i}>⚠ {w}</div>
+          ))}
+        </div>
+      )}
+      {isRunning && afrHealthy === false && (
+        <div className="autotune-error">
+          Waiting for AFR/lambda — corrections will not accumulate until wideband data is seen.
+        </div>
+      )}
+      {isRunning && afrHealthy === true && usingTargetTable && (
+        <div className="autotune-status-ok">
+          Using AFR/lambda target table for per-cell targets.
+        </div>
+      )}
 
       {/* Main content */}
       <div className="autotune-content">
@@ -814,7 +876,7 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
           <div className="autotune-settings-section">
             <h3>Target</h3>
             <div className="setting-row">
-              <label>Target AFR:</label>
+              <label>Target AFR{usingTargetTable ? ' (fallback)' : ''}:</label>
               <input
                 type="number"
                 value={settings.target_afr}
@@ -822,6 +884,12 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
                 step="0.1"
                 min="10"
                 max="20"
+                disabled={isRunning && usingTargetTable}
+                title={
+                  usingTargetTable
+                    ? 'Per-cell targets come from the AFR/lambda target table; this is the fallback'
+                    : 'Target AFR used for VE corrections'
+                }
               />
             </div>
             <div className="setting-row">

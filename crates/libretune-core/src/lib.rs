@@ -63,7 +63,7 @@ pub mod unit_conversion;
 pub mod prelude {
     pub use crate::autotune::{
         AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneRecommendation, AutoTuneSettings,
-        AutoTuneState,
+        AutoTuneState, reading_to_afr,
     };
     pub use crate::dash::{DashFile, GaugeConfig, GaugePainter, IndicatorConfig};
     pub use crate::datalog::{DataLogger, LogEntry};

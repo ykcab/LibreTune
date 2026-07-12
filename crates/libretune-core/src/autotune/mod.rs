@@ -94,7 +94,8 @@ impl Default for AutoTuneFilters {
             max_rpm: 7000.0,
             min_y_axis: None,
             max_y_axis: None,
-            min_clt: 160.0,
+            // Coolant minimum in °C (matches UI default). Users on °F should raise this.
+            min_clt: 60.0,
             custom_filter: None,
             max_tps_rate: 10.0,         // 10%/sec threshold
             exclude_accel_enrich: true, // Exclude accel enrichment by default
@@ -115,6 +116,10 @@ pub struct AutoTuneState {
     pub is_running: bool,
     pub locked_cells: Vec<(usize, usize)>,
     pub recommendations: HashMap<(usize, usize), AutoTuneRecommendation>,
+    /// Current VE table values `[y][x]` — preferred source for beginning_value
+    ve_table: Option<Vec<Vec<f64>>>,
+    /// Optional AFR/lambda target table `[y][x]` (values may be AFR or lambda)
+    target_afr_table: Option<Vec<Vec<f64>>>,
     // Lambda delay buffer - stores recent data points for delayed correlation
     data_buffer: std::collections::VecDeque<VEDataPoint>,
     buffer_max_age_ms: u64, // How long to keep data points (default 500ms)
@@ -126,6 +131,8 @@ impl Default for AutoTuneState {
             is_running: false,
             locked_cells: Vec::new(),
             recommendations: HashMap::new(),
+            ve_table: None,
+            target_afr_table: None,
             data_buffer: std::collections::VecDeque::new(),
             buffer_max_age_ms: 500, // Keep 500ms of data for lambda delay correlation
         }
@@ -148,6 +155,8 @@ pub struct VEDataPoint {
     pub accel_enrich_active: Option<bool>, // ECU accel enrichment flag (if available)
     // Lambda delay correlation
     pub timestamp_ms: u64, // Timestamp for delay correlation
+    /// False when no real AFR/lambda channel was available for this sample
+    pub afr_valid: bool,
 }
 
 impl Default for VEDataPoint {
@@ -164,7 +173,17 @@ impl Default for VEDataPoint {
             tps_rate: 0.0,
             accel_enrich_active: None,
             timestamp_ms: 0,
+            afr_valid: false,
         }
+    }
+}
+
+/// Normalize AFR or lambda reading to AFR (gasoline stoich 14.7).
+pub fn reading_to_afr(value: f64) -> f64 {
+    if value > 0.0 && value < 5.0 {
+        value * 14.7
+    } else {
+        value
     }
 }
 
@@ -181,6 +200,16 @@ impl AutoTuneState {
 
     pub fn stop(&mut self) {
         self.is_running = false;
+    }
+
+    /// Attach the VE table snapshot used as beginning_value for each cell.
+    pub fn set_ve_table(&mut self, values: Vec<Vec<f64>>) {
+        self.ve_table = Some(values);
+    }
+
+    /// Attach an AFR/lambda target table (optional; falls back to settings.target_afr).
+    pub fn set_target_afr_table(&mut self, values: Option<Vec<Vec<f64>>>) {
+        self.target_afr_table = values;
     }
 
     pub fn is_cell_locked(&self, x: usize, y: usize) -> bool {
@@ -265,7 +294,7 @@ impl AutoTuneState {
         point: VEDataPoint,
         table_x_bins: &[f64],
         table_y_bins: &[f64],
-        _settings: &AutoTuneSettings,
+        settings: &AutoTuneSettings,
         filters: &AutoTuneFilters,
         authority: &AutoTuneAuthorityLimits,
     ) {
@@ -276,6 +305,10 @@ impl AutoTuneState {
         // Always add to buffer for lambda delay correlation
         self.data_buffer.push_back(point.clone());
         self.prune_data_buffer(point.timestamp_ms);
+
+        if !point.afr_valid {
+            return;
+        }
 
         if !self.passes_filters(&point, filters) {
             return;
@@ -293,7 +326,7 @@ impl AutoTuneState {
         };
 
         // Use historical cell location if available, otherwise use current
-        let (cell_rpm, cell_load, cell_ve) = if let Some(ref hist) = historical_point {
+        let (cell_rpm, cell_load, channel_ve) = if let Some(ref hist) = historical_point {
             // Use the historical RPM/load to find the correct cell
             // but use current AFR (which corresponds to that historical moment)
             (hist.rpm, hist.load, hist.ve)
@@ -316,9 +349,30 @@ impl AutoTuneState {
             return;
         }
 
-        // Calculate required VE before borrowing recommendations
-        // Use the historical VE value (from the delayed cell) for the calculation
-        let required_ve = self.calculate_required_ve(cell_ve, point.afr);
+        // Prefer the tune table cell as beginning VE; fall back to live VE channel.
+        let table_ve = self
+            .ve_table
+            .as_ref()
+            .and_then(|t| t.get(cell_y_idx))
+            .and_then(|row| row.get(cell_x_idx))
+            .copied()
+            .filter(|v| v.is_finite() && *v > 0.0);
+        let cell_ve = table_ve.unwrap_or(channel_ve);
+        if cell_ve <= 0.0 || !cell_ve.is_finite() {
+            return;
+        }
+
+        let target_from_table = self
+            .target_afr_table
+            .as_ref()
+            .and_then(|t| t.get(cell_y_idx))
+            .and_then(|row| row.get(cell_x_idx))
+            .copied()
+            .filter(|v| v.is_finite() && *v > 0.1);
+        let target_afr = reading_to_afr(target_from_table.unwrap_or(settings.target_afr));
+        let actual_afr = reading_to_afr(point.afr);
+
+        let required_ve = self.calculate_required_ve(cell_ve, actual_afr, target_afr);
 
         let current_recs = self
             .recommendations
@@ -330,17 +384,27 @@ impl AutoTuneState {
                 recommended_value: cell_ve,
                 hit_count: 0,
                 hit_weighting: 0.0,
-                target_afr: point.afr,
+                target_afr,
                 hit_percentage: 0.0,
             });
 
+        // Keep beginning_value as the original table cell for this session
+        if current_recs.hit_count == 0 {
+            current_recs.beginning_value = cell_ve;
+        }
+        current_recs.target_afr = target_afr;
         current_recs.hit_count += 1;
 
-        // Apply authority limits to clamp the recommended value
+        // Apply authority limits relative to beginning, then running-average
         let clamped_ve =
             Self::apply_authority_limits(current_recs.beginning_value, required_ve, authority);
 
-        current_recs.recommended_value = clamped_ve;
+        let n = current_recs.hit_count as f64;
+        if n <= 1.0 {
+            current_recs.recommended_value = clamped_ve;
+        } else {
+            current_recs.recommended_value += (clamped_ve - current_recs.recommended_value) / n;
+        }
 
         let hit_weight = 1.0;
         current_recs.hit_weighting += hit_weight;
@@ -462,15 +526,13 @@ impl AutoTuneState {
         true
     }
 
-    fn calculate_required_ve(&self, current_ve: f64, actual_afr: f64) -> f64 {
-        if actual_afr < 0.1 {
+    fn calculate_required_ve(&self, current_ve: f64, actual_afr: f64, target_afr: f64) -> f64 {
+        if actual_afr < 0.1 || target_afr < 0.1 {
             return current_ve;
         }
 
-        let stoich = 14.7;
-        let afr_ratio = actual_afr / stoich;
-
-        current_ve * afr_ratio
+        // Lean (actual > target) → raise VE; rich (actual < target) → lower VE
+        current_ve * (actual_afr / target_afr)
     }
 
     pub fn get_recommendations(&self) -> Vec<AutoTuneRecommendation> {
@@ -482,6 +544,115 @@ impl AutoTuneState {
 mod tests {
     #![allow(clippy::field_reassign_with_default)]
     use super::*;
+
+    #[test]
+    fn reading_to_afr_converts_lambda() {
+        assert!((reading_to_afr(1.0) - 14.7).abs() < 1e-9);
+        assert!((reading_to_afr(14.7) - 14.7).abs() < 1e-9);
+    }
+
+    #[test]
+    fn required_ve_uses_target_not_stoich() {
+        let state = AutoTuneState::default();
+        // Actual leaner than target 12.5 → need more fuel
+        let ve = state.calculate_required_ve(100.0, 13.5, 12.5);
+        assert!(ve > 100.0);
+        assert!((ve - 108.0).abs() < 0.01);
+
+        // Actual richer than target → need less fuel
+        let ve_rich = state.calculate_required_ve(100.0, 11.5, 12.5);
+        assert!(ve_rich < 100.0);
+    }
+
+    #[test]
+    fn add_data_point_uses_settings_target_and_table_ve() {
+        let mut state = AutoTuneState::default();
+        state.start();
+        state.set_ve_table(vec![vec![50.0, 60.0], vec![70.0, 80.0]]);
+
+        let settings = AutoTuneSettings {
+            target_afr: 12.5,
+            ..AutoTuneSettings::default()
+        };
+        let filters = AutoTuneFilters {
+            min_rpm: 0.0,
+            max_rpm: 9000.0,
+            min_clt: 0.0,
+            max_tps_rate: 1000.0,
+            exclude_accel_enrich: false,
+            ..AutoTuneFilters::default()
+        };
+        let authority = AutoTuneAuthorityLimits {
+            max_cell_value_change: 50.0,
+            max_cell_percentage_change: 100.0,
+        };
+
+        let point = VEDataPoint {
+            rpm: 1000.0,
+            load: 20.0,
+            map: 20.0,
+            afr: 14.7, // lean vs 12.5 target
+            ve: 0.0,   // channel missing — must use table
+            clt: 80.0,
+            afr_valid: true,
+            timestamp_ms: 1000,
+            ..VEDataPoint::default()
+        };
+
+        state.add_data_point(
+            point,
+            &[500.0, 1000.0],
+            &[20.0, 40.0],
+            &settings,
+            &filters,
+            &authority,
+        );
+
+        let recs = state.get_recommendations();
+        assert_eq!(recs.len(), 1);
+        assert!((recs[0].beginning_value - 60.0).abs() < 1e-6); // table[0][1] nearest
+        assert!((recs[0].target_afr - 12.5).abs() < 1e-6);
+        assert!(recs[0].recommended_value > recs[0].beginning_value);
+    }
+
+    #[test]
+    fn invalid_afr_is_ignored() {
+        let mut state = AutoTuneState::default();
+        state.start();
+        state.set_ve_table(vec![vec![50.0]]);
+
+        let settings = AutoTuneSettings::default();
+        let filters = AutoTuneFilters {
+            min_rpm: 0.0,
+            max_rpm: 9000.0,
+            min_clt: 0.0,
+            max_tps_rate: 1000.0,
+            exclude_accel_enrich: false,
+            ..AutoTuneFilters::default()
+        };
+        let authority = AutoTuneAuthorityLimits::default();
+
+        let point = VEDataPoint {
+            rpm: 2000.0,
+            load: 50.0,
+            afr: 0.0,
+            ve: 50.0,
+            clt: 80.0,
+            afr_valid: false,
+            timestamp_ms: 100,
+            ..VEDataPoint::default()
+        };
+
+        state.add_data_point(
+            point,
+            &[2000.0],
+            &[50.0],
+            &settings,
+            &filters,
+            &authority,
+        );
+        assert!(state.get_recommendations().is_empty());
+    }
 
     #[test]
     fn custom_filter_allows_matching_point() {
@@ -504,14 +675,36 @@ mod tests {
     fn custom_filter_rejects_non_matching_point() {
         let state = AutoTuneState::default();
         let mut filters = AutoTuneFilters::default();
-        filters.custom_filter = Some("rpm > 3000 && afr < 13.5".to_string());
+        filters.custom_filter = Some("rpm > 2000 && tps < 50".to_string());
+        filters.min_clt = 0.0;
 
         let point = VEDataPoint {
-            rpm: 2500.0,
-            afr: 14.7,
+            rpm: 1500.0,
+            tps: 25.0,
+            clt: 85.0,
             ..VEDataPoint::default()
         };
 
+        assert!(!state.passes_filters(&point, &filters));
+    }
+
+    #[test]
+    fn custom_filter_handles_accel_enrich_flag() {
+        let state = AutoTuneState::default();
+        let mut filters = AutoTuneFilters::default();
+        filters.custom_filter = Some("!accel_enrich".to_string());
+        filters.min_clt = 0.0;
+        filters.exclude_accel_enrich = false;
+
+        let mut point = VEDataPoint {
+            rpm: 2500.0,
+            clt: 85.0,
+            accel_enrich_active: Some(false),
+            ..VEDataPoint::default()
+        };
+        assert!(state.passes_filters(&point, &filters));
+
+        point.accel_enrich_active = Some(true);
         assert!(!state.passes_filters(&point, &filters));
     }
 
@@ -520,6 +713,7 @@ mod tests {
         let state = AutoTuneState::default();
         let mut filters = AutoTuneFilters::default();
         filters.custom_filter = Some("rpm >".to_string());
+        filters.min_clt = 0.0;
 
         let point = VEDataPoint {
             rpm: 2500.0,

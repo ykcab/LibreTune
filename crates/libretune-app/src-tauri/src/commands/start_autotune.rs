@@ -1,10 +1,23 @@
 //! start_autotune command and read_axis_bins helper (extracted from lib.rs).
 
+use crate::get_table_data_internal;
 use crate::read_raw_value;
 use crate::state::{is_maf_channel_name, AppState, AutoTuneConfig, AutoTuneLoadSource, AxisHint};
 use libretune_core::autotune::{AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneSettings};
 use libretune_core::ini::EcuDefinition;
 use libretune_core::tune::TuneCache;
+use serde::Serialize;
+
+/// Result returned when an AutoTune session starts.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoTuneStartResult {
+    /// Non-fatal issues the UI should surface (missing AFR, no VeAnalyze, etc.)
+    pub warnings: Vec<String>,
+    /// True when an AFR/lambda target table was loaded from the INI
+    pub using_target_table: bool,
+    /// Channel hint used for live AFR/lambda (if known)
+    pub afr_channel_hint: Option<String>,
+}
 
 #[tauri::command]
 pub async fn start_autotune(
@@ -15,7 +28,9 @@ pub async fn start_autotune(
     settings: AutoTuneSettings,
     filters: AutoTuneFilters,
     authority_limits: AutoTuneAuthorityLimits,
-) -> Result<(), String> {
+) -> Result<AutoTuneStartResult, String> {
+    let mut warnings = Vec::new();
+
     // Get the table definition to extract bin values
     let def_guard = state.definition.lock().await;
     let def = def_guard.as_ref().ok_or("No ECU definition loaded")?;
@@ -23,6 +38,28 @@ pub async fn start_autotune(
     let cache = cache_guard.as_ref();
 
     let mut resolved_load_source = load_source.unwrap_or(AutoTuneLoadSource::Map);
+    let ve_analyze = def.ve_analyze.clone();
+    let afr_channel_hint = ve_analyze
+        .as_ref()
+        .map(|v| v.lambda_channel.clone())
+        .filter(|s| !s.is_empty());
+    let target_table_name = ve_analyze.as_ref().and_then(|v| {
+        if !v.target_table_name.is_empty() {
+            Some(v.target_table_name.clone())
+        } else {
+            v.lambda_target_tables
+                .iter()
+                .find(|n| !n.is_empty())
+                .cloned()
+        }
+    });
+
+    if ve_analyze.is_none() {
+        warnings.push(
+            "This ECU definition has no [VeAnalyze] section — using table-name heuristics and the Target AFR setting."
+                .into(),
+        );
+    }
 
     // Find the table and extract bins
     let (x_bins, y_bins) = if let Some(table) = def.get_table_by_name_or_map(&table_name) {
@@ -108,6 +145,51 @@ pub async fn start_autotune(
     drop(cache_guard);
     drop(def_guard);
 
+    // Snapshot VE table cells (preferred beginning_value source)
+    let ve_table_values = match get_table_data_internal(&state, &table_name).await {
+        Ok(td) => Some(td.z_values),
+        Err(e) => {
+            warnings.push(format!(
+                "Could not snapshot VE table '{table_name}' ({e}); live VE channel will be used if present."
+            ));
+            None
+        }
+    };
+
+    let secondary_ve_values = if let Some(ref secondary_name) = secondary_table_name {
+        match get_table_data_internal(&state, secondary_name).await {
+            Ok(td) => Some(td.z_values),
+            Err(e) => {
+                warnings.push(format!(
+                    "Could not snapshot secondary table '{secondary_name}' ({e})."
+                ));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Optional AFR/lambda target table from VeAnalyze
+    let mut using_target_table = false;
+    let target_afr_values = if let Some(ref target_name) = target_table_name {
+        match get_table_data_internal(&state, target_name).await {
+            Ok(td) => {
+                using_target_table = true;
+                Some(td.z_values)
+            }
+            Err(e) => {
+                warnings.push(format!(
+                    "Could not load AFR/lambda target table '{target_name}' ({e}); using Target AFR setting ({:.1}).",
+                    settings.target_afr
+                ));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Store the config for realtime stream to use
     let config = AutoTuneConfig {
         table_name: table_name.clone(),
@@ -120,23 +202,61 @@ pub async fn start_autotune(
         y_bins,
         secondary_x_bins,
         secondary_y_bins,
+        afr_channel_hint: afr_channel_hint.clone(),
+        using_target_table,
         last_tps: None,
         last_timestamp_ms: None,
+        saw_valid_afr: false,
+        missing_afr_samples: 0,
     };
 
     *state.autotune_config.lock().await = Some(config);
 
     let mut guard = state.autotune_state.lock().await;
     guard.start();
+    if let Some(values) = ve_table_values {
+        guard.set_ve_table(values);
+    }
+    guard.set_target_afr_table(target_afr_values.clone());
+    drop(guard);
 
     let mut secondary_guard = state.autotune_secondary_state.lock().await;
     if secondary_table_name.is_some() {
         secondary_guard.start();
+        if let Some(values) = secondary_ve_values {
+            secondary_guard.set_ve_table(values);
+        }
+        secondary_guard.set_target_afr_table(target_afr_values);
     } else {
         secondary_guard.stop();
     }
-    Ok(())
+    drop(secondary_guard);
+
+    // Warn if definition appears to lack AFR/lambda output channels
+    {
+        let def_guard = state.definition.lock().await;
+        if let Some(def) = def_guard.as_ref() {
+            let has_afr_like = def.output_channels.keys().any(|k| {
+                let l = k.to_lowercase();
+                l.contains("afr") || l.contains("lambda") || l.contains("wbo2")
+            });
+            if !has_afr_like {
+                warnings.push(
+                    "No AFR/lambda output channel found in this ECU definition. \
+                     AutoTune cannot compute corrections without wideband data."
+                        .into(),
+                );
+            }
+        }
+    }
+
+    Ok(AutoTuneStartResult {
+        warnings,
+        using_target_table,
+        afr_channel_hint,
+    })
 }
+
 /// Read axis bin values from a constant definition
 pub(crate) fn read_axis_bins(
     def: &EcuDefinition,

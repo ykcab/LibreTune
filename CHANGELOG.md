@@ -13,6 +13,32 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-07-12 — AutoTune reliability + Virtual Dyno + branding
+
+#### Fixed
+- **AutoTune target AFR was ignored** — corrections always aimed at stoich 14.7;
+  the UI Target AFR setting is now used (`required_ve = current × actual/target`).
+- **Recommendation `target_afr` field** stored measured AFR instead of the real target.
+- **Lambda-only ECUs (e.g. rusEFI)** — AutoTune now resolves `lambda` / `lambdaValue`
+  (and VeAnalyze channel hints); realtime aliases also derive `afr` from lambda.
+- **Missing AFR no longer fakes 14.7** — invalid/missing wideband samples are skipped;
+  UI warns when no AFR/lambda is seen while running.
+- **Beginning VE from live channel** — when the VE output channel is absent/zero,
+  AutoTune snapshots the VE table cells at session start and uses those values.
+- **CLT filter default** aligned to °C (`60`) to match the UI (was °F-ish `160`).
+
+#### Added
+- **Virtual Dyno** — Tools → Virtual Dyno; physics pull → HP/torque curve; gated when
+  VSS is not configured / faulted / missing speed channel.
+- **Official app icon** — cam-lobe cyan/amber mark; full Tauri icon set generated under
+  `src-tauri/icons/` (source in `branding/libretune-logo.png`).
+- AutoTune start returns warnings (`AutoTuneStartResult`); `get_autotune_status` for
+  AFR health; optional AFR/lambda **target table** from `[VeAnalyze]` for per-cell targets.
+- Running-average of cell recommendations (was last-sample overwrite).
+
+#### Changed
+- AutoTune UI surfaces session warnings and AFR-health banners.
+
 ### Sprint 3 — Spec wrap-up (S-5..S-7)
 
 #### Added

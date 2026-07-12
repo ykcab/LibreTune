@@ -133,8 +133,16 @@ pub struct AutoTuneConfig {
     pub y_bins: Vec<f64>,
     pub secondary_x_bins: Option<Vec<f64>>,
     pub secondary_y_bins: Option<Vec<f64>>,
+    /// Preferred AFR/lambda channel from INI VeAnalyze (if any)
+    pub afr_channel_hint: Option<String>,
+    /// True when an AFR/lambda target table was loaded for cell-by-cell targets
+    pub using_target_table: bool,
     pub last_tps: Option<f64>,
     pub last_timestamp_ms: Option<u64>,
+    /// At least one sample had a real AFR/lambda reading
+    pub saw_valid_afr: bool,
+    /// Count of samples skipped due to missing AFR/lambda
+    pub missing_afr_samples: u64,
 }
 
 pub struct AppState {
