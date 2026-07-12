@@ -686,24 +686,44 @@
   padding: 8px 0;
 }
 
+.dialog-view .hardware-test-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
 .dialog-view .hardware-test-layout {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  align-items: start;
+  align-items: stretch;
   width: 100%;
+}
+
+.dialog-view .hardware-test-layout--compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dialog-view .hardware-test-layout--auxiliary {
+  grid-template-columns: minmax(0, 3fr) minmax(180px, 1fr);
 }
 
 .dialog-view .hardware-test-cell {
   min-width: 0;
+  display: flex;
+}
+
+.dialog-view .hardware-test-cell > .nested-panel {
+  flex: 1;
+  min-width: 0;
 }
 
 .dialog-view .hardware-test-cell[data-hw-panel='testother'] {
-  grid-column: 1 / span 3;
+  grid-column: auto;
 }
 
 .dialog-view .hardware-test-cell[data-hw-panel='injtest_r'] {
-  grid-column: 4;
+  grid-column: auto;
 }
 
 .dialog-view .hardware-test-cell--gauges .nested-panel--gauge-stack {
@@ -711,6 +731,7 @@
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.15);
   overflow: hidden;
+  height: 100%;
 }
 
 .dialog-view .hardware-test-cell--gauges .panel-title {
@@ -723,14 +744,16 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
-@media (max-width: 899px) {
-  .dialog-view .hardware-test-layout {
+@media (max-width: 1100px) {
+  .dialog-view .hardware-test-layout--compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
-  .dialog-view .hardware-test-cell[data-hw-panel='testother'],
-  .dialog-view .hardware-test-cell[data-hw-panel='injtest_r'] {
-    grid-column: 1 / -1;
+@media (max-width: 899px) {
+  .dialog-view .hardware-test-layout--compact,
+  .dialog-view .hardware-test-layout--auxiliary {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -742,15 +765,35 @@
 .dialog-view .panel-content--test-other {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  padding: 8px;
+  gap: 8px 12px;
+  padding: 10px;
+  align-items: center;
 }
 
 .dialog-view .panel-content--test-other > .settings-field {
-  grid-template-columns: minmax(0, 1fr) minmax(52px, 68px);
-  min-height: 22px;
-  padding: 2px 6px;
+  /* Label | value+units — units need room so "50 ms" doesn't overlap */
+  grid-template-columns: minmax(64px, auto) minmax(96px, 1fr);
+  min-height: 28px;
+  padding: 4px 6px;
   border-bottom: none;
+  gap: 8px;
+}
+
+.dialog-view .panel-content--test-other > .settings-field .field-input-wrap {
+  gap: 6px;
+}
+
+.dialog-view .panel-content--test-other > .settings-field .field-input-wrap input:not([type='checkbox']) {
+  min-width: 56px;
+  max-width: 88px;
+  flex: 0 0 auto;
+}
+
+.dialog-view .panel-content--test-other > .settings-field .field-unit {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .dialog-view .panel-content--test-other > .nested-panel,
@@ -764,8 +807,9 @@
 
 .dialog-view .panel-content--test-other > .command-button-field .command-button {
   width: auto;
-  padding: 5px 12px;
-  font-size: 11px;
+  min-width: 120px;
+  padding: 6px 14px;
+  font-size: 12px;
 }
 
 .dialog-view .nested-panel--compact-commands {
@@ -773,37 +817,43 @@
 }
 
 .dialog-view .panel-content--command-grid {
+  /* Two columns so "Spark #12" / "Injector #1" labels fit */
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 5px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
   padding: 8px;
 }
 
 .dialog-view .panel-content--command-grid .command-button-field {
   padding: 0;
+  min-width: 0;
 }
 
 .dialog-view .panel-content--command-grid .command-button-field--full-row {
   grid-column: 1 / -1;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .dialog-view .panel-content--command-grid .command-button {
   width: 100%;
-  padding: 5px 8px;
+  padding: 6px 10px;
   font-size: 11px;
   font-weight: 600;
   border-radius: 4px;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.25;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: center;
+  word-break: break-word;
+  hyphens: auto;
 }
 
 .dialog-view .panel-content--command-grid .command-button-field--full-row .command-button {
   background: var(--bg-subtle);
   border-color: var(--border-strong);
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .dialog-view .panel-content--command-grid .command-button-field--full-row .command-button:hover:not(:disabled) {

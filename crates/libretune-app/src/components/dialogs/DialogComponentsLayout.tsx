@@ -104,9 +104,17 @@ export function DialogComponentsLayout({
             };
 
             return (
-              <div key={`row-${rowIndex}`} className="hardware-test-layout">
-                {compact.map((comp, i) => wrapCell(comp, `hw-compact-${rowIndex}-${i}`))}
-                {auxiliary.map((comp, i) => wrapCell(comp, `hw-aux-${rowIndex}-${i}`))}
+              <div key={`row-${rowIndex}`} className="hardware-test-stack">
+                {compact.length > 0 && (
+                  <div className="hardware-test-layout hardware-test-layout--compact">
+                    {compact.map((comp, i) => wrapCell(comp, `hw-compact-${rowIndex}-${i}`))}
+                  </div>
+                )}
+                {auxiliary.length > 0 && (
+                  <div className="hardware-test-layout hardware-test-layout--auxiliary">
+                    {auxiliary.map((comp, i) => wrapCell(comp, `hw-aux-${rowIndex}-${i}`))}
+                  </div>
+                )}
               </div>
             );
           }

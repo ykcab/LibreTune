@@ -13,9 +13,12 @@ relevant.
 
 ## [Unreleased]
 
-### 2026-07-12 — AutoTune reliability + Virtual Dyno + branding
+### 2026-07-12 — AutoTune reliability, Virtual Dyno, branding, Hardware Test layout
 
 #### Fixed
+- **Hardware Test dialog alignment** — Spark/Injector/Lua/Misc command buttons no longer
+  ellipsize to `S…` / `Abor…`; Count/On/Off fields no longer crush value+units together.
+  Compact test panels and auxiliary (solenoid + gauges) rows are laid out separately.
 - **AutoTune target AFR was ignored** — corrections always aimed at stoich 14.7;
   the UI Target AFR setting is now used (`required_ve = current × actual/target`).
 - **Recommendation `target_afr` field** stored measured AFR instead of the real target.
