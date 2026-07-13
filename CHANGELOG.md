@@ -41,6 +41,9 @@ relevant.
 
 #### Changed
 - AutoTune UI surfaces session warnings and AFR-health banners.
+- **AutoTune algorithms are real** — Simple / Weighted Average / PID now change
+  correction behavior (weighted favors bin-center + stable TPS; PID uses P+I on AFR error).
+  Algorithm selector locks while a session is running.
 
 ### Sprint 3 — Spec wrap-up (S-5..S-7)
 

@@ -897,6 +897,14 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
               <select
                 value={settings.algorithm}
                 onChange={(e) => setSettings({ ...settings, algorithm: e.target.value })}
+                disabled={isRunning}
+                title={
+                  settings.algorithm === 'weighted'
+                    ? 'Weights samples near bin centers and during stable throttle more heavily'
+                    : settings.algorithm === 'pid'
+                      ? 'Proportional–integral correction on AFR error (good for lingering bias)'
+                      : 'Simple average of required VE from each sample'
+                }
               >
                 <option value="simple">Simple</option>
                 <option value="weighted">Weighted Average</option>

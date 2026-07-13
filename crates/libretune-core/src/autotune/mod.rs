@@ -39,6 +39,7 @@ pub struct AutoTuneRecommendation {
 #[serde(default)]
 pub struct AutoTuneSettings {
     pub target_afr: f64,
+    /// `"simple"` | `"weighted"` | `"pid"`
     pub algorithm: String,
     pub update_rate_ms: u32,
 }
@@ -51,6 +52,39 @@ impl Default for AutoTuneSettings {
             update_rate_ms: 100,
         }
     }
+}
+
+impl AutoTuneSettings {
+    /// Normalized algorithm id.
+    pub fn algorithm_kind(&self) -> AutotuneAlgorithm {
+        match self.algorithm.to_ascii_lowercase().as_str() {
+            "weighted" | "weighted_average" | "weighted-average" => AutotuneAlgorithm::Weighted,
+            "pid" => AutotuneAlgorithm::Pid,
+            _ => AutotuneAlgorithm::Simple,
+        }
+    }
+}
+
+/// AutoTune correction algorithm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutotuneAlgorithm {
+    /// Uniform running average of sample corrections
+    Simple,
+    /// Weight samples by bin-center proximity and TPS stability
+    Weighted,
+    /// Proportional–integral correction on AFR error ratio
+    Pid,
+}
+
+/// Per-cell accumulators for weighted / PID algorithms
+#[derive(Debug, Clone, Default)]
+struct CellTuneAccum {
+    /// Sum of (required_ve * weight)
+    weighted_required_sum: f64,
+    /// Sum of weights
+    weight_sum: f64,
+    /// Integrated AFR error ratio for PID (`actual/target - 1`)
+    integral_error: f64,
 }
 
 /// Authority limits to restrict VE changes
@@ -120,6 +154,8 @@ pub struct AutoTuneState {
     ve_table: Option<Vec<Vec<f64>>>,
     /// Optional AFR/lambda target table `[y][x]` (values may be AFR or lambda)
     target_afr_table: Option<Vec<Vec<f64>>>,
+    /// Per-cell weighted / PID accumulators
+    cell_accum: HashMap<(usize, usize), CellTuneAccum>,
     // Lambda delay buffer - stores recent data points for delayed correlation
     data_buffer: std::collections::VecDeque<VEDataPoint>,
     buffer_max_age_ms: u64, // How long to keep data points (default 500ms)
@@ -133,6 +169,7 @@ impl Default for AutoTuneState {
             recommendations: HashMap::new(),
             ve_table: None,
             target_afr_table: None,
+            cell_accum: HashMap::new(),
             data_buffer: std::collections::VecDeque::new(),
             buffer_max_age_ms: 500, // Keep 500ms of data for lambda delay correlation
         }
@@ -195,6 +232,7 @@ impl AutoTuneState {
     pub fn start(&mut self) {
         self.is_running = true;
         self.recommendations.clear();
+        self.cell_accum.clear();
         self.data_buffer.clear();
     }
 
@@ -372,43 +410,126 @@ impl AutoTuneState {
         let target_afr = reading_to_afr(target_from_table.unwrap_or(settings.target_afr));
         let actual_afr = reading_to_afr(point.afr);
 
-        let required_ve = self.calculate_required_ve(cell_ve, actual_afr, target_afr);
+        let instantaneous_required =
+            self.calculate_required_ve(cell_ve, actual_afr, target_afr);
 
-        let current_recs = self
-            .recommendations
-            .entry((cell_x_idx, cell_y_idx))
-            .or_insert_with(|| AutoTuneRecommendation {
-                cell_x: cell_x_idx,
-                cell_y: cell_y_idx,
-                beginning_value: cell_ve,
-                recommended_value: cell_ve,
-                hit_count: 0,
-                hit_weighting: 0.0,
-                target_afr,
-                hit_percentage: 0.0,
-            });
+        let sample_weight = match settings.algorithm_kind() {
+            AutotuneAlgorithm::Simple => 1.0,
+            AutotuneAlgorithm::Weighted => {
+                self.bin_proximity_weight(cell_rpm, cell_x_idx, table_x_bins)
+                    * self.bin_proximity_weight(cell_load, cell_y_idx, table_y_bins)
+                    * self.tps_stability_weight(point.tps_rate)
+            }
+            AutotuneAlgorithm::Pid => 1.0,
+        };
 
-        // Keep beginning_value as the original table cell for this session
-        if current_recs.hit_count == 0 {
-            current_recs.beginning_value = cell_ve;
+        // Seed recommendation shell (beginning_value) before accumulators borrow state
+        let beginning = {
+            let rec = self
+                .recommendations
+                .entry((cell_x_idx, cell_y_idx))
+                .or_insert_with(|| AutoTuneRecommendation {
+                    cell_x: cell_x_idx,
+                    cell_y: cell_y_idx,
+                    beginning_value: cell_ve,
+                    recommended_value: cell_ve,
+                    hit_count: 0,
+                    hit_weighting: 0.0,
+                    target_afr,
+                    hit_percentage: 0.0,
+                });
+            if rec.hit_count == 0 {
+                rec.beginning_value = cell_ve;
+            }
+            rec.beginning_value
+        };
+
+        let required_ve = match settings.algorithm_kind() {
+            AutotuneAlgorithm::Simple => {
+                let accum = self
+                    .cell_accum
+                    .entry((cell_x_idx, cell_y_idx))
+                    .or_default();
+                accum.weight_sum += 1.0;
+                accum.weighted_required_sum += instantaneous_required;
+                accum.weighted_required_sum / accum.weight_sum
+            }
+            AutotuneAlgorithm::Weighted => {
+                let w = sample_weight.max(0.05);
+                let accum = self
+                    .cell_accum
+                    .entry((cell_x_idx, cell_y_idx))
+                    .or_default();
+                accum.weight_sum += w;
+                accum.weighted_required_sum += instantaneous_required * w;
+                accum.weighted_required_sum / accum.weight_sum
+            }
+            AutotuneAlgorithm::Pid => {
+                // error > 0 ⇒ lean (need more fuel); < 0 ⇒ rich
+                let error_ratio = if target_afr > 0.1 {
+                    actual_afr / target_afr - 1.0
+                } else {
+                    0.0
+                };
+                const KP: f64 = 0.55;
+                const KI: f64 = 0.08;
+                const DT: f64 = 0.1; // ~10 Hz sample assumption
+                const INTEGRAL_LIMIT: f64 = 0.35;
+
+                let accum = self
+                    .cell_accum
+                    .entry((cell_x_idx, cell_y_idx))
+                    .or_default();
+                accum.integral_error =
+                    (accum.integral_error + error_ratio * DT).clamp(-INTEGRAL_LIMIT, INTEGRAL_LIMIT);
+                let correction = 1.0 + KP * error_ratio + KI * accum.integral_error;
+                beginning * correction.clamp(0.5, 1.5)
+            }
+        };
+
+        let clamped_ve = Self::apply_authority_limits(beginning, required_ve, authority);
+
+        if let Some(rec) = self.recommendations.get_mut(&(cell_x_idx, cell_y_idx)) {
+            rec.target_afr = target_afr;
+            rec.hit_count += 1;
+            rec.recommended_value = clamped_ve;
+            rec.hit_weighting += sample_weight;
+            rec.hit_percentage = 100.0;
         }
-        current_recs.target_afr = target_afr;
-        current_recs.hit_count += 1;
+    }
 
-        // Apply authority limits relative to beginning, then running-average
-        let clamped_ve =
-            Self::apply_authority_limits(current_recs.beginning_value, required_ve, authority);
-
-        let n = current_recs.hit_count as f64;
-        if n <= 1.0 {
-            current_recs.recommended_value = clamped_ve;
+    /// Weight higher when the operating point is near the bin center.
+    fn bin_proximity_weight(&self, value: f64, bin_idx: usize, bins: &[f64]) -> f64 {
+        if bins.is_empty() || bin_idx >= bins.len() {
+            return 1.0;
+        }
+        let center = bins[bin_idx];
+        let half_span = if bins.len() == 1 {
+            (center.abs() * 0.1).max(50.0)
+        } else if bin_idx == 0 {
+            ((bins[1] - bins[0]) / 2.0).abs().max(1.0)
+        } else if bin_idx + 1 >= bins.len() {
+            ((bins[bin_idx] - bins[bin_idx - 1]) / 2.0).abs().max(1.0)
         } else {
-            current_recs.recommended_value += (clamped_ve - current_recs.recommended_value) / n;
-        }
+            let left = (bins[bin_idx] - bins[bin_idx - 1]) / 2.0;
+            let right = (bins[bin_idx + 1] - bins[bin_idx]) / 2.0;
+            left.abs().max(right.abs()).max(1.0)
+        };
+        let dist = (value - center).abs() / half_span;
+        // 1.0 at center → 0.25 at / beyond bin edge
+        (1.0 - 0.75 * dist.clamp(0.0, 1.0)).clamp(0.25, 1.0)
+    }
 
-        let hit_weight = 1.0;
-        current_recs.hit_weighting += hit_weight;
-        current_recs.hit_percentage = 100.0;
+    /// Down-weight samples during fast throttle changes.
+    fn tps_stability_weight(&self, tps_rate: f64) -> f64 {
+        let rate = tps_rate.abs();
+        if rate < 2.0 {
+            1.0
+        } else if rate < 8.0 {
+            0.6
+        } else {
+            0.25
+        }
     }
 
     /// Apply authority limits to clamp the recommended VE change
@@ -544,6 +665,155 @@ impl AutoTuneState {
 mod tests {
     #![allow(clippy::field_reassign_with_default)]
     use super::*;
+
+    #[test]
+    fn weighted_favors_bin_center_samples() {
+        let mut state = AutoTuneState::default();
+        state.start();
+        state.set_ve_table(vec![vec![100.0]]);
+
+        let settings = AutoTuneSettings {
+            target_afr: 14.7,
+            algorithm: "weighted".into(),
+            ..AutoTuneSettings::default()
+        };
+        let filters = AutoTuneFilters {
+            min_rpm: 0.0,
+            max_rpm: 9000.0,
+            min_clt: 0.0,
+            max_tps_rate: 1000.0,
+            exclude_accel_enrich: false,
+            ..AutoTuneFilters::default()
+        };
+        let authority = AutoTuneAuthorityLimits {
+            max_cell_value_change: 50.0,
+            max_cell_percentage_change: 100.0,
+        };
+        let bins_x = [2000.0];
+        let bins_y = [50.0];
+
+        // Far from center, very lean reading
+        state.add_data_point(
+            VEDataPoint {
+                rpm: 2800.0,
+                load: 50.0,
+                afr: 16.0,
+                ve: 100.0,
+                clt: 80.0,
+                tps_rate: 20.0,
+                afr_valid: true,
+                timestamp_ms: 100,
+                ..VEDataPoint::default()
+            },
+            &bins_x,
+            &bins_y,
+            &settings,
+            &filters,
+            &authority,
+        );
+        // On center, mild lean
+        state.add_data_point(
+            VEDataPoint {
+                rpm: 2000.0,
+                load: 50.0,
+                afr: 15.0,
+                ve: 100.0,
+                clt: 80.0,
+                tps_rate: 0.0,
+                afr_valid: true,
+                timestamp_ms: 200,
+                ..VEDataPoint::default()
+            },
+            &bins_x,
+            &bins_y,
+            &settings,
+            &filters,
+            &authority,
+        );
+
+        let rec = &state.get_recommendations()[0];
+        // Centered mild-lean sample should dominate over edge+transient lean spike
+        let expected_mild = 100.0 * (15.0 / 14.7);
+        assert!(
+            (rec.recommended_value - expected_mild).abs() < (rec.recommended_value - 100.0 * 16.0 / 14.7).abs(),
+            "weighted rec {} should be closer to mild correction {}",
+            rec.recommended_value,
+            expected_mild
+        );
+        assert!(rec.hit_weighting > 1.0);
+    }
+
+    #[test]
+    fn pid_moves_ve_for_lean_error() {
+        let mut state = AutoTuneState::default();
+        state.start();
+        state.set_ve_table(vec![vec![100.0]]);
+
+        let settings = AutoTuneSettings {
+            target_afr: 14.7,
+            algorithm: "pid".into(),
+            ..AutoTuneSettings::default()
+        };
+        let filters = AutoTuneFilters {
+            min_rpm: 0.0,
+            max_rpm: 9000.0,
+            min_clt: 0.0,
+            max_tps_rate: 1000.0,
+            exclude_accel_enrich: false,
+            ..AutoTuneFilters::default()
+        };
+        let authority = AutoTuneAuthorityLimits {
+            max_cell_value_change: 50.0,
+            max_cell_percentage_change: 100.0,
+        };
+
+        for i in 0..5 {
+            state.add_data_point(
+                VEDataPoint {
+                    rpm: 2000.0,
+                    load: 50.0,
+                    afr: 15.5,
+                    ve: 100.0,
+                    clt: 80.0,
+                    afr_valid: true,
+                    timestamp_ms: 100 * (i + 1),
+                    ..VEDataPoint::default()
+                },
+                &[2000.0],
+                &[50.0],
+                &settings,
+                &filters,
+                &authority,
+            );
+        }
+
+        let rec = &state.get_recommendations()[0];
+        assert!(rec.recommended_value > 100.0, "PID should raise VE when lean");
+    }
+
+    #[test]
+    fn algorithm_kind_parses() {
+        assert_eq!(
+            AutoTuneSettings {
+                algorithm: "WeIgHtEd".into(),
+                ..Default::default()
+            }
+            .algorithm_kind(),
+            AutotuneAlgorithm::Weighted
+        );
+        assert_eq!(
+            AutoTuneSettings {
+                algorithm: "pid".into(),
+                ..Default::default()
+            }
+            .algorithm_kind(),
+            AutotuneAlgorithm::Pid
+        );
+        assert_eq!(
+            AutoTuneSettings::default().algorithm_kind(),
+            AutotuneAlgorithm::Simple
+        );
+    }
 
     #[test]
     fn reading_to_afr_converts_lambda() {
