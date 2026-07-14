@@ -3,8 +3,7 @@
 use crate::paths::get_dashboards_dir;
 use libretune_core::dash::{
     self, create_basic_dashboard, create_command_center_dashboard, create_racing_dashboard,
-    create_telemetry_compact_dashboard, create_telemetry_live_dashboard, create_tuning_dashboard,
-    COMMAND_CENTER_TEMPLATE_VERSION,
+    create_telemetry_live_dashboard, create_tuning_dashboard, COMMAND_CENTER_TEMPLATE_VERSION,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -297,10 +296,6 @@ fn default_dashboard_specs() -> Vec<(&'static str, DefaultDashBuilder)> {
         ("Tuning.ltdash.xml", create_tuning_dashboard),
         ("Racing.ltdash.xml", create_racing_dashboard),
         ("Telemetry Live.ltdash.xml", create_telemetry_live_dashboard),
-        (
-            "Telemetry Compact.ltdash.xml",
-            create_telemetry_compact_dashboard,
-        ),
         ("Command Center.ltdash.xml", create_command_center_dashboard),
     ]
 }
@@ -399,13 +394,6 @@ pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, Str
             name: "Telemetry Live".to_string(),
             description:
                 "Dense Grafana-style live view: 22 stat tiles, 4 multi-series charts, 16 sparklines"
-                    .to_string(),
-        },
-        DashboardTemplateInfo {
-            id: "telemetry_compact".to_string(),
-            name: "Telemetry Compact".to_string(),
-            description:
-                "Laptop-friendly live view: key stats, 4 trend charts, 6 sparklines (scrollable)"
                     .to_string(),
         },
         DashboardTemplateInfo {
