@@ -38,6 +38,11 @@
       "appimage": {
         "bundleMediaFramework": false
       }
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
     }
   }
 }

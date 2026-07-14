@@ -15,6 +15,11 @@ relevant.
 
 ### 2026-07-14 — Startup live telemetry monitor
 
+#### Fixed
+- **Windows installer/app icons** — cam-lobe brand mark regenerates the full
+  `src-tauri/icons/` set; NSIS `installerIcon` points at `icons/icon.ico` so the
+  setup `.exe` uses the same branding.
+
 #### Added
 - **Startup fixed telemetry monitor** — status strip (batt / rate / logging / connection),
   primary RPM·TPS·MAP·Lambda, secondary grid (incl. EGT), live strip chart with
