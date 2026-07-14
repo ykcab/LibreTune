@@ -9,7 +9,8 @@
 *.swo
 
 .cursor/
-
+prompt*
+promt
 # OS
 .DS_Store
 Thumbs.db

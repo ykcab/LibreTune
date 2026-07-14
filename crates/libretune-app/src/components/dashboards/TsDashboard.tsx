@@ -29,6 +29,7 @@ import { useDashboardScale } from './hooks/useDashboardScale';
 import { useDashboardValidation } from './hooks/useDashboardValidation';
 import { useDashboardCRUD } from './hooks/useDashboardCRUD';
 import { useGaugeRangeSync } from './hooks/useGaugeRangeSync';
+import StartupMonitor, { isStartupMonitorPath } from './StartupMonitor';
 import './TsDashboard.css';
 
 /**
@@ -254,16 +255,15 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
     const loadInitial = async () => {
       const dashes = await refreshDashboardList();
       
-      // If no initial path, select first available
+      // If no initial path, select first available — Startup is the default monitor
       if (!selectedPath && dashes.length > 0) {
-        // Prefer Basic.ltdash.xml as the default
-        const basicDash = dashes.find(d => d.name === 'Basic.ltdash.xml');
-        if (basicDash) {
-          setSelectedPath(basicDash.path);
+        const startupDash = dashes.find((d) => d.name === 'Startup.ltdash.xml');
+        if (startupDash) {
+          setSelectedPath(startupDash.path);
           return;
         }
 
-        const libreTuneDash = dashes.find(d => d.category === 'LibreTune');
+        const libreTuneDash = dashes.find((d) => d.category === 'LibreTune');
         setSelectedPath(libreTuneDash?.path || dashes[0].path);
       }
     };
@@ -351,6 +351,8 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
       </div>
     );
   }
+
+  const isStartupMonitor = isStartupMonitorPath(selectedPath);
 
   const cluster = dashFile.gauge_cluster;
   const bgColor = tsColorToRgba(cluster.cluster_background_color);
@@ -451,8 +453,11 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
         onDeleteConfirm={handleDeleteDashboard}
       />
 
-      {/* Designer Mode - full screen editor */}
-      {designerMode && dashFile ? (
+      {isStartupMonitor ? (
+        <div className="ts-dashboard-startup-host">
+          <StartupMonitor isConnected={isConnected} />
+        </div>
+      ) : designerMode && dashFile ? (
         <DashboardDesigner
           dashFile={dashFile}
           onDashFileChange={setDashFile}

@@ -252,6 +252,9 @@ export function isFlatDashboardComponent(config: {
   if (isPlainTelemetryStat(config)) {
     return true;
   }
+  if (config.extra_attrs?.lt_plain_readout === '1') {
+    return true;
+  }
   return config.border_width === 0 && (config.back_color.alpha ?? 255) === 0;
 }
 

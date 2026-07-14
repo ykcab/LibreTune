@@ -1,4 +1,6 @@
-/** AnalogGauge — classic circular dial with metallic bezel, ticks, gradient needle, center cap. */
+/** AnalogGauge — classic circular dial with metallic bezel, ticks, gradient needle, center cap.
+ *  Set `extra_attrs.lt_flat_dial=1` for a Link-style flat dial (no chrome bezel / warn arcs).
+ */
 
 import { tsColorToHex, tsColorToRgba } from '../../dashboards/dashTypes';
 import { roundRect, lightenColor, darkenColor, createMetallicGradient } from '../drawUtils';
@@ -6,15 +8,17 @@ import type { Painter } from './types';
 
 export const analogGaugePainter: Painter = (pctx) => {
   const { ctx, width, height, value, peakValue, config, bgImage, needleImage, getValueColor: _gv, getFontSpec } = pctx;
-  void _gv; // unused — analog gauge uses face color from config
+  void _gv;
 
-  // Enforce perfect circle: use the smaller of width/height, center in canvas
   const size = Math.min(width, height);
-  const pivotOffsetX = 0;
-  const pivotOffsetY = 0;
-  const centerX = width / 2 + pivotOffsetX;
-  const centerY = height / 2 + pivotOffsetY;
+  const centerX = width / 2;
+  const centerY = height / 2;
   const radius = size / 2 - 8;
+
+  if (config.extra_attrs?.lt_flat_dial === '1') {
+    paintFlatDial(pctx, centerX, centerY, radius);
+    return;
+  }
 
   // Background - use image if available, otherwise use color
   if (bgImage) {
@@ -302,3 +306,106 @@ export const analogGaugePainter: Painter = (pctx) => {
   ctx.textBaseline = 'middle';
   ctx.fillText(valueText, centerX, valueY);
 };
+
+/** Link-style flat dial: thin rim, numbered scale, long needle, big center readout. */
+function paintFlatDial(
+  pctx: Parameters<Painter>[0],
+  centerX: number,
+  centerY: number,
+  radius: number,
+) {
+  const { ctx, value, config, getFontSpec } = pctx;
+  const faceRadius = radius - 2;
+
+  // Flat face
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, faceRadius, 0, Math.PI * 2);
+  ctx.fillStyle = '#1a1c20';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(220, 220, 220, 0.55)';
+  ctx.lineWidth = Math.max(1.5, faceRadius * 0.012);
+  ctx.stroke();
+
+  const startDeg = config.sweep_begin_degree ?? config.start_angle ?? 225;
+  const sweepDeg = config.sweep_angle ?? 270;
+  const ccw = config.counter_clockwise ?? false;
+  const startAngle = (startDeg * Math.PI) / 180;
+  const sweepAngle = (sweepDeg * Math.PI) / 180;
+  const angleAt = (percent: number) =>
+    ccw ? startAngle - percent * sweepAngle : startAngle + percent * sweepAngle;
+
+  const majorStep =
+    config.major_ticks > 0 ? config.major_ticks : (config.max - config.min) / 4;
+  const numMajor = Math.floor((config.max - config.min) / majorStep) + 1;
+  const tickOuter = faceRadius * 0.92;
+  const tickInner = faceRadius * 0.82;
+  const labelR = faceRadius * 0.68;
+  const labelDigits = config.label_digits > 0 ? config.label_digits : config.value_digits;
+
+  ctx.strokeStyle = 'rgba(210, 210, 210, 0.85)';
+  ctx.fillStyle = '#e8e8e8';
+  ctx.font = getFontSpec(Math.max(9, faceRadius * 0.11));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let i = 0; i < numMajor; i++) {
+    const tickValue = config.min + i * majorStep;
+    const pct = (tickValue - config.min) / (config.max - config.min);
+    const a = angleAt(Math.max(0, Math.min(1, pct)));
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(centerX + Math.cos(a) * tickInner, centerY + Math.sin(a) * tickInner);
+    ctx.lineTo(centerX + Math.cos(a) * tickOuter, centerY + Math.sin(a) * tickOuter);
+    ctx.stroke();
+    ctx.fillText(
+      tickValue.toFixed(labelDigits),
+      centerX + Math.cos(a) * labelR,
+      centerY + Math.sin(a) * labelR,
+    );
+  }
+
+  // Long pointer needle (Link PCLink style)
+  const clamped = Math.max(config.min, Math.min(config.max, value));
+  const valuePct = (clamped - config.min) / (config.max - config.min);
+  const needleAngle = angleAt(valuePct);
+  const needleLen = faceRadius * (config.needle_length && config.needle_length > 0 && config.needle_length <= 1.5
+    ? config.needle_length
+    : 0.78);
+  const needleW = Math.max(2.5, faceRadius * 0.025);
+  const needleHex = tsColorToHex(config.needle_color);
+
+  ctx.save();
+  ctx.translate(centerX, centerY);
+  ctx.rotate(needleAngle);
+  ctx.beginPath();
+  ctx.moveTo(-needleLen * 0.12, -needleW);
+  ctx.lineTo(needleLen, 0);
+  ctx.lineTo(-needleLen * 0.12, needleW);
+  ctx.closePath();
+  ctx.fillStyle = needleHex;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, 0, Math.max(5, faceRadius * 0.06), 0, Math.PI * 2);
+  ctx.fillStyle = '#c8c8c8';
+  ctx.fill();
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  // Center title + digital value (Link puts number in the middle of the dial)
+  const titleSize = Math.max(11, faceRadius * 0.12);
+  ctx.fillStyle = '#f0f0f0';
+  ctx.font = getFontSpec(titleSize, { bold: true });
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(config.title || 'Lambda 1', centerX, centerY - faceRadius * 0.12);
+
+  const valueSize = Math.max(16, faceRadius * 0.2);
+  const valueText = value.toFixed(config.value_digits);
+  const unitText = config.units ? ` ${config.units}` : '';
+  ctx.font = getFontSpec(valueSize, { bold: true, monospace: true });
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(`${valueText}${unitText}`, centerX, centerY + faceRadius * 0.16);
+}
+

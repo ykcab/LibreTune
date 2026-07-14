@@ -12,6 +12,13 @@
   overflow: hidden;
 }
 
+.ts-dashboard-startup-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .ts-dashboard-header {
   display: flex;
   justify-content: space-between;

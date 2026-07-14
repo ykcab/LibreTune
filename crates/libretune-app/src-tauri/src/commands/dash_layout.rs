@@ -2,8 +2,8 @@
 
 use crate::paths::get_dashboards_dir;
 use libretune_core::dash::{
-    self, create_basic_dashboard, create_command_center_dashboard, create_racing_dashboard,
-    create_telemetry_live_dashboard, create_tuning_dashboard, COMMAND_CENTER_TEMPLATE_VERSION,
+    self, create_startup_dashboard, create_telemetry_live_dashboard, create_tuning_dashboard,
+    STARTUP_TEMPLATE_VERSION,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -65,10 +65,10 @@ pub async fn list_available_dashes(app: tauri::AppHandle) -> Result<Vec<DashFile
             .map_err(|e| format!("Failed to create dashboards directory: {}", e))?;
     }
 
-    // Ensure every current built-in default exists. On a fresh install this
-    // creates all of them; on an existing install (e.g. upgrading from a
-    // version with fewer built-in templates) it only adds the ones missing,
-    // leaving any user-customized copies of the others untouched.
+    // Drop retired built-in leftovers (e.g. Telemetry Compact), then ensure
+    // every current built-in default exists. Existing user files for current
+    // templates are left alone unless they need a versioned refresh.
+    remove_obsolete_default_dashboards(&dash_dir);
     ensure_missing_default_dashboards(&dash_dir)?;
 
     let mut dashes = Vec::new();
@@ -94,7 +94,7 @@ pub struct DashConflictInfo {
     pub suggested_name: Option<String>,
 }
 
-/// Reset dashboards to defaults - removes all user dashboards and recreates the 4 defaults
+/// Reset dashboards to defaults - removes all user dashboards and recreates built-ins
 #[tauri::command]
 pub async fn reset_dashboards_to_defaults(app: tauri::AppHandle) -> Result<(), String> {
     let dash_dir = get_dashboards_dir(&app);
@@ -114,10 +114,12 @@ pub async fn reset_dashboards_to_defaults(app: tauri::AppHandle) -> Result<(), S
     std::fs::create_dir_all(&dash_dir)
         .map_err(|e| format!("Failed to create dashboards directory: {}", e))?;
 
-    // Create the 4 defaults
     create_default_dashboard_files(&dash_dir)?;
 
-    println!("[reset_dashboards_to_defaults] Reset complete - 4 default dashboards created");
+    println!(
+        "[reset_dashboards_to_defaults] Reset complete - {} default dashboards created",
+        default_dashboard_specs().len()
+    );
     Ok(())
 }
 
@@ -292,11 +294,9 @@ type DefaultDashBuilder = fn() -> dash::DashFile;
 /// new built-in template only requires appending a row here.
 fn default_dashboard_specs() -> Vec<(&'static str, DefaultDashBuilder)> {
     vec![
-        ("Basic.ltdash.xml", create_basic_dashboard),
+        ("Startup.ltdash.xml", create_startup_dashboard),
         ("Tuning.ltdash.xml", create_tuning_dashboard),
-        ("Racing.ltdash.xml", create_racing_dashboard),
         ("Telemetry Live.ltdash.xml", create_telemetry_live_dashboard),
-        ("Command Center.ltdash.xml", create_command_center_dashboard),
     ]
 }
 
@@ -325,8 +325,36 @@ pub(crate) fn create_default_dashboard_files(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Retired built-in dashboards that should be deleted from the user dash folder
+/// on upgrade so they no longer appear in the selector.
+const OBSOLETE_DEFAULT_DASHBOARDS: &[&str] = &[
+    "Telemetry Compact.ltdash.xml",
+    "Basic.ltdash.xml",
+    "Racing.ltdash.xml",
+    "Command Center.ltdash.xml",
+];
+
+fn remove_obsolete_default_dashboards(dir: &Path) {
+    for file_name in OBSOLETE_DEFAULT_DASHBOARDS {
+        let path = dir.join(file_name);
+        if !path.exists() {
+            continue;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => println!(
+                "[remove_obsolete_default_dashboards] Removed obsolete dashboard {:?}",
+                path
+            ),
+            Err(e) => eprintln!(
+                "[remove_obsolete_default_dashboards] Failed to remove {:?}: {}",
+                path, e
+            ),
+        }
+    }
+}
+
 /// Additive default seeding: writes missing built-ins and refreshes versioned
-/// templates (e.g. Command Center) when the layout changes.
+/// templates when the layout changes.
 pub(crate) fn ensure_missing_default_dashboards(dir: &Path) -> Result<(), String> {
     let mut created = 0;
     let mut refreshed = 0;
@@ -353,20 +381,23 @@ pub(crate) fn ensure_missing_default_dashboards(dir: &Path) -> Result<(), String
 }
 
 fn built_in_dashboard_needs_refresh(file_name: &str, path: &Path) -> bool {
-    if file_name == "Command Center.ltdash.xml" {
-        match dash::load_dash_file(path) {
-            Ok(existing) => {
-                existing
-                    .gauge_cluster
-                    .extra_attrs
-                    .get("lt_template_version")
-                    .map(|s| s.as_str())
-                    != Some(COMMAND_CENTER_TEMPLATE_VERSION)
-            }
-            Err(_) => true,
+    let expected = match file_name {
+        "Startup.ltdash.xml" => Some(STARTUP_TEMPLATE_VERSION),
+        _ => None,
+    };
+    let Some(version) = expected else {
+        return false;
+    };
+    match dash::load_dash_file(path) {
+        Ok(existing) => {
+            existing
+                .gauge_cluster
+                .extra_attrs
+                .get("lt_template_version")
+                .map(|s| s.as_str())
+                != Some(version)
         }
-    } else {
-        false
+        Err(_) => true,
     }
 }
 
@@ -375,14 +406,11 @@ fn built_in_dashboard_needs_refresh(file_name: &str, path: &Path) -> bool {
 pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, String> {
     Ok(vec![
         DashboardTemplateInfo {
-            id: "basic".to_string(),
-            name: "Basic Dashboard".to_string(),
-            description: "Essential gauges: RPM, AFR, Coolant, Throttle".to_string(),
-        },
-        DashboardTemplateInfo {
-            id: "racing".to_string(),
-            name: "Racing Dashboard".to_string(),
-            description: "Large RPM with shift lights, oil pressure, water temp".to_string(),
+            id: "startup".to_string(),
+            name: "Startup".to_string(),
+            description:
+                "Fixed live telemetry monitor: primary RPM/TPS/MAP/λ, secondary grid, strip chart, status LEDs"
+                    .to_string(),
         },
         DashboardTemplateInfo {
             id: "tuning".to_string(),
@@ -394,13 +422,6 @@ pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, Str
             name: "Telemetry Live".to_string(),
             description:
                 "Dense Grafana-style live view: 22 stat tiles, 4 multi-series charts, 16 sparklines"
-                    .to_string(),
-        },
-        DashboardTemplateInfo {
-            id: "command_center".to_string(),
-            name: "Command Center".to_string(),
-            description:
-                "Link ECU live layout: top ticker, 3 trend charts, paired text grid, sparkline wall"
                     .to_string(),
         },
     ])

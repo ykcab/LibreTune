@@ -1,0 +1,230 @@
+.startup-monitor {
+  --sm-bg: #0f1115;
+  --sm-panel: #161a20;
+  --sm-border: rgba(255, 255, 255, 0.12);
+  --sm-label: #8b939c;
+  --sm-value: #f2f4f7;
+  --sm-muted: #5c6570;
+  --sm-warn: #eab308;
+  --sm-crit: #ef4444;
+  --sm-ok: #22c55e;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--sm-bg);
+  color: var(--sm-value);
+  padding: 8px 10px 10px;
+  gap: 8px;
+  box-sizing: border-box;
+  overflow: auto;
+}
+
+.sm-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--sm-border);
+  background: var(--sm-panel);
+  font-size: 12px;
+}
+
+.sm-pill {
+  padding: 2px 8px;
+  border: 1px solid var(--sm-border);
+  border-radius: 2px;
+  color: var(--sm-muted);
+}
+.sm-pill.ok {
+  color: var(--sm-ok);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.sm-pill.off {
+  color: var(--sm-muted);
+}
+
+.sm-stat strong {
+  color: var(--sm-value);
+  font-variant-numeric: tabular-nums;
+  margin: 0 2px;
+}
+.sm-stat {
+  color: var(--sm-label);
+}
+
+.sm-primary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.sm-primary-cell {
+  border: 1px solid var(--sm-border);
+  background: var(--sm-panel);
+  padding: 8px 10px 10px;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.sm-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sm-label);
+}
+
+.sm-primary-value {
+  font-size: clamp(28px, 4.5vw, 48px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+.sm-unit {
+  font-size: 11px;
+  color: var(--sm-label);
+}
+
+.sm-secondary {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+
+.sm-sec-cell {
+  border: 1px solid var(--sm-border);
+  background: var(--sm-panel);
+  padding: 6px 8px;
+  min-height: 52px;
+}
+.sm-sec-cell.missing .sm-sec-value {
+  color: var(--sm-muted);
+}
+
+.sm-sec-value {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-graph-panel {
+  flex: 1 1 auto;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--sm-border);
+  background: var(--sm-panel);
+}
+
+.sm-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--sm-border);
+}
+
+.sm-graph-title {
+  font-size: 12px;
+  color: var(--sm-label);
+  margin-right: auto;
+}
+
+.sm-series-toggles,
+.sm-graph-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sm-series-btn,
+.sm-graph-actions button {
+  background: transparent;
+  border: 1px solid var(--sm-border);
+  color: var(--sm-label);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.sm-series-btn.on {
+  color: var(--series, var(--sm-value));
+  border-color: var(--series, var(--sm-border));
+}
+.sm-graph-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sm-graph-canvas {
+  flex: 1;
+  width: 100%;
+  min-height: 140px;
+  display: block;
+}
+
+.sm-leds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--sm-border);
+  background: var(--sm-panel);
+}
+
+.sm-led {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--sm-muted);
+}
+.sm-led-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3a4048;
+  border: 1px solid #555;
+}
+.sm-led.on {
+  color: var(--sm-value);
+}
+.sm-led.on .sm-led-dot {
+  background: var(--sm-ok);
+  border-color: var(--sm-ok);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.55);
+}
+.sm-led.off .sm-led-dot {
+  background: #2a2f36;
+}
+.sm-led.unknown {
+  opacity: 0.55;
+}
+
+.sm-warnings {
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.1);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sm-warning-item {
+  font-size: 12px;
+  color: #fecaca;
+}
+
+@media (max-width: 900px) {
+  .sm-primary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sm-secondary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

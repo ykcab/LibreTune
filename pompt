@@ -1,0 +1,227 @@
+# Prompt — Redesign Startup Dashboard into a Fixed Live Telemetry Monitor
+
+## Context (LibreTune)
+
+Replace the current **Startup** built-in dashboard (`create_startup_dashboard` / `Startup.ltdash.xml`) with a **fixed-layout live telemetry monitor** optimized for cold-start and tuning sessions while connected to an ECU.
+
+LibreTune already provides:
+- Realtime channel values via Zustand (`realtimeStore`) with per-channel selectors
+- Circular history buffer (`getChannelHistoryBuffer`) for strip charts / line graphs
+- Gauge painters (`BasicReadout`, `LineGraph`, `MultiChannelTrend`, indicators, etc.)
+- Dashboard templates under `crates/libretune-core/src/dash/templates.rs`
+- Connection / logging status from existing Tauri commands
+
+Prefer **reusing** those primitives. Do **not** invent a parallel ECU protocol path.
+
+---
+
+## Product Goal
+
+Give the tuner **immediate situational awareness** of engine state while connected: what the engine is doing now, whether it is healthy, and what is trending — in **fixed, memorable locations** every session.
+
+Inspired by professional motorsport / ECU monitoring panels (dense, calm, readable) — **not** consumer car dashboards and **not** a designer playground.
+
+---
+
+## Non-Goals
+
+- No drag-and-drop layout
+- No designer / property editor for this dash
+- No free-form GaugeCluster editing for this template
+- No configurable widget positions
+- Do not couple UI widgets directly to Speeduino / rusEFI / MS protocol details
+
+This dash is a **fixed product surface**, not a user-editable `.ltdash` playground (even if it is shipped as a built-in template).
+
+---
+
+## Design Language
+
+- Dark theme (`~#0f1115` background)
+- Thin borders (`1px`, low-contrast gray)
+- Subtle accents only (status LEDs, warning highlights)
+- Clear typography hierarchy: label (small gray) → value (large, high contrast)
+- Minimal chrome — avoid metallic bezels / skeuomorphic 3D unless a gauge needs it for readability
+- Information density over decoration
+- Consistent column alignment so eyes learn the layout
+
+---
+
+## Fixed Layout (top → bottom)
+
+### 1. Status Strip (full width, compact)
+
+Always visible:
+
+| Item | Source / meaning |
+|------|------------------|
+| Battery voltage | Channel `battery` (or ECU alias) |
+| Telemetry update rate | Derived from realtime stream (Hz / ms between packets) |
+| Logging status | Existing logging state (`is_recording`, duration if useful) |
+| Connection | Connected / Disconnected |
+
+Keep this strip one visual line tall. No sparklines here.
+
+---
+
+### 2. Primary Telemetry (hero row)
+
+Largest numeric readouts on the screen:
+
+| Display | Preferred channel(s) |
+|---------|----------------------|
+| RPM | `rpm` |
+| TPS | `tps` |
+| MAP | `map` |
+| Lambda | `lambda` (fallback / alias `afr` → λ display if needed) |
+
+Rules:
+- Large numbers, short labels, units secondary
+- Stable positions left→right in that order
+- Warn/critical colors only when thresholds are breached; otherwise calm white/near-white
+
+---
+
+### 3. Secondary Telemetry (compact grid)
+
+Same visual weight for each cell (label + value + unit):
+
+- Coolant Temperature (`coolant`)
+- Intake Air Temperature (`iat`)
+- Oil Pressure (`oilPressure`)
+- Oil Temperature (`oilTemp`)
+- Fuel Pressure (`fuelPressure`)
+- Battery Voltage (`battery`) — ok to repeat from status strip as a larger cell
+- Boost (`boost`)
+- Ignition Timing (`advance`)
+- Injector Pulse Width (`pulseWidth`)
+- Injector Duty Cycle (`dutyCycle`)
+
+Missing channels: show `—` / dimmed cell, do not remove the slot (layout must stay fixed).
+
+Suggested grid: **2 rows × 5 columns** (or 5×2 on narrow heights), never reflow into a different topology mid-session.
+
+---
+
+### 4. Live Telemetry Graph (main middle/bottom band)
+
+Scrolling multi-channel strip chart of recent history.
+
+**Required behavior:**
+- Toggle which series are visible (default: RPM, MAP, TPS, Lambda)
+- Auto-scroll with live data
+- Pause / resume
+- Zoom (time window and/or vertical scale)
+- Read from `getChannelHistoryBuffer` / existing LineGraph or MultiChannelTrend machinery — do not invent a second history store unless necessary
+
+**Defaults:**
+- Time window ~10–30 s depending on history buffer capacity
+- Legend with channel color keys matching series colors
+
+---
+
+### 5. Engine Status (LED row / compact panel)
+
+LED-style Boolean indicators (on/off), wired to available channels / derived flags:
+
+- Connected
+- Engine Running
+- Cranking
+- Closed Loop
+- Fuel Pump
+- Fan
+- Knock Detection
+- Rev Limiter
+- Launch Control
+- Logging Active
+
+If a flag has no channel on this ECU/INI, keep the LED but show **unknown/off** and never drop the slot (fixed layout).
+
+Use clear on (bright accent) vs off (dim) states; labels always readable.
+
+---
+
+### 6. Warnings Panel
+
+- List active warnings / sensor faults only when something is wrong
+- When healthy: empty / collapsed with zero visual noise (“show nothing”)
+- Prefer real ECU fault / sync / AFR-health signals already in LibreTune over fake banners
+
+---
+
+## Data Architecture
+
+```
+ECU ↔ LibreTune realtime pipeline ↔ realtimeStore / history buffer
+                                         ↓
+                              Startup Telemetry Monitor UI
+```
+
+Rules:
+1. **Telemetry source is the generic stream** (store + history), not direct protocol I/O.
+2. Each UI region **subscribes only to the channels it needs** (`useChannelValue` / shallow multi-select).
+3. Graphs should read history **imperatively** (animation frame / canvas) so history writes do not thrash React.
+4. Target smooth updates in the **50–100 Hz** class for display refresh (match or cap to actual stream rate; do not busy-loop).
+
+---
+
+## Technical Requirements
+
+### Layout
+- Fixed structure CSS grid/flex — responsive scaling of the *same* structure (font/gutter scale), not rearrangement
+- No drag-and-drop; no designer chrome for this surface
+- Works at laptop and desktop aspect ratios without cropping primary numbers
+
+### Performance
+- Avoid unnecessary React re-renders (per-channel selectors, memoized panes)
+- Canvas/WebGL for the strip chart if DOM nodes would not keep up
+- Do not recompute unused secondary cells every tick beyond the channels they care about
+
+### Reuse
+- Prefer existing gauge painters / dashboard components where they meet the design
+- Extract small reusable pieces only when needed: `TelemetryValue`, `StatusLed`, `WarningList`, `LiveStripChart`
+- Wire as the built-in **Startup** template (replace current Link-panel experiment), versioned so installs refresh (`STARTUP_TEMPLATE_VERSION` bump)
+
+### Channel resilience
+- Use LibreTune’s common channel names and existing aliases
+- Document the channel map in code comments next to the layout constants
+- Never crash if a channel is absent
+
+---
+
+## Deliverables
+
+1. Redesigned **Startup** dashboard template (Rust template builder + any new painters/components)
+2. UI that matches the fixed regions above
+3. Graph controls: channel toggles, pause, zoom, auto-scroll
+4. Status LEDs + empty-by-default warnings panel
+5. Template version bump + default-dashboard refresh hook so existing installs pick it up
+6. Brief CHANGELOG note under Unreleased
+
+---
+
+## Acceptance Criteria
+
+- [ ] Opening **Startup** always shows the same region map (status strip → primary → secondary → graph → LEDs → warnings)
+- [ ] RPM / TPS / MAP / Lambda are the most prominent numbers
+- [ ] Secondary grid slots remain reserved when channels are missing
+- [ ] Strip chart updates smoothly live; pause freezes the series; zoom still works while paused
+- [ ] Warnings panel is blank with no faults, populated only when there are active issues
+- [ ] No designer / drag handles appear on this dash in normal use
+- [ ] Updates do not freeze the UI under a typical full channel stream
+- [ ] Works with Speeduino / rusEFI / epicEFI / FOME channel naming via aliases where already supported
+
+---
+
+## Visual Success Test
+
+If you cover the labels, a tuner who uses the dash daily should still know **where** RPM, Lambda, CLT, and the graph live. The panel should feel like a race-engineer monitor: calm until something is wrong, then unmistakably loud only in the warnings / out-of-range values.
+
+---
+
+## Out of Scope for This Pass
+
+- Editable layouts / user-saved rearrangements of this monitor
+- Mixing this UI with VE table / 3D plot editing (Link’s full Tuning tab is not the goal)
+- New ECU protocol features
+- Mobile / phone layouts
