@@ -21,10 +21,10 @@ relevant.
   setup `.exe` uses the same branding.
 
 #### Added
-- **Startup fixed telemetry monitor** — status strip (batt / rate / logging / connection),
-  primary RPM·TPS·MAP·Lambda, secondary grid (incl. EGT), live strip chart with
-  pause/zoom/series toggles, engine status LEDs, warnings panel (hidden when healthy).
-  Startup is the default dashboard when opening the dash tab.
+- **Startup fixed telemetry monitor** — status strip, three colon-style columns
+  (Engine · Fuel · Critical — appendable lists, no gauge tiles), live strip chart with
+  pause/zoom/series toggles, status LEDs, warnings only when unhealthy. Default when
+  opening the dash tab.
 
 #### Removed
 - **Telemetry Compact**, **Basic**, **Racing**, and **Command Center** built-in dashboards —

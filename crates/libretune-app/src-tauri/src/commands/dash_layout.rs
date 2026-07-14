@@ -409,7 +409,7 @@ pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, Str
             id: "startup".to_string(),
             name: "Startup".to_string(),
             description:
-                "Fixed live telemetry monitor: primary RPM/TPS/MAP/λ, secondary grid, strip chart, status LEDs"
+                "Fixed live telemetry monitor: 3 colon columns (engine / fuel / critical), strip chart, status LEDs"
                     .to_string(),
         },
         DashboardTemplateInfo {

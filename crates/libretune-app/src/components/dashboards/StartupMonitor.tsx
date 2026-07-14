@@ -1,6 +1,6 @@
 /**
  * Fixed-layout live telemetry monitor (Startup dash product surface).
- * Not designer/editable — regions stay in fixed places every session.
+ * Colon-style columns — not a boxed gauge panel.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -17,26 +17,52 @@ export interface StartupMonitorProps {
   isConnected: boolean;
 }
 
-const PRIMARY = [
-  { key: 'rpm', label: 'RPM', unit: '', digits: 0, min: 0, max: 8000, warnHi: 6500, critHi: 7200 },
-  { key: 'tps', label: 'TPS', unit: '%', digits: 1, min: 0, max: 100 },
-  { key: 'map', label: 'MAP', unit: 'kPa', digits: 0, min: 0, max: 250, warnHi: 220 },
-  { key: 'lambda', label: 'LAMBDA', unit: 'λ', digits: 3, min: 0.7, max: 1.3, warnLo: 0.82, warnHi: 1.2, alt: 'afr' },
-] as const;
+type TelemetryRow = {
+  key: string;
+  label: string;
+  unit: string;
+  digits: number;
+  alt?: string;
+  /** Prefer AFR over λ for this row when both exist. */
+  afrDisplay?: boolean;
+  warnLo?: number;
+  warnHi?: number;
+  critHi?: number;
+  /** Emphasize this row (e.g. RPM). */
+  emphasize?: boolean;
+};
 
-const SECONDARY = [
-  { key: 'coolant', label: 'Coolant', unit: '°C', digits: 0 },
+/** Append new rows under the matching column — keep slot order stable. */
+const COL_ENGINE: TelemetryRow[] = [
+  { key: 'rpm', label: 'RPM', unit: '', digits: 0, warnHi: 6500, critHi: 7200, emphasize: true },
+  { key: 'tps', label: 'TPS', unit: '%', digits: 1 },
+  { key: 'map', label: 'MAP', unit: 'kPa', digits: 0, warnHi: 220 },
+  { key: 'boost', label: 'Boost', unit: 'kPa', digits: 0 },
+  { key: 'advance', label: 'Timing', unit: '°', digits: 1 },
+];
+
+const COL_FUEL: TelemetryRow[] = [
+  { key: 'afr', label: 'AFR', unit: ':1', digits: 2, alt: 'lambda', afrDisplay: true, warnLo: 11.5, warnHi: 16.5 },
+  { key: 'lambda', label: 'Lambda', unit: 'λ', digits: 3, alt: 'afr', warnLo: 0.82, warnHi: 1.2 },
+  { key: 'dutyCycle', label: 'Inj Duty', unit: '%', digits: 1, warnHi: 85, critHi: 95 },
+  { key: 'pulseWidth', label: 'Inj PW', unit: 'ms', digits: 2 },
+];
+
+const COL_CRITICAL: TelemetryRow[] = [
+  { key: 'coolant', label: 'Coolant', unit: '°C', digits: 0, warnHi: 100, critHi: 110 },
   { key: 'iat', label: 'IAT', unit: '°C', digits: 0 },
-  { key: 'egt', label: 'EGT', unit: '°C', digits: 0, alt: 'egt1' },
+  { key: 'egt', label: 'EGT', unit: '°C', digits: 0, alt: 'egt1', warnHi: 850, critHi: 950 },
   { key: 'oilPressure', label: 'Oil Press', unit: 'kPa', digits: 0 },
   { key: 'oilTemp', label: 'Oil Temp', unit: '°C', digits: 0 },
   { key: 'fuelPressure', label: 'Fuel Press', unit: 'kPa', digits: 0 },
-  { key: 'battery', label: 'Battery', unit: 'V', digits: 1 },
-  { key: 'boost', label: 'Boost', unit: 'kPa', digits: 0 },
-  { key: 'advance', label: 'Timing', unit: '°', digits: 1 },
-  { key: 'pulseWidth', label: 'Inj PW', unit: 'ms', digits: 2 },
-  { key: 'dutyCycle', label: 'Inj Duty', unit: '%', digits: 1 },
-] as const;
+  { key: 'battery', label: 'Battery', unit: 'V', digits: 1, warnLo: 11.5 },
+];
+
+const COLUMNS: { id: string; title: string; rows: TelemetryRow[] }[] = [
+  { id: 'engine', title: 'Engine', rows: COL_ENGINE },
+  { id: 'fuel', title: 'Fuel', rows: COL_FUEL },
+  { id: 'critical', title: 'Critical', rows: COL_CRITICAL },
+];
 
 const GRAPH_SERIES = [
   { key: 'rpm', label: 'RPM', color: '#57a0f5', min: 0, max: 8000 },
@@ -65,7 +91,7 @@ function fmt(value: number | undefined, digits: number): string {
 
 function valueColor(
   value: number | undefined,
-  spec: { min?: number; max?: number; warnLo?: number; warnHi?: number; critHi?: number },
+  spec: { warnLo?: number; warnHi?: number; critHi?: number },
 ): string {
   if (value === undefined) return 'var(--sm-muted)';
   if (spec.critHi !== undefined && value >= spec.critHi) return 'var(--sm-crit)';
@@ -80,20 +106,58 @@ function readChannel(channels: Record<string, number>, name: string, alt?: strin
   for (const [k, v] of Object.entries(channels)) {
     if (k.toLowerCase() === lower) return v;
   }
-  if (alt) {
-    if (channels[alt] !== undefined) {
-      // AFR → rough lambda for display
-      if (name === 'lambda' && alt === 'afr') return channels[alt] / 14.7;
-      return channels[alt];
-    }
-  }
+  if (alt && channels[alt] !== undefined) return channels[alt];
   return undefined;
+}
+
+/** Resolve display value for a row (AFR↔λ conversion when needed). */
+function rowValue(channels: Record<string, number>, row: TelemetryRow): number | undefined {
+  if (row.afrDisplay) {
+    if (channels.afr !== undefined) return channels.afr;
+    if (channels.lambda !== undefined) return channels.lambda * 14.7;
+    return readChannel(channels, row.key, row.alt);
+  }
+  if (row.key === 'lambda') {
+    if (channels.lambda !== undefined) return channels.lambda;
+    if (channels.afr !== undefined) return channels.afr / 14.7;
+  }
+  return readChannel(channels, row.key, row.alt);
 }
 
 export function isStartupMonitorPath(path: string | null | undefined): boolean {
   if (!path) return false;
   const base = path.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
   return base === 'startup.ltdash.xml' || base.startsWith('startup.');
+}
+
+function TelemetryColumns({ channels }: { channels: Record<string, number> }) {
+  return (
+    <div className="sm-columns">
+      {COLUMNS.map((col) => (
+        <div key={col.id} className="sm-column">
+          <div className="sm-column-title">{col.title}</div>
+          <dl className="sm-colon-list">
+            {col.rows.map((row) => {
+              const v = rowValue(channels, row);
+              const missing = v === undefined;
+              return (
+                <div
+                  key={row.key}
+                  className={`sm-colon-row${row.emphasize ? ' emphasize' : ''}${missing ? ' missing' : ''}`}
+                >
+                  <dt>{row.label}:</dt>
+                  <dd style={{ color: valueColor(v, row) }}>
+                    <span className="sm-colon-num">{fmt(v, row.digits)}</span>
+                    {!missing && row.unit ? <span className="sm-colon-unit">{row.unit}</span> : null}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
@@ -113,13 +177,12 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     rpm: true, map: true, tps: true, lambda: true,
   });
   const [paused, setPaused] = useState(false);
-  const [zoom, setZoom] = useState(1); // 1 = full history window, 2 = half, etc.
+  const [zoom, setZoom] = useState(1);
   const frozenRef = useRef<Record<string, number[]>>({});
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastTsRef = useRef(0);
   const hzSamplesRef = useRef<number[]>([]);
 
-  // Battery for status strip
   const battery = readChannel(channels, 'battery');
 
   useEffect(() => {
@@ -143,7 +206,6 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     };
   }, []);
 
-  // Telemetry update rate from store timestamps
   useEffect(() => {
     if (!lastUpdateTime) return;
     const prev = lastTsRef.current;
@@ -162,14 +224,15 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     const list: string[] = [];
     if (!isConnected) return list;
     const rpm = readChannel(channels, 'rpm');
-    const lambda = readChannel(channels, 'lambda', 'afr');
+    const lambda = rowValue(channels, COL_FUEL[1]);
+    const afr = rowValue(channels, COL_FUEL[0]);
     const batt = readChannel(channels, 'battery');
     const clt = readChannel(channels, 'coolant');
     if (batt !== undefined && batt < 11.0) list.push(`Battery low (${batt.toFixed(1)} V)`);
     if (clt !== undefined && clt >= 110) list.push(`Coolant critical (${clt.toFixed(0)} °C)`);
     if (lambda !== undefined && lambda < 0.75) list.push(`Lambda dangerously rich (${lambda.toFixed(3)})`);
-    if (lambda !== undefined && lambda > 1.35 && (rpm ?? 0) > 800) {
-      list.push(`Lambda lean while running (${lambda.toFixed(3)})`);
+    if (afr !== undefined && afr > 16.5 && (rpm ?? 0) > 800) {
+      list.push(`AFR lean while running (${afr.toFixed(1)})`);
     }
     return list;
   }, [channels, isConnected]);
@@ -184,7 +247,6 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     if (!def?.channel) return 'unknown';
     const v = readChannel(channels, def.channel);
     if (v === undefined) {
-      // softLimit often absent — try hardLimit for rev limiter
       if (id === 'revLimit') {
         const h = readChannel(channels, 'hardLimit');
         if (h === undefined) return 'unknown';
@@ -215,7 +277,6 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     setPaused((p) => !p);
   };
 
-  // Strip chart paint loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -238,7 +299,6 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
       ctx.fillStyle = '#12151a';
       ctx.fillRect(0, 0, w, h);
 
-      // grid
       ctx.strokeStyle = 'rgba(255,255,255,0.06)';
       ctx.lineWidth = 1;
       for (let i = 1; i < 4; i++) {
@@ -255,10 +315,9 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
         let hist = paused
           ? (frozenRef.current[s.key] ?? [])
           : getChannelHistoryBuffer(s.key);
-        // Speeduino often only has AFR — synthesize λ history for the graph
         if (hist.length < 2 && s.key === 'lambda' && !paused) {
-          const afr = getChannelHistoryBuffer('afr');
-          if (afr.length >= 2) hist = afr.map((v) => v / 14.7);
+          const afrHist = getChannelHistoryBuffer('afr');
+          if (afrHist.length >= 2) hist = afrHist.map((v) => v / 14.7);
         }
         if (hist.length < 2) continue;
         const keep = Math.max(20, Math.floor(hist.length / Math.max(1, zoom)));
@@ -303,36 +362,7 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
         </span>
       </div>
 
-      <div className="sm-primary">
-        {PRIMARY.map((p) => {
-          const v = readChannel(channels, p.key, 'alt' in p ? p.alt : undefined);
-          return (
-            <div key={p.key} className="sm-primary-cell">
-              <div className="sm-label">{p.label}</div>
-              <div className="sm-primary-value" style={{ color: valueColor(v, p) }}>
-                {fmt(v, p.digits)}
-              </div>
-              {p.unit ? <div className="sm-unit">{p.unit}</div> : null}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="sm-secondary">
-        {SECONDARY.map((s) => {
-          const v = readChannel(channels, s.key, 'alt' in s ? s.alt : undefined);
-          const missing = v === undefined;
-          return (
-            <div key={s.key} className={`sm-sec-cell ${missing ? 'missing' : ''}`}>
-              <div className="sm-label">{s.label}</div>
-              <div className="sm-sec-value">
-                {fmt(v, s.digits)}
-                {!missing && s.unit ? <span className="sm-unit"> {s.unit}</span> : null}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <TelemetryColumns channels={channels} />
 
       <div className="sm-graph-panel">
         <div className="sm-graph-toolbar">

@@ -1,7 +1,7 @@
 .startup-monitor {
   --sm-bg: #0f1115;
   --sm-panel: #161a20;
-  --sm-border: rgba(255, 255, 255, 0.12);
+  --sm-border: rgba(255, 255, 255, 0.1);
   --sm-label: #8b939c;
   --sm-value: #f2f4f7;
   --sm-muted: #5c6570;
@@ -15,9 +15,10 @@
   background: var(--sm-bg);
   color: var(--sm-value);
   padding: 8px 10px 10px;
-  gap: 8px;
+  gap: 10px;
   box-sizing: border-box;
   overflow: auto;
+  font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Menlo, Consolas, monospace;
 }
 
 .sm-status {
@@ -26,21 +27,17 @@
   align-items: center;
   gap: 10px 16px;
   min-height: 28px;
-  padding: 4px 8px;
-  border: 1px solid var(--sm-border);
-  background: var(--sm-panel);
+  padding: 2px 0 6px;
+  border-bottom: 1px solid var(--sm-border);
   font-size: 12px;
 }
 
 .sm-pill {
-  padding: 2px 8px;
-  border: 1px solid var(--sm-border);
-  border-radius: 2px;
+  padding: 1px 0;
   color: var(--sm-muted);
 }
 .sm-pill.ok {
   color: var(--sm-ok);
-  border-color: rgba(34, 197, 94, 0.35);
 }
 .sm-pill.off {
   color: var(--sm-muted);
@@ -55,62 +52,86 @@
   color: var(--sm-label);
 }
 
-.sm-primary {
+/* Three colon columns — text list, no tiles */
+.sm-columns {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 28px;
+  padding: 4px 4px 8px;
 }
 
-.sm-primary-cell {
-  border: 1px solid var(--sm-border);
-  background: var(--sm-panel);
-  padding: 8px 10px 10px;
-  min-height: 96px;
+.sm-column {
+  min-width: 0;
+  padding-right: 16px;
+  border-right: 1px solid var(--sm-border);
+}
+.sm-column:last-child {
+  border-right: none;
+  padding-right: 0;
+}
+
+.sm-column-title {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sm-muted);
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+}
+
+.sm-colon-list {
+  margin: 0;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 5px;
 }
 
-.sm-label {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--sm-label);
-}
-
-.sm-primary-value {
-  font-size: clamp(28px, 4.5vw, 48px);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.05;
-}
-
-.sm-unit {
-  font-size: 11px;
-  color: var(--sm-label);
-}
-
-.sm-secondary {
+.sm-colon-row {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 6px;
+  grid-template-columns: minmax(5.5rem, 38%) 1fr;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.25;
 }
 
-.sm-sec-cell {
-  border: 1px solid var(--sm-border);
-  background: var(--sm-panel);
-  padding: 6px 8px;
-  min-height: 52px;
-}
-.sm-sec-cell.missing .sm-sec-value {
-  color: var(--sm-muted);
+.sm-colon-row dt {
+  margin: 0;
+  color: var(--sm-label);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
-.sm-sec-value {
-  margin-top: 4px;
-  font-size: 18px;
+.sm-colon-row dd {
+  margin: 0;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sm-colon-num {
+  letter-spacing: 0.02em;
+}
+
+.sm-colon-unit {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sm-label);
+}
+
+.sm-colon-row.emphasize dt {
+  color: var(--sm-value);
+  font-weight: 600;
+}
+.sm-colon-row.emphasize dd {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.sm-colon-row.missing dd {
+  color: var(--sm-muted);
 }
 
 .sm-graph-panel {
@@ -118,8 +139,8 @@
   min-height: 180px;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--sm-border);
-  background: var(--sm-panel);
+  border-top: 1px solid var(--sm-border);
+  background: transparent;
 }
 
 .sm-graph-toolbar {
@@ -127,8 +148,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--sm-border);
+  padding: 8px 0;
 }
 
 .sm-graph-title {
@@ -147,15 +167,17 @@
 .sm-series-btn,
 .sm-graph-actions button {
   background: transparent;
-  border: 1px solid var(--sm-border);
+  border: none;
+  border-bottom: 1px solid transparent;
   color: var(--sm-label);
   font-size: 11px;
-  padding: 3px 8px;
+  padding: 2px 4px;
   cursor: pointer;
+  font-family: inherit;
 }
 .sm-series-btn.on {
   color: var(--series, var(--sm-value));
-  border-color: var(--series, var(--sm-border));
+  border-bottom-color: var(--series, var(--sm-border));
 }
 .sm-graph-actions button:disabled {
   opacity: 0.4;
@@ -167,15 +189,16 @@
   width: 100%;
   min-height: 140px;
   display: block;
+  border: 1px solid var(--sm-border);
+  background: #12151a;
 }
 
 .sm-leds {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 10px;
-  padding: 6px 8px;
-  border: 1px solid var(--sm-border);
-  background: var(--sm-panel);
+  gap: 6px 14px;
+  padding: 6px 0;
+  border-top: 1px solid var(--sm-border);
 }
 
 .sm-led {
@@ -186,19 +209,17 @@
   color: var(--sm-muted);
 }
 .sm-led-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: #3a4048;
-  border: 1px solid #555;
 }
 .sm-led.on {
   color: var(--sm-value);
 }
 .sm-led.on .sm-led-dot {
   background: var(--sm-ok);
-  border-color: var(--sm-ok);
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.55);
+  box-shadow: 0 0 5px rgba(34, 197, 94, 0.45);
 }
 .sm-led.off .sm-led-dot {
   background: #2a2f36;
@@ -208,9 +229,9 @@
 }
 
 .sm-warnings {
-  border: 1px solid rgba(239, 68, 68, 0.45);
-  background: rgba(239, 68, 68, 0.1);
-  padding: 6px 8px;
+  border-top: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+  padding: 6px 4px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -220,11 +241,21 @@
   color: #fecaca;
 }
 
-@media (max-width: 900px) {
-  .sm-primary {
-    grid-template-columns: repeat(2, 1fr);
+@media (max-width: 820px) {
+  .sm-columns {
+    grid-template-columns: 1fr;
+    gap: 16px;
   }
-  .sm-secondary {
-    grid-template-columns: repeat(2, 1fr);
+  .sm-column {
+    border-right: none;
+    padding-right: 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--sm-border);
+  }
+  .sm-column:last-child {
+    border-bottom: none;
+  }
+  .sm-colon-row {
+    grid-template-columns: minmax(6rem, 40%) 1fr;
   }
 }
