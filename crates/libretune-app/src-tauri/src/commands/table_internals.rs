@@ -5,6 +5,13 @@ use libretune_core::ini::Constant;
 use libretune_core::tune::{TuneFile, TuneValue};
 use serde::Serialize;
 
+async fn autosave_tune_after_table_edit(state: &tauri::State<'_, AppState>) {
+    // Auto-save is best-effort: table editing should still succeed even if disk persistence fails.
+    if let Err(err) = super::save_tune::save_tune(state.clone(), None).await {
+        eprintln!("[WARN] Auto-save after table edit failed: {}", err);
+    }
+}
+
 #[derive(Serialize)]
 pub(crate) struct TableData {
     pub name: String,
@@ -229,6 +236,11 @@ pub(crate) async fn update_table_z_values_internal(
         }
     }
 
+    drop(cache_guard);
+    drop(def_guard);
+    drop(conn_guard);
+    autosave_tune_after_table_edit(state).await;
+
     Ok(())
 }
 
@@ -308,6 +320,11 @@ pub(crate) async fn update_constant_array_internal(
             );
         }
     }
+
+    drop(cache_guard);
+    drop(def_guard);
+    drop(conn_guard);
+    autosave_tune_after_table_edit(state).await;
 
     Ok(())
 }

@@ -794,7 +794,34 @@ export default function TableEditor2D({
   };
 
   const handleCellEditApply = (value: number) => {
-    handleCellChange(cellEditDialog.col, cellEditDialog.row, value, { operation: 'Cell edit' });
+    const editedX = cellEditDialog.col;
+    const editedY = cellEditDialog.row;
+    const hasSelection = selectedCellsCoords.length > 1;
+    const editedCellInSelection = selectedCellsCoords.some(([x, y]) => x === editedX && y === editedY);
+
+    if (hasSelection && editedCellInSelection) {
+      const previousValues = localZValues.map((row) => [...row]);
+      const newValues = localZValues.map((row) => [...row]);
+      let changed = false;
+
+      selectedCellsCoords.forEach(([x, y]) => {
+        if (lockedCells.has(`${x},${y}`)) return;
+        if (newValues[y][x] !== value) {
+          newValues[y][x] = value;
+          changed = true;
+        }
+      });
+
+      if (!changed) return;
+
+      setLocalZValues(newValues);
+      pushHistory(newValues, localXBins, localYBins);
+      onValuesChange?.(newValues);
+      warnIfLargeChangeBatch(previousValues, newValues, selectedCellsCoords, 'Batch cell edit');
+      return;
+    }
+
+    handleCellChange(editedX, editedY, value, { operation: 'Cell edit' });
   };
 
   const handleCellDoubleClick = (x: number, y: number) => {
