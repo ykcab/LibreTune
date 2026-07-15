@@ -52,7 +52,7 @@ body {
   overflow: hidden;
   height: 100vh;
   width: 100vw;
-  background-color: var(--bg-app);
+  background-color: transparent;
   color: var(--text-primary);
 }
 
@@ -72,12 +72,14 @@ body {
   grid-template-rows: auto 1fr 24px;
   height: 100vh;
   width: 100vw;
+  background: transparent;
 }
 
 /* Menu Bar - Windows-style top menu */
 .menubar {
   grid-area: menubar;
   background: var(--bg-menubar);
+  background: color-mix(in srgb, var(--bg-menubar) 86%, transparent);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -116,6 +118,7 @@ body {
 .statusbar {
   grid-area: statusbar;
   background: var(--bg-statusbar);
+  background: color-mix(in srgb, var(--bg-statusbar) 86%, transparent);
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -150,6 +153,7 @@ body {
 .sidebar {
   grid-area: sidebar;
   background-color: var(--bg-surface);
+  background-color: color-mix(in srgb, var(--bg-surface) 88%, transparent);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -342,6 +346,7 @@ body {
 .topbar {
   grid-area: menubar;
   background: var(--bg-toolbar);
+  background: color-mix(in srgb, var(--bg-toolbar) 86%, transparent);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -445,6 +450,7 @@ body {
   overflow-y: auto;
   padding: 0.75rem;
   background: var(--bg-deep);
+  background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
 }
 
 .content-title {
