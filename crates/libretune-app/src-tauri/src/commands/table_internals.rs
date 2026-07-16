@@ -218,6 +218,12 @@ pub(crate) async fn update_table_z_values_internal(
                 if end <= page_data.len() {
                     page_data[start..end].copy_from_slice(&raw_data);
                 }
+                // Keep parsed constants synchronized with page bytes so offline
+                // table reads don't revert to stale MSQ values after reload.
+                tune.constants.insert(
+                    table.map.clone(),
+                    libretune_core::tune::TuneValue::Array(flat_values.clone()),
+                );
             }
             *state.tune_modified.lock().await = true;
         }

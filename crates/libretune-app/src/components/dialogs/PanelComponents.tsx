@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useLayoutEffect, useRef, memo, useMemo, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Activity, Grid3X3, AlertTriangle } from 'lucide-react';
 import CurveEditor, { SimpleGaugeInfo } from '../curves/CurveEditor';
 import TableEditor2D from '../tables/TableEditor2D';
@@ -71,6 +72,16 @@ export const RecursivePanel = memo(function RecursivePanel({
   const [gaugeConfig, setGaugeConfig] = useState<SimpleGaugeInfo | null>(null);
   const [portEditor, setPortEditor] = useState<PortEditorConfig | null>(null);
   const [panelType, setPanelType] = useState<'loading' | 'dialog' | 'indicatorPanel' | 'readoutPanel' | 'table' | 'curve' | 'portEditor' | 'unknown'>('loading');
+  const [reloadTick, setReloadTick] = useState(0);
+
+  // Re-fetch when a new tune is loaded (backend emits on every load path)
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen('tune:loaded', () => setReloadTick((t) => t + 1))
+      .then((un) => { unlisten = un; })
+      .catch(() => {});
+    return () => { if (unlisten) unlisten(); };
+  }, []);
 
   useLayoutEffect(() => {
     let cancelled = false;
@@ -205,7 +216,7 @@ export const RecursivePanel = memo(function RecursivePanel({
     return () => {
       cancelled = true;
     };
-  }, [name]);
+  }, [name, reloadTick]);
 
   if (panelType === 'loading') {
     return <div className="panel-loading">Loading {name}...</div>;
@@ -215,6 +226,7 @@ export const RecursivePanel = memo(function RecursivePanel({
   if (panelType === 'table' && tableInfo && tableData) {
     return (
       <TableEditor2D
+        key={`${name}-${reloadTick}`}
         title={tableInfo.title || name}
         table_name={tableData.name}
         x_axis_name={tableData.x_axis_name || 'X'}
@@ -229,8 +241,8 @@ export const RecursivePanel = memo(function RecursivePanel({
         onValuesChange={(values) => {
           // Save changes to backend
           invoke('update_table_data', {
-            table_name: tableData.name,
-            z_values: values,
+            tableName: tableData.name,
+            zValues: values,
           }).then(() => {
             onUpdate?.();
           }).catch((err) => {

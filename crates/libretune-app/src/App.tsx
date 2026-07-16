@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -1013,13 +1013,48 @@ function AppContent() {
     }
   }
 
+  // Refresh open views whenever the backend loads a tune (any entry point)
+  const refreshOpenTabsRef = useRef<() => Promise<void>>(async () => {});
+  refreshOpenTabsRef.current = refreshOpenTabs;
+  useEffect(() => {
+    if (!isTauri) return;
+    let unlisten: (() => void) | null = null;
+    listen("tune:loaded", () => { refreshOpenTabsRef.current(); })
+      .then((un) => { unlisten = un; })
+      .catch(() => {});
+    return () => { if (unlisten) unlisten(); };
+  }, []);
+
+  /** Re-fetch open table/curve tabs so they reflect the current tune */
+  async function refreshOpenTabs() {
+    const updated = { ...tabContents };
+    let changed = false;
+    for (const [id, content] of Object.entries(tabContents)) {
+      try {
+        if (content.type === "table") {
+          const data = await invoke<BackendTableData>("get_table_data", { tableName: id });
+          updated[id] = { type: "table", data: toTunerTableData(data) };
+          changed = true;
+        } else if (content.type === "curve") {
+          const data = await invoke<BackendCurveData>("get_curve_data", { curveName: id });
+          updated[id] = { ...content, data: toCurveData(data) };
+          changed = true;
+        }
+      } catch {
+        // keep the tab's previous data
+      }
+    }
+    if (changed) setTabContents(updated);
+  }
+
   /** Import an existing tune file (.msq) into the currently open project */
   async function handleImportTuneIntoProject(tunePath: string) {
     if (!currentProject) return;
     try {
       showLoading("Loading tune file...");
       await invoke("load_tune", { path: tunePath });
-      // Refresh constants so UI reflects the loaded tune
+      // Refresh constants so the UI reflects the loaded tune
+      // (open views refresh via the backend's tune:loaded event)
       await fetchConstants();
       showToast("Tune file loaded successfully", "success");
     } catch (e) {
