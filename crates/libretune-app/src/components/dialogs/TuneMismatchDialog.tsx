@@ -72,6 +72,10 @@ export default function TuneMismatchDialog({
             <strong>The tune on the ECU differs from the tune in your project.</strong>
           </p>
           <p>
+            Detected external ECU changes are possible (for example, edits made in TunerStudio or
+            another tool while LibreTune was not writing changes).
+          </p>
+          <p>
             The ECU has {mismatchInfo.ecu_pages.length} page(s) loaded, while your project has{' '}
             {mismatchInfo.project_pages.length} page(s).
             {mismatchInfo.diff_pages.length > 0 && (

@@ -86,36 +86,6 @@ pub async fn sync_ecu_data(
     drop(def_guard);
 
     let was_modified = *state.tune_modified.lock().await;
-    let cache_fully_loaded = {
-        let cache_guard = state.tune_cache.lock().await;
-        cache_guard
-            .as_ref()
-            .is_some_and(|cache| cache.is_fully_loaded())
-    };
-
-    // Reconnect with no local edits: keep the in-memory tune instead of re-reading ECU pages
-    // (avoids false drift from partial/unstable reads after a quick disconnect/reconnect).
-    if !was_modified && cache_fully_loaded {
-        eprintln!(
-            "[INFO] sync_ecu_data: skipping ECU re-read — in-memory tune unchanged since last sync"
-        );
-        let progress = SyncProgress {
-            current_page: n_pages,
-            total_pages: n_pages,
-            bytes_read: total_bytes,
-            total_bytes,
-            complete: true,
-            failed_page: None,
-        };
-        let _ = app.emit("sync:progress", &progress);
-        return Ok(SyncResult {
-            success: true,
-            pages_synced: n_pages,
-            pages_failed: 0,
-            total_pages: n_pages,
-            errors: vec![],
-        });
-    }
 
     // Compare against the in-memory tune cache (authoritative editing state),
     // not the raw TuneFile which may have empty pages for MSQ-based projects.
@@ -226,9 +196,11 @@ pub async fn sync_ecu_data(
     };
     let _ = app.emit("sync:progress", &progress);
 
-    // Compare baseline (pre-sync cache) with ECU read — only prompt when bytes differ.
+    // Compare baseline (pre-sync cache) with ECU read.
+    // This must detect external ECU edits (e.g., made in another tool) even when
+    // LibreTune itself has no local pending changes.
     let diff_pages = pages_with_differences(&baseline_pages, &ecu_tune.pages, n_pages, &page_sizes);
-    let should_emit_mismatch = was_modified && pages_failed == 0 && !diff_pages.is_empty();
+    let should_emit_mismatch = pages_failed == 0 && !diff_pages.is_empty();
 
     if should_emit_mismatch {
         let baseline_page_nums: Vec<u8> = baseline_pages.keys().copied().collect();
