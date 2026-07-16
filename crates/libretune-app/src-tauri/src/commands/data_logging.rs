@@ -28,10 +28,32 @@ pub async fn start_logging(
     let def_guard = state.definition.lock().await;
     let def = def_guard.as_ref().ok_or("Definition not loaded")?;
 
-    let channels: Vec<String> = def.output_channels.keys().cloned().collect();
+    let mut channels: Vec<String> = def.output_channels.keys().cloned().collect();
+
+    // Also log the canonical alias names (RPM, MAP, TPS, …) that the realtime
+    // stream adds via apply_channel_aliases, so recorded logs and saved CSVs
+    // use the same channel names as the dashboards and graph pages.
+    let mut probe: HashMap<String, f64> = channels.iter().map(|c| (c.clone(), 0.0)).collect();
+    super::realtime_stream::apply_channel_aliases(&mut probe);
+    for name in probe.keys() {
+        if !channels.iter().any(|c| c == name) {
+            channels.push(name.clone());
+        }
+    }
 
     let mut logger = state.data_logger.lock().await;
-    *logger = DataLogger::new(channels);
+
+    // Recording appends to the current session (one continuous log until the
+    // user clears it). Only build a fresh logger when there is no session yet
+    // or the channel set changed (e.g. a different INI was loaded).
+    let mut existing: Vec<&String> = logger.channels().iter().collect();
+    let mut incoming: Vec<&String> = channels.iter().collect();
+    existing.sort();
+    incoming.sort();
+    if existing != incoming {
+        *logger = DataLogger::new(channels);
+    }
+
     if let Some(rate) = sample_rate {
         logger.set_sample_rate(rate);
     }
@@ -65,9 +87,26 @@ pub async fn get_log_entries(
     state: tauri::State<'_, AppState>,
     start_index: Option<usize>,
     count: Option<usize>,
+    channels: Option<Vec<String>>,
 ) -> Result<Vec<LogEntryData>, String> {
     let logger = state.data_logger.lock().await;
-    let channels = logger.channels();
+    let all_channels = logger.channels();
+
+    // Only serialize the requested channels: an INI defines 1000+ output
+    // channels and shipping all of them per entry over IPC at high sample
+    // rates (100 Hz) is several MB per poll — enough to OOM the webview.
+    let selected: Vec<(usize, &String)> = match &channels {
+        Some(filter) => {
+            let wanted: std::collections::HashSet<&str> =
+                filter.iter().map(|s| s.as_str()).collect();
+            all_channels
+                .iter()
+                .enumerate()
+                .filter(|(_, name)| wanted.contains(name.as_str()))
+                .collect()
+        }
+        None => all_channels.iter().enumerate().collect(),
+    };
 
     let start = start_index.unwrap_or(0);
     let max_count = count.unwrap_or(1000);
@@ -77,10 +116,10 @@ pub async fn get_log_entries(
         .skip(start)
         .take(max_count)
         .map(|entry| {
-            let mut values = HashMap::new();
-            for (i, channel) in channels.iter().enumerate() {
-                if let Some(&val) = entry.values.get(i) {
-                    values.insert(channel.clone(), val);
+            let mut values = HashMap::with_capacity(selected.len());
+            for (i, channel) in &selected {
+                if let Some(&val) = entry.values.get(*i) {
+                    values.insert((*channel).clone(), val);
                 }
             }
             LogEntryData {
@@ -103,20 +142,38 @@ pub async fn clear_log(state: tauri::State<'_, AppState>) -> Result<(), String> 
 #[tauri::command]
 pub async fn save_log(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
     let logger = state.data_logger.lock().await;
+    let channels = logger.channels();
+
+    // Skip columns that are zero for the entire log: an INI defines far more
+    // output channels than the ECU (or demo simulator) actually streams, and
+    // those never-seen channels are logged as 0.0. Writing them out buries
+    // the real data in hundreds of dead columns.
+    let mut has_data = vec![false; channels.len()];
+    for entry in logger.entries() {
+        for (i, &val) in entry.values.iter().enumerate() {
+            if val != 0.0 {
+                has_data[i] = true;
+            }
+        }
+    }
 
     let mut csv = String::new();
     csv.push_str("Time (ms)");
-    for channel in logger.channels() {
-        csv.push(',');
-        csv.push_str(channel);
+    for (i, channel) in channels.iter().enumerate() {
+        if has_data[i] {
+            csv.push(',');
+            csv.push_str(channel);
+        }
     }
     csv.push('\n');
 
     for entry in logger.entries() {
         csv.push_str(&format!("{}", entry.timestamp.as_millis()));
-        for val in &entry.values {
-            csv.push(',');
-            csv.push_str(&format!("{:.4}", val));
+        for (i, val) in entry.values.iter().enumerate() {
+            if has_data[i] {
+                csv.push(',');
+                csv.push_str(&format!("{:.4}", val));
+            }
         }
         csv.push('\n');
     }
@@ -129,4 +186,9 @@ pub async fn save_log(state: tauri::State<'_, AppState>, path: String) -> Result
 #[tauri::command]
 pub async fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+#[tauri::command]
+pub async fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| format!("Failed to write file: {}", e))
 }

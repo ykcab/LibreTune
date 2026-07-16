@@ -535,15 +535,14 @@ function AppContent() {
   // Realtime ECU data stream lifecycle (extracted to hook).
   useRealtimeStream(status, fetchRealtimeData);
 
-  // Poll logging status when recording
+  // Poll logging status so toolbar reflects recorder state started elsewhere
+  // (Data Logging tab, auto-record, etc.).
   useEffect(() => {
-    if (!isLogging) return;
-    
-    const interval = setInterval(async () => {
+    const syncLoggingStatus = async () => {
       try {
         const loggingStatus = await invoke<{ is_recording: boolean; entry_count: number; duration_ms: number }>('get_logging_status');
         setIsLogging(loggingStatus.is_recording);
-        
+
         // Format duration as mm:ss
         const seconds = Math.floor(loggingStatus.duration_ms / 1000);
         const mins = Math.floor(seconds / 60);
@@ -552,10 +551,15 @@ function AppContent() {
       } catch (err) {
         console.error('Failed to get logging status:', err);
       }
+    };
+
+    const interval = setInterval(() => {
+      void syncLoggingStatus();
     }, 500);
-    
+    void syncLoggingStatus();
+
     return () => clearInterval(interval);
-  }, [isLogging]);
+  }, []);
 
   // Load menus when definition is loaded
   useEffect(() => {

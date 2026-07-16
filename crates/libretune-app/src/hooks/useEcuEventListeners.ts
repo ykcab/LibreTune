@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CurrentProject, ConnectionStatus } from "../types/app";
+import { requestReconnect } from "../utils/connectionWorkflow";
+import { useRealtimeStore } from "../stores/realtimeStore";
 
 export interface UseEcuEventListenersDeps {
   isTauri: boolean;
@@ -79,6 +81,34 @@ export function useEcuEventListeners(deps: UseEcuEventListenersDeps) {
     })();
     return () => { if (unlisten) unlisten(); };
   }, [status.state, showLoading, hideLoading, doSync]);
+
+  // Listen for unexpected ECU disconnect while streaming.
+  useEffect(() => {
+    if (!isTauri) return;
+    let unlistenLost: UnlistenFn | null = null;
+    (async () => {
+      try {
+        unlistenLost = await listen<string>("ecu:connection_lost", async (event) => {
+          console.warn("ECU connection lost:", event.payload);
+          useRealtimeStore.getState().clearChannels();
+          await checkStatus();
+          if (currentProject) {
+            requestReconnect({
+              source: "ecu-disconnect",
+              delayMs: 1200,
+              retries: 20,
+              port: currentProject.connection.port ?? undefined,
+            });
+          }
+        });
+      } catch (e) {
+        console.error("Failed to listen for ecu:connection_lost", e);
+      }
+    })();
+    return () => {
+      if (unlistenLost) unlistenLost();
+    };
+  }, [isTauri, checkStatus, currentProject]);
 
   // Listen for demo:changed events
   useEffect(() => {

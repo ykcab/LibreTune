@@ -1,11 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { BarChart3, Circle, FolderOpen, Key, Square, CircleDot, Trash2, Save, Pause, Play } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { BarChart3, Circle, FolderOpen, Key, Square, CircleDot, Trash2, Save, Pause, Play, LayoutList, LineChart as LineChartIcon, FileUp, FileDown } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { useChannels, useRealtimeStore } from '../../stores/realtimeStore';
+import { useGraphLogStore, exportGraphLogSetup, importGraphLogSetup } from '../../stores/graphLogStore';
 import LoggerStatsPanel from './LoggerStatsPanel';
+import GraphLog, { GraphSample } from './GraphLog';
 import './DataLogView.css';
+
+/** Hard cap on samples kept in the frontend; the oldest are dropped beyond it. */
+const MAX_FRONTEND_SAMPLES = 100_000;
 
 interface LoggingStatus {
   is_recording: boolean;
@@ -205,6 +210,7 @@ export const DataLogView: React.FC = () => {
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const [loadedFileName, setLoadedFileName] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(false);
+  const [chartMode, setChartMode] = useState<'graphlog' | 'overlay'>('graphlog');
   const [selectedStatsChannel, setSelectedStatsChannel] = useState<string | null>(null);
   const playbackIntervalRef = useRef<number | null>(null);
   
@@ -225,33 +231,98 @@ export const DataLogView: React.FC = () => {
     return () => window.removeEventListener('resize', updateSize);
   }, []);
   
-  // Poll status while recording
+  // Channels worth fetching from the recorded log: what the graph-log panes
+  // (across all tabs) and the overlay selection display. Fetching every INI
+  // channel per entry is megabytes per poll at high sample rates.
+  const graphTabs = useGraphLogStore((s) => s.tabs);
+  const neededChannels = React.useMemo(() => {
+    const set = new Set<string>(selectedChannels);
+    for (const tab of graphTabs) {
+      for (const pane of tab.panes) {
+        if (pane.left.channel) set.add(pane.left.channel);
+        if (pane.right.channel) set.add(pane.right.channel);
+      }
+    }
+    return Array.from(set);
+  }, [graphTabs, selectedChannels]);
+  const neededChannelsRef = useRef(neededChannels);
+  neededChannelsRef.current = neededChannels;
+  const lastKnownEntryCountRef = useRef(0);
+
+  // Append newly recorded entries to the accumulated session log.
+  // The session is one continuous log across Record/Stop cycles; only
+  // Clear (or loading a file for playback) replaces it.
+  const mergeEntries = useCallback((entries: LogEntry[]) => {
+    setLogData(prev => {
+      const lastT = prev.length > 0 ? prev[prev.length - 1].x : -1;
+      const fresh = entries
+        .filter(e => e.timestamp_ms > lastT)
+        .map(e => ({ x: e.timestamp_ms, values: e.values }));
+      if (fresh.length === 0) return prev;
+      const merged = [...prev, ...fresh];
+      return merged.length > MAX_FRONTEND_SAMPLES
+        ? merged.slice(merged.length - MAX_FRONTEND_SAMPLES)
+        : merged;
+    });
+  }, []);
+
+  const fetchLatestEntries = useCallback(async () => {
+    const newStatus = await invoke<LoggingStatus>('get_logging_status');
+    setStatus(newStatus);
+    setIsRecording(newStatus.is_recording);
+    if (newStatus.entry_count < lastKnownEntryCountRef.current) {
+      setLogData([]);
+    }
+    const entries = await invoke<LogEntry[]>('get_log_entries', {
+      startIndex: Math.max(0, newStatus.entry_count - 500),
+      count: 500,
+      channels: neededChannelsRef.current
+    });
+    mergeEntries(entries);
+    lastKnownEntryCountRef.current = newStatus.entry_count;
+  }, [mergeEntries]);
+
+  // When a channel is newly assigned to a pane, past samples don't contain it
+  // (they were fetched filtered). Refetch the whole log with the new set.
+  const needKey = neededChannels.join('|');
+  const logDataRef = useRef(logData);
+  logDataRef.current = logData;
   useEffect(() => {
-    if (!isRecording) return;
-    
+    if (logDataRef.current.length === 0 || viewMode === 'playback') return;
+    (async () => {
+      try {
+        const st = await invoke<LoggingStatus>('get_logging_status');
+        if (st.entry_count === 0) return;
+        const entries = await invoke<LogEntry[]>('get_log_entries', {
+          startIndex: 0,
+          count: st.entry_count,
+          channels: neededChannelsRef.current
+        });
+        setLogData(entries.map(e => ({ x: e.timestamp_ms, values: e.values })));
+      } catch (err) {
+        console.error('Failed to refetch log with new channels:', err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needKey]);
+
+  // Keep the page in sync with backend logger state even when logging was
+  // started/stopped elsewhere (toolbar, auto-record, other views).
+  useEffect(() => {
+    if (viewMode === 'playback') return;
+
     const interval = setInterval(async () => {
       try {
-        const newStatus = await invoke<LoggingStatus>('get_logging_status');
-        setStatus(newStatus);
-        
-        // Fetch latest entries for chart
-        const entries = await invoke<LogEntry[]>('get_log_entries', {
-          startIndex: Math.max(0, newStatus.entry_count - 500),
-          count: 500
-        });
-        
-        setLogData(entries.map(e => ({
-          x: e.timestamp_ms,
-          values: e.values
-        })));
-        
+        await fetchLatestEntries();
       } catch (err) {
         console.error('Failed to get logging status:', err);
       }
-    }, 200);
-    
+    }, 400);
+
+    void fetchLatestEntries();
+
     return () => clearInterval(interval);
-  }, [isRecording]);
+  }, [viewMode, fetchLatestEntries]);
   
   // Seed channel list once when ECU data first arrives (avoid subscribing to all channels at 20Hz).
   useEffect(() => {
@@ -294,7 +365,6 @@ export const DataLogView: React.FC = () => {
         invoke('start_logging', { sampleRate })
           .then(() => {
             setIsRecording(true);
-            setLogData([]);
           })
           .catch((err) => console.error('Failed to auto-start logging:', err));
       }
@@ -315,26 +385,25 @@ export const DataLogView: React.FC = () => {
   
   const handleStartLogging = useCallback(async () => {
     try {
+      // Recording appends to the current session log until Clear is pressed
       await invoke('start_logging', { sampleRate });
       setIsRecording(true);
-      setLogData([]);
     } catch (err) {
       console.error('Failed to start logging:', err);
     }
   }, [sampleRate]);
-  
+
   const handleStopLogging = useCallback(async () => {
     try {
       await invoke('stop_logging');
       setIsRecording(false);
-      
-      // Fetch final status
-      const finalStatus = await invoke<LoggingStatus>('get_logging_status');
-      setStatus(finalStatus);
+
+      // Fetch final status and any entries the last poll missed
+      await fetchLatestEntries();
     } catch (err) {
       console.error('Failed to stop logging:', err);
     }
-  }, []);
+  }, [fetchLatestEntries]);
   
   const handleClearLog = useCallback(async () => {
     try {
@@ -346,6 +415,44 @@ export const DataLogView: React.FC = () => {
     }
   }, []);
   
+  const handleExportSetup = useCallback(async () => {
+    try {
+      const path = await save({
+        defaultPath: 'graphlog_setup.json',
+        filters: [{ name: 'Graph Log Setup', extensions: ['json'] }]
+      });
+      if (!path) return;
+      const setup = exportGraphLogSetup(sampleRate);
+      await invoke('write_text_file', { path, contents: JSON.stringify(setup, null, 2) });
+    } catch (err) {
+      console.error('Failed to export setup:', err);
+      alert(`Failed to export setup: ${err}`);
+    }
+  }, [sampleRate]);
+
+  const handleImportSetup = useCallback(async () => {
+    try {
+      const path = await open({
+        filters: [{ name: 'Graph Log Setup', extensions: ['json'] }],
+        multiple: false
+      });
+      if (!path || Array.isArray(path)) return;
+      const text = await invoke<string>('read_text_file', { path });
+      const data = JSON.parse(text);
+      const error = importGraphLogSetup(data);
+      if (error) {
+        alert(error);
+        return;
+      }
+      if (typeof data.sampleRate === 'number' && !isRecording) {
+        setSampleRate(data.sampleRate);
+      }
+    } catch (err) {
+      console.error('Failed to import setup:', err);
+      alert(`Failed to import setup: ${err}`);
+    }
+  }, [isRecording]);
+
   const handleSaveLog = useCallback(async () => {
     try {
       const path = await save({
@@ -376,6 +483,7 @@ export const DataLogView: React.FC = () => {
     // Detect format: TunerStudio uses "Time" column, LibreTune uses "timestamp_ms"
     const timeColIndex = headers.findIndex(h => 
       h.toLowerCase() === 'time' || 
+      h.toLowerCase() === 'time (ms)' ||
       h.toLowerCase() === 'timestamp_ms' ||
       h.toLowerCase() === 'timestamp'
     );
@@ -569,9 +677,17 @@ export const DataLogView: React.FC = () => {
   };
   
   const liveValues = useChannels(selectedChannels);
-  
+
   // Get display values - use playback or realtime based on mode
   const displayValues = viewMode === 'playback' ? getCurrentPlaybackValues() : liveValues;
+
+  // Samples for the Graph Log: the session log — growing while recording,
+  // frozen after Stop, replaced by file data in playback, empty until the
+  // first recording or after Clear.
+  const graphSamples = useMemo<GraphSample[]>(
+    () => logData.map((d) => ({ t: d.x, values: d.values })),
+    [logData],
+  );
   
   return (
     <div className="datalog-view">
@@ -589,6 +705,24 @@ export const DataLogView: React.FC = () => {
         </div>
         
         <div className="datalog-controls">
+          <div className="control-group chart-mode-toggle">
+            <button
+              type="button"
+              className={`log-button secondary ${chartMode === 'graphlog' ? 'active' : ''}`}
+              onClick={() => setChartMode('graphlog')}
+              title="Stacked graph pages (TunerStudio-style graph log)"
+            >
+              <LayoutList size={14} /> Graph Log
+            </button>
+            <button
+              type="button"
+              className={`log-button secondary ${chartMode === 'overlay' ? 'active' : ''}`}
+              onClick={() => setChartMode('overlay')}
+              title="Single chart with overlaid channels"
+            >
+              <LineChartIcon size={14} /> Overlay
+            </button>
+          </div>
           {viewMode === 'live' ? (
             <>
               <div className="control-group">
@@ -643,12 +777,29 @@ export const DataLogView: React.FC = () => {
                 <Save size={14} /> Save
               </button>
               
-              <button 
+              <button
                 className="log-button secondary"
                 onClick={handleLoadLog}
                 disabled={isRecording}
               >
                 <FolderOpen size={14} /> Load
+              </button>
+
+              <button
+                className="log-button secondary"
+                onClick={handleExportSetup}
+                title="Export graph tabs, scales and sample rate to a file"
+              >
+                <FileUp size={14} /> Export
+              </button>
+
+              <button
+                className="log-button secondary"
+                onClick={handleImportSetup}
+                disabled={isRecording}
+                title="Import graph tabs, scales and sample rate from a file"
+              >
+                <FileDown size={14} /> Import
               </button>
             </>
           ) : (
@@ -725,48 +876,59 @@ export const DataLogView: React.FC = () => {
       )}
       
       <div className="datalog-content">
-        <div className="channel-selector">
-          <h4>Channels</h4>
-          <div className="channel-list">
-            {availableChannels.map((channel) => (
-              <label 
-                key={channel} 
-                className={`channel-item ${selectedChannels.includes(channel) ? 'selected' : ''}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedChannels.includes(channel)}
-                  onChange={() => toggleChannel(channel)}
-                />
-                <span 
-                  className="channel-color"
-                  style={{ 
-                    background: selectedChannels.includes(channel) 
-                      ? ['#00ff88', '#00aaff', '#ff6644', '#ffcc00', '#ff44ff', '#44ffff'][
-                          selectedChannels.indexOf(channel) % 6
-                        ]
-                      : '#444'
-                  }}
-                />
-                <span className="channel-name">{channel}</span>
-                <span className="channel-value">
-                  {displayValues[channel]?.toFixed(2) ?? '-'}
-                </span>
-              </label>
-            ))}
+        {chartMode === 'overlay' && (
+          <div className="channel-selector">
+            <h4>Channels</h4>
+            <div className="channel-list">
+              {availableChannels.map((channel) => (
+                <label
+                  key={channel}
+                  className={`channel-item ${selectedChannels.includes(channel) ? 'selected' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedChannels.includes(channel)}
+                    onChange={() => toggleChannel(channel)}
+                  />
+                  <span
+                    className="channel-color"
+                    style={{
+                      background: selectedChannels.includes(channel)
+                        ? ['#00ff88', '#00aaff', '#ff6644', '#ffcc00', '#ff44ff', '#44ffff'][
+                            selectedChannels.indexOf(channel) % 6
+                          ]
+                        : '#444'
+                    }}
+                  />
+                  <span className="channel-name">{channel}</span>
+                  <span className="channel-value">
+                    {displayValues[channel]?.toFixed(2) ?? '-'}
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
-        </div>
-        
+        )}
+
         <div className="chart-container" ref={chartContainerRef}>
-          <LineChart
-            data={logData}
-            channels={availableChannels}
-            selectedChannels={selectedChannels}
-            width={chartSize.width}
-            height={chartSize.height}
-            cursorPosition={viewMode === 'playback' ? playbackPosition : undefined}
-            onSeek={viewMode === 'playback' ? handleSeek : undefined}
-          />
+          {chartMode === 'graphlog' ? (
+            <GraphLog
+              samples={graphSamples}
+              availableChannels={availableChannels}
+              isRecording={isRecording}
+              cursorPosition={viewMode === 'playback' ? playbackPosition : null}
+            />
+          ) : (
+            <LineChart
+              data={logData}
+              channels={availableChannels}
+              selectedChannels={selectedChannels}
+              width={chartSize.width}
+              height={chartSize.height}
+              cursorPosition={viewMode === 'playback' ? playbackPosition : undefined}
+              onSeek={viewMode === 'playback' ? handleSeek : undefined}
+            />
+          )}
         </div>
 
         {showStats && (

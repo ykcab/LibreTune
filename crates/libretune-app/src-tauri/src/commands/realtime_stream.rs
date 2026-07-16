@@ -160,66 +160,25 @@ pub(crate) fn apply_channel_aliases(data: &mut HashMap<String, f64>) {
             data.insert("correction".to_string(), v * 100.0);
         }
     }
-
-    // Derive AFR from lambda when the ECU only exposes lambda (common on rusEFI).
-    if !data.contains_key("afr") {
-        let lambda = data
-            .get("lambda")
-            .or_else(|| data.get("lambdaValue"))
-            .or_else(|| data.get("lambda1"))
-            .or_else(|| data.get("Lambda"))
-            .or_else(|| data.get("wbo2"))
-            .copied();
-        if let Some(l) = lambda {
-            if (0.5..5.0).contains(&l) {
-                data.insert("afr".to_string(), l * 14.7);
-            } else if (5.0..25.0).contains(&l) {
-                // Already AFR-scaled on a "lambda" channel name
-                data.insert("afr".to_string(), l);
-            }
-        }
-    }
 }
 
-/// Resolve measured AFR for AutoTune. Returns (afr, valid).
-/// Prefers an explicit channel hint from VeAnalyze, then common AFR/lambda names.
-fn resolve_autotune_afr(data: &HashMap<String, f64>, hint: Option<&str>) -> (f64, bool) {
-    let mut candidates: Vec<&str> = Vec::new();
-    if let Some(h) = hint {
-        if !h.is_empty() {
-            candidates.push(h);
-        }
+/// Feed the current realtime snapshot to the data logger when a recording is
+/// active. The logger applies its own sample-rate limiting in `record()`.
+pub(crate) async fn feed_data_logger(app_state: &AppState, data: &HashMap<String, f64>) {
+    // try_lock: never stall the stream tick on logger contention
+    let mut logger = match app_state.data_logger.try_lock() {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    if !logger.is_recording() {
+        return;
     }
-    candidates.extend([
-        "afr",
-        "AFR",
-        "afr1",
-        "AFRValue",
-        "RealAFRValue",
-        "lambda",
-        "lambdaValue",
-        "lambda1",
-        "Lambda",
-        "wbo2",
-    ]);
-
-    for key in candidates {
-        if let Some(&v) = data.get(key) {
-            if !v.is_finite() || v <= 0.0 {
-                continue;
-            }
-            // Lambda range
-            if (0.5..5.0).contains(&v) {
-                return (v * 14.7, true);
-            }
-            // AFR range
-            if (5.0..25.0).contains(&v) {
-                return (v, true);
-            }
-        }
-    }
-
-    (0.0, false)
+    let values: Vec<f64> = logger
+        .channels()
+        .iter()
+        .map(|name| data.get(name).copied().unwrap_or(0.0))
+        .collect();
+    logger.record(values);
 }
 
 pub(crate) async fn feed_autotune_data(
@@ -279,7 +238,17 @@ pub(crate) async fn feed_autotune_data(
         }
     };
 
-    let (afr, afr_valid) = resolve_autotune_afr(data, config.afr_channel_hint.as_deref());
+    let afr_raw = data
+        .get("afr")
+        .or_else(|| data.get("AFR"))
+        .or_else(|| data.get("afr1"))
+        .or_else(|| data.get("AFRValue"))
+        .or_else(|| data.get("lambda1"))
+        .copied();
+    let afr_valid = afr_raw.is_some();
+    let afr = afr_raw
+        .map(|v| if v < 2.0 { v * 14.7 } else { v }) // Convert lambda to AFR
+        .unwrap_or(14.7);
 
     let ve = data
         .get("ve")
@@ -320,11 +289,6 @@ pub(crate) async fn feed_autotune_data(
     // Update last values for next iteration
     config.last_tps = Some(tps);
     config.last_timestamp_ms = Some(current_time_ms);
-    if afr_valid {
-        config.saw_valid_afr = true;
-    } else {
-        config.missing_afr_samples = config.missing_afr_samples.saturating_add(1);
-    }
 
     // Check for accel enrichment flag
     let accel_enrich_active = data
@@ -340,13 +304,13 @@ pub(crate) async fn feed_autotune_data(
         maf: maf_value,
         load: load_value,
         afr,
+        afr_valid,
         ve,
         clt,
         tps,
         tps_rate,
         accel_enrich_active,
         timestamp_ms: current_time_ms,
-        afr_valid,
     };
 
     // Clone the config values before we release the guard
@@ -506,6 +470,7 @@ pub async fn start_realtime_stream(
         }
 
         let mut tick_count: u64 = 0;
+        let mut consecutive_read_errors: u32 = 0;
         // Local stream stat counters (flushed to shared state periodically)
         let mut local_ticks_total: u64 = 0;
         let mut local_ticks_success: u64 = 0;
@@ -595,6 +560,9 @@ pub async fn start_realtime_stream(
                     // Feed data to AutoTune if running
                     feed_autotune_data(&app_state, &data, current_time_ms).await;
 
+                    // Feed data to the data logger if recording
+                    feed_data_logger(&app_state, &data).await;
+
                     local_ticks_success += 1;
                 }
             } else {
@@ -646,6 +614,7 @@ pub async fn start_realtime_stream(
                 // Diagnostic logging for raw result
                 match &raw_result {
                     Ok(raw) => {
+                        consecutive_read_errors = 0;
                         static STREAM_LOG_COUNTER: std::sync::atomic::AtomicU64 =
                             std::sync::atomic::AtomicU64::new(0);
                         let count =
@@ -659,6 +628,7 @@ pub async fn start_realtime_stream(
                         }
                     }
                     Err(e) => {
+                        consecutive_read_errors = consecutive_read_errors.saturating_add(1);
                         static ERR_LOG_COUNTER: std::sync::atomic::AtomicU64 =
                             std::sync::atomic::AtomicU64::new(0);
                         let count =
@@ -670,6 +640,27 @@ pub async fn start_realtime_stream(
                             );
                         }
                     }
+                }
+
+                // If we keep failing to read realtime data, assume the ECU/link is gone.
+                // This updates backend connection state immediately so UI can flip offline
+                // and auto-reconnect logic can begin polling for the controller.
+                if consecutive_read_errors >= 3 {
+                    let mut marked_disconnected = false;
+                    {
+                        let mut conn_guard = app_state.connection.lock().await;
+                        if let Some(conn) = conn_guard.as_mut() {
+                            conn.disconnect();
+                            marked_disconnected = true;
+                        }
+                        *conn_guard = None;
+                    }
+                    if marked_disconnected {
+                        let reason = "ECU connection lost during realtime stream";
+                        stream_log(reason);
+                        let _ = app_handle.emit("ecu:connection_lost", reason);
+                    }
+                    break;
                 }
 
                 // Phase 2: Use pre-cached output channels and endianness (no locks needed)
@@ -787,6 +778,9 @@ pub async fn start_realtime_stream(
                             stream_log(&format!("tick #{}: T6-autotune", tick_count));
                         }
                         feed_autotune_data(&app_state, &data, current_time_ms).await;
+
+                        // Feed data to the data logger if recording
+                        feed_data_logger(&app_state, &data).await;
 
                         local_ticks_success += 1;
                     }

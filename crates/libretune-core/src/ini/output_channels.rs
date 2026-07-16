@@ -98,18 +98,12 @@ impl OutputChannel {
             .data_type
             .read_from_bytes(data, self.offset as usize, endian)?;
 
-        if self.data_type == DataType::Bits {
-            if let Some(pos) = self.bit_position {
-                // Prevent shift overflow - if bit position >= 8, treat as invalid
-                if pos < 8 {
-                    let bit_val = (raw as u8 >> pos) & 1;
-                    return Some(self.raw_to_display(bit_val as f64));
-                } else {
-                    // For larger bit positions, use u64 shift
-                    let bit_val = ((raw as u64) >> (pos as u64)) & 1;
-                    return Some(self.raw_to_display(bit_val as f64));
-                }
+        if let Some(pos) = self.bit_position {
+            if pos < 64 {
+                let bit_val = ((raw as u64) >> (pos as u64)) & 1;
+                return Some(self.raw_to_display(bit_val as f64));
             }
+            return None;
         }
 
         Some(self.raw_to_display(raw))
@@ -235,7 +229,6 @@ pub fn parse_output_channel_line(name: &str, value: &str) -> Option<OutputChanne
     let mut channel = OutputChannel::new(name, data_type, offset);
 
     if is_bits_prefix {
-        channel.data_type = DataType::Bits;
         if parts.len() > 2 {
             let p2 = parts[2];
             if p2.starts_with('[') {
@@ -289,5 +282,26 @@ mod tests {
         assert!(ch.is_computed());
         assert_eq!(ch.expression.unwrap(), "ego1 / 10.0");
         assert_eq!(ch.units, "AFR");
+    }
+
+    #[test]
+    fn test_parse_bits_keeps_underlying_type() {
+        let ch = parse_output_channel_line("isMapValid", "bits, U32, 0, [25:25]");
+        assert!(ch.is_some());
+        let ch = ch.unwrap();
+        assert_eq!(ch.data_type, DataType::U32);
+        assert_eq!(ch.offset, 0);
+        assert_eq!(ch.bit_position, Some(25));
+    }
+
+    #[test]
+    fn test_parse_bits_u32_high_bit_value() {
+        let ch = parse_output_channel_line("isMapValid", "bits, U32, 0, [25:25]")
+            .expect("expected valid bits channel");
+        let raw = [0x00, 0x00, 0x00, 0x02];
+        let val = ch
+            .parse(&raw, crate::ini::types::Endianness::Little)
+            .expect("expected parsed bit value");
+        assert_eq!(val, 1.0);
     }
 }

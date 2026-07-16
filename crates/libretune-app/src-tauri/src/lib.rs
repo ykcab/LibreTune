@@ -49,8 +49,7 @@ use commands::annotations::{
 use commands::apply_base_map::apply_base_map;
 use commands::autotune_misc::{
     burn_autotune_recommendations, get_autotune_heatmap, get_autotune_recommendations,
-    get_autotune_status, lock_autotune_cells, send_autotune_recommendations, stop_autotune,
-    unlock_autotune_cells,
+    lock_autotune_cells, send_autotune_recommendations, stop_autotune, unlock_autotune_cells,
 };
 use commands::available_inis::get_available_inis;
 use commands::base_map::generate_base_map;
@@ -78,7 +77,7 @@ use commands::dash_layout::{
 };
 use commands::data_logging::{
     clear_log, get_log_entries, get_logging_status, read_text_file, save_log, start_logging,
-    stop_logging,
+    stop_logging, write_text_file,
 };
 use commands::debug_realtime::debug_single_realtime_read;
 use commands::demo::{get_demo_mode, set_demo_mode};
@@ -86,7 +85,6 @@ use commands::diagnostic_loggers::{
     start_composite_logger, start_tooth_logger, stop_composite_logger, stop_tooth_logger,
 };
 use commands::dyno::{compare_dyno_runs, detect_dyno_headers, load_dyno_run};
-use commands::virtual_dyno::{check_virtual_dyno_vss, compute_virtual_dyno_pull};
 use commands::find_inis::find_matching_inis;
 use commands::firmware_update::{
     get_firmware_flasher_info, get_firmware_update_guidance, recover_ecu_firmware_dfu,
@@ -160,9 +158,7 @@ use commands::tune_io::{burn_to_ecu, execute_controller_command, list_tune_files
 use commands::tune_migration::{
     clear_migration_report, get_migration_report, get_tune_constant_manifest, get_tune_ini_metadata,
 };
-use commands::tune_misc::{
-    update_constant_string, use_ecu_tune, use_project_tune,
-};
+use commands::tune_misc::{update_constant_string, use_ecu_tune, use_project_tune};
 use commands::update_project_ini::update_project_ini;
 use commands::wasm_plugin::{
     execute_wasm_plugin, get_wasm_plugin_info, list_wasm_plugins, load_wasm_plugin,
@@ -266,7 +262,6 @@ pub fn run() {
             get_all_constant_values,
             start_autotune,
             stop_autotune,
-            get_autotune_status,
             get_autotune_recommendations,
             get_autotune_heatmap,
             send_autotune_recommendations,
@@ -286,8 +281,6 @@ pub fn run() {
             load_dyno_run,
             detect_dyno_headers,
             compare_dyno_runs,
-            check_virtual_dyno_vss,
-            compute_virtual_dyno_pull,
             get_dyno_table_overlay,
             rebin_table,
             smooth_table,
@@ -346,6 +339,7 @@ pub fn run() {
             clear_log,
             save_log,
             read_text_file,
+            write_text_file,
             // Diagnostic commands (stubs)
             start_tooth_logger,
             stop_tooth_logger,

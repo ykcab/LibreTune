@@ -52,6 +52,7 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
 
       const source = detail.source ?? 'unknown';
       const isFirmware = source.includes('firmware');
+      const isEcuDisconnect = source.includes('ecu-disconnect');
 
       try {
         const settings = await invoke<{
@@ -75,8 +76,9 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
         console.warn('Could not read reconnect settings:', e);
       }
 
-      const delayMs = detail.delayMs ?? (isFirmware ? 8000 : 2000);
-      const maxRetries = detail.retries ?? (isFirmware ? 10 : 4);
+      const delayMs = detail.delayMs ?? (isFirmware ? 8000 : isEcuDisconnect ? 600 : 2000);
+      const maxRetries = detail.retries ?? (isFirmware ? 10 : isEcuDisconnect ? 30 : 4);
+      const retryIntervalMs = isFirmware ? 2500 : isEcuDisconnect ? 1000 : 2500;
       const targetPort =
         detail.port ?? projectPort ?? lastSerialPort ?? undefined;
 
@@ -98,7 +100,7 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
               : undefined;
 
         if (!port) {
-          await sleep(2500);
+          await sleep(retryIntervalMs);
           continue;
         }
 
@@ -119,7 +121,7 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
           console.debug('Reconnect attempt failed:', e);
         }
 
-        await sleep(2500);
+        await sleep(retryIntervalMs);
       }
 
       showToast(
