@@ -22,8 +22,8 @@ pub struct DataLogger {
     is_recording: bool,
     /// Target sample rate in Hz
     sample_rate: f64,
-    /// Last sample time
-    last_sample: Option<Instant>,
+    /// Next scheduled sample time (fixed cadence, avoids jitter drift)
+    next_sample_due: Option<Instant>,
 }
 
 impl DataLogger {
@@ -35,7 +35,7 @@ impl DataLogger {
             start_time: None,
             is_recording: false,
             sample_rate: 10.0, // Default 10 Hz
-            last_sample: None,
+            next_sample_due: None,
         }
     }
 
@@ -59,7 +59,7 @@ impl DataLogger {
         let elapsed = self.duration();
         self.start_time = now.checked_sub(elapsed).or(Some(now));
         self.is_recording = true;
-        self.last_sample = None;
+        self.next_sample_due = Some(now);
     }
 
     /// Stop recording
@@ -82,15 +82,18 @@ impl DataLogger {
 
         // Check sample rate
         let min_interval = Duration::from_secs_f64(1.0 / self.sample_rate);
-        if let Some(last) = self.last_sample {
-            if now.duration_since(last) < min_interval {
+        let sample_instant = if let Some(due) = self.next_sample_due {
+            if now < due {
                 return;
             }
-        }
+            due
+        } else {
+            now
+        };
 
         let timestamp = self
             .start_time
-            .map(|start| now.duration_since(start))
+            .map(|start| sample_instant.duration_since(start))
             .unwrap_or_default();
 
         let entry = LogEntry::new(timestamp, values);
@@ -101,7 +104,14 @@ impl DataLogger {
         }
 
         self.buffer.push_back(entry);
-        self.last_sample = Some(now);
+
+        // Keep a fixed cadence anchored to the schedule rather than "now", so
+        // occasional stream jitter does not accumulate timeline drift.
+        let mut next_due = sample_instant + min_interval;
+        while next_due <= now {
+            next_due += min_interval;
+        }
+        self.next_sample_due = Some(next_due);
     }
 
     /// Get the number of recorded entries
@@ -123,6 +133,7 @@ impl DataLogger {
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.start_time = None;
+        self.next_sample_due = None;
     }
 
     /// Get the duration of the log

@@ -43,9 +43,21 @@ pub async fn get_dialog_definition(
 ) -> Result<DialogDefinition, String> {
     let def_guard = state.definition.lock().await;
     let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+    if let Some(dialog) = def.dialogs.get(&name) {
+        return Ok(dialog.clone());
+    }
+
+    // Some INIs/menu targets differ only by case. Fall back to case-insensitive
+    // lookup so menu navigation remains robust.
     def.dialogs
-        .get(&name)
-        .cloned()
+        .iter()
+        .find_map(|(dialog_name, dialog)| {
+            if dialog_name.eq_ignore_ascii_case(&name) {
+                Some(dialog.clone())
+            } else {
+                None
+            }
+        })
         .ok_or_else(|| format!("Dialog {} not found", name))
 }
 

@@ -362,7 +362,7 @@ export const DataLogView: React.FC = () => {
 
       // Auto-start recording on key-on
       if (newState === 'on' && !isRecording && viewMode === 'live') {
-        invoke('start_logging', { sampleRate })
+        invoke('start_logging', { sampleRate, channels: neededChannelsRef.current })
           .then(() => {
             setIsRecording(true);
           })
@@ -386,7 +386,7 @@ export const DataLogView: React.FC = () => {
   const handleStartLogging = useCallback(async () => {
     try {
       // Recording appends to the current session log until Clear is pressed
-      await invoke('start_logging', { sampleRate });
+      await invoke('start_logging', { sampleRate, channels: neededChannelsRef.current });
       setIsRecording(true);
     } catch (err) {
       console.error('Failed to start logging:', err);

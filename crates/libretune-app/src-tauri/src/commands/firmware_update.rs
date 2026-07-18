@@ -486,6 +486,15 @@ fn default_bin_flash_address() -> u32 {
     0x0800_8000
 }
 
+fn safe_bin_flash_address_for_ecu(ecu_type: libretune_core::ini::EcuType) -> u32 {
+    match ecu_type {
+        libretune_core::ini::EcuType::RusEFI
+        | libretune_core::ini::EcuType::FOME
+        | libretune_core::ini::EcuType::EpicEFI => 0x0800_8000,
+        _ => default_bin_flash_address(),
+    }
+}
+
 const OPENBLT_BOOTLOADER_ADDRESS: u32 = 0x0800_0000;
 
 fn stm32_programmer_port(cli: &Path) -> String {
@@ -716,9 +725,12 @@ fn classify_firmware_file(path: &Path, method: &str) -> FirmwareUpdateGuidance {
         ("dfu", "raw_bin") => {
             risk_level = "medium";
             warnings.push(
-                "Raw .bin via DFU writes the application at 0x08008000. Prefer rusefi.hex — \
-                 STM32CubeProgrammer reads addresses from the file automatically."
-                    .into(),
+                format!(
+                    "For DFU + .bin, LibreTune uses dfu-util with safe preset address \
+                     0x{:08X} (rusEFI/epicEFI app region). STM32CubeProgrammer should \
+                     use .hex/.dfu only.",
+                    default_bin_flash_address()
+                ),
             );
         }
         ("dfu", "srec" | "update_srec") => {
@@ -820,7 +832,8 @@ fn validate_firmware_file(path: &Path, method: &str) -> Result<(), String> {
     match method {
         "dfu" if !matches!(ext.as_str(), "dfu" | "hex" | "bin" | "s19" | "srec") => {
             return Err(
-                "DFU update expects a .dfu, .hex, .bin, or .srec firmware file".to_string(),
+                "DFU update expects a .dfu, .hex, .bin, or .srec firmware file"
+                    .to_string(),
             );
         }
         "openblt" if !matches!(ext.as_str(), "srec" | "s19" | "hex" | "bin") => {
@@ -863,19 +876,16 @@ pub async fn update_ecu_firmware(
     }
 
     let ext = firmware_extension(&path);
-    let resolved_bin_address = if ext == "bin" {
-        Some(
-            parse_flash_address(bin_flash_address.as_deref())?
-                .unwrap_or_else(default_bin_flash_address),
-        )
-    } else {
-        None
-    };
-
-    let command_name = {
+    let (command_name, ecu_type) = {
         let def_guard = state.definition.lock().await;
         let def = def_guard.as_ref().ok_or("No INI definition loaded")?;
-        resolve_bootloader_command(def, &method)?
+        (resolve_bootloader_command(def, &method)?, def.ecu_type)
+    };
+    let resolved_bin_address = if ext == "bin" {
+        let safe_preset = safe_bin_flash_address_for_ecu(ecu_type);
+        Some(parse_flash_address(bin_flash_address.as_deref())?.unwrap_or(safe_preset))
+    } else {
+        None
     };
 
     let mut log = Vec::new();
@@ -899,7 +909,24 @@ pub async fn update_ecu_firmware(
 
     let flash_output = match method.as_str() {
         "dfu" => {
-            if let Some(cli) = find_stm32_programmer_cli() {
+            if ext == "bin" {
+                // Important safety behavior: .bin is handled via dfu-util (same path used by
+                // rusEFI Console / epicEFI tooling). Do not use STM32CubeProgrammer for raw .bin.
+                let tool = find_dfu_util().ok_or(
+                    "dfu-util is required for DFU flashing of raw .bin files. \
+                     Install dfu-util or use rusefi.hex with STM32CubeProgrammer.",
+                )?;
+                push_log(
+                    &app,
+                    &mut log,
+                    format!(
+                        "Flashing .bin via {} with safe preset address 0x{:08X}…",
+                        tool.display(),
+                        resolved_bin_address.unwrap_or(default_bin_flash_address())
+                    ),
+                );
+                flash_with_dfu_util(&tool, &path, resolved_bin_address)?
+            } else if let Some(cli) = find_stm32_programmer_cli() {
                 if ext == "bin" {
                     push_log(
                         &app,

@@ -164,6 +164,7 @@ pub struct AppState {
     pub ini_repository: Mutex<Option<IniRepository>>,
     pub online_ini_repository: Mutex<OnlineIniRepository>,
     pub tune_cache: Mutex<Option<TuneCache>>,
+    pub tune_mismatch_snapshot: Mutex<Option<TuneMismatchSnapshot>>,
     pub demo_mode: Mutex<bool>,
     pub wasm_plugin_manager: Mutex<Option<WasmPluginManager>>,
     pub migration_report: Mutex<Option<MigrationReport>>,
@@ -173,4 +174,11 @@ pub struct AppState {
     pub rpm_state_tracker: Mutex<RpmStateTracker>,
     pub math_channels: Mutex<Vec<UserMathChannel>>,
     pub stream_stats: Mutex<StreamStats>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TuneMismatchSnapshot {
+    pub project_pages: HashMap<u8, Vec<u8>>,
+    pub ecu_pages: HashMap<u8, Vec<u8>>,
+    pub diff_pages: Vec<u8>,
 }

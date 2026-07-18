@@ -2,7 +2,7 @@
 
 use libretune_core::datalog::DataLogger;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::state::AppState;
 
@@ -24,22 +24,44 @@ pub struct LogEntryData {
 pub async fn start_logging(
     state: tauri::State<'_, AppState>,
     sample_rate: Option<f64>,
+    channels: Option<Vec<String>>,
 ) -> Result<(), String> {
     let def_guard = state.definition.lock().await;
     let def = def_guard.as_ref().ok_or("Definition not loaded")?;
 
-    let mut channels: Vec<String> = def.output_channels.keys().cloned().collect();
+    let mut available_channels: Vec<String> = def.output_channels.keys().cloned().collect();
 
     // Also log the canonical alias names (RPM, MAP, TPS, …) that the realtime
     // stream adds via apply_channel_aliases, so recorded logs and saved CSVs
     // use the same channel names as the dashboards and graph pages.
-    let mut probe: HashMap<String, f64> = channels.iter().map(|c| (c.clone(), 0.0)).collect();
+    let mut probe: HashMap<String, f64> = available_channels
+        .iter()
+        .map(|c| (c.clone(), 0.0))
+        .collect();
     super::realtime_stream::apply_channel_aliases(&mut probe);
     for name in probe.keys() {
-        if !channels.iter().any(|c| c == name) {
-            channels.push(name.clone());
+        if !available_channels.iter().any(|c| c == name) {
+            available_channels.push(name.clone());
         }
     }
+    let available_set: HashSet<&str> = available_channels.iter().map(|s| s.as_str()).collect();
+
+    let channels: Vec<String> = if let Some(requested) = channels {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for name in requested {
+            if available_set.contains(name.as_str()) && seen.insert(name.clone()) {
+                out.push(name);
+            }
+        }
+        if out.is_empty() {
+            default_log_channels(&available_channels)
+        } else {
+            out
+        }
+    } else {
+        default_log_channels(&available_channels)
+    };
 
     let mut logger = state.data_logger.lock().await;
 
@@ -60,6 +82,68 @@ pub async fn start_logging(
     logger.start();
 
     Ok(())
+}
+
+fn default_log_channels(available: &[String]) -> Vec<String> {
+    // Keep the default capture focused on channels that are immediately useful
+    // for tuning sessions (closer to typical TS logs), instead of hundreds of
+    // low-value fields.
+    const PREFERRED: &[&str] = &[
+        "Time",
+        "time",
+        "RPM",
+        "rpm",
+        "RPMValue",
+        "instantRpm",
+        "MAP",
+        "map",
+        "instantMAPValue",
+        "TPS",
+        "tps",
+        "throttle",
+        "throttlePedalPosition",
+        "AFR",
+        "afr",
+        "lambda",
+        "lambdaValue",
+        "coolant",
+        "CLT",
+        "iat",
+        "IAT",
+        "battery",
+        "advance",
+        "spark",
+        "injPw",
+        "PW",
+        "fuelPulseWidth",
+        "dutyCycle",
+        "egoCorrection",
+        "correction",
+        "targetAfr",
+        "targetLambda",
+        "sync",
+        "engineSync",
+        "triggerSync",
+        "vehicleSpeed",
+        "vss",
+        "baro",
+        "baroPressure",
+    ];
+
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for preferred in PREFERRED {
+        if available.iter().any(|c| c == preferred) && seen.insert(*preferred) {
+            out.push((*preferred).to_string());
+        }
+    }
+    // Fallback for unusual INIs: still capture some data even if none of the
+    // preferred names are present.
+    if out.is_empty() {
+        available.iter().take(48).cloned().collect()
+    } else {
+        out
+    }
 }
 
 #[tauri::command]

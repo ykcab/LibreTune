@@ -124,6 +124,7 @@ pub async fn use_project_tune(
         *state.current_tune.lock().await = Some(tune);
         *state.current_tune_path.lock().await = Some(tune_path);
         *state.tune_modified.lock().await = false;
+        *state.tune_mismatch_snapshot.lock().await = None;
 
         // Emit event to trigger re-sync if connected
         let _ = app.emit("tune:loaded", "project");
@@ -131,10 +132,13 @@ pub async fn use_project_tune(
         return Err("Project tune file not found".to_string());
     }
 
-    // Push project tune to ECU when connected
+    // Push project tune to ECU when connected and burn immediately so the
+    // controller flash matches the selected project tune.
     drop(project_guard);
     if state.connection.lock().await.is_some() {
-        crate::commands::project_tune_sync::write_project_tune_to_ecu(app, state).await
+        crate::commands::project_tune_sync::write_project_tune_to_ecu(app.clone(), state.clone())
+            .await?;
+        crate::commands::tune_io::burn_to_ecu(app, state).await
     } else {
         Ok(())
     }
@@ -152,6 +156,7 @@ pub async fn use_ecu_tune(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     *state.tune_modified.lock().await = false;
+    *state.tune_mismatch_snapshot.lock().await = None;
 
     let has_project = state.current_project.lock().await.is_some();
     if has_project {

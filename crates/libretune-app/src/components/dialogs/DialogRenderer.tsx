@@ -31,6 +31,7 @@ export default function DialogRenderer({ definition, onBack, openTable, context,
   
   // State for help icon visibility setting (default true = show on all fields)
   const [showAllHelpIcons, setShowAllHelpIcons] = useState(true);
+  const [isDialogEmpty, setIsDialogEmpty] = useState(false);
   
   // Ref for scrolling to highlighted field
   const containerRef = useRef<HTMLDivElement>(null);
@@ -80,6 +81,39 @@ export default function DialogRenderer({ definition, onBack, openTable, context,
     
     return () => clearTimeout(timer);
   }, [highlightTerm, definition.name]);
+
+  // Some INI dialogs are composed only of conditional panels. When all
+  // conditions evaluate false, the content area appears blank; show a clear
+  // empty-state hint instead of a silent black panel.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const contentSelector = [
+      '.dialog-field',
+      '.nested-panel',
+      '.embedded-table-link',
+      '.embedded-table',
+      '.embedded-port-editor',
+      '.runtime-value-readout',
+      '.dialog-label',
+      '.command-button',
+      '.dialog-indicator',
+      '.indicator-panel',
+      '.readout-panel',
+      '.dialog-gauge-stack',
+    ].join(', ');
+
+    const refresh = () => {
+      const hasContent = container.querySelector(contentSelector) !== null;
+      setIsDialogEmpty(!hasContent);
+    };
+
+    refresh();
+    const obs = new MutationObserver(refresh);
+    obs.observe(container, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, [definition.name, definition.components]);
   
   const handleFieldFocus = (info: FieldInfo) => {
     setSelectedField(info);
@@ -107,6 +141,12 @@ export default function DialogRenderer({ definition, onBack, openTable, context,
           onFieldFocus={handleFieldFocus}
           showAllHelpIcons={showAllHelpIcons}
         />
+        {isDialogEmpty ? (
+          <div className="dialog-empty-state">
+            No settings are currently visible for this dialog. This usually means
+            the panel is conditionally hidden by current ECU/project configuration.
+          </div>
+        ) : null}
       </div>
       
       <div className="dialog-description-panel">

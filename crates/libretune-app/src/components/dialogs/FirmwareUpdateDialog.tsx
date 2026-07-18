@@ -138,7 +138,7 @@ export function FirmwareUpdateDialog({
       method === 'dfu'
         ? [
             { name: 'Recommended', extensions: ['hex', 'dfu'] },
-            { name: 'Raw binary (advanced)', extensions: ['bin'] },
+            { name: 'rusEFI/epicEFI .bin (dfu-util only)', extensions: ['bin'] },
             { name: 'All Files', extensions: ['*'] },
           ]
         : [
@@ -202,7 +202,7 @@ export function FirmwareUpdateDialog({
         firmwarePath &&
         riskAckSatisfied &&
         !openbltNeedsObjcopy &&
-        (method !== 'dfu' || !isBinFirmware || binFlashAddress.trim().length > 0) &&
+        (method !== 'dfu' || !isBinFirmware || !!flasherInfo?.dfu_util) &&
         ((method === 'dfu' &&
           dfuAvailable &&
           (flasherInfo?.stm32_programmer_cli || flasherInfo?.dfu_util)) ||
@@ -491,20 +491,11 @@ export function FirmwareUpdateDialog({
                 )}
 
                 {method === 'dfu' && isBinFirmware && (
-                  <div className="firmware-update-field">
-                    <label htmlFor="bin-flash-address">Binary flash address</label>
-                    <input
-                      id="bin-flash-address"
-                      className="firmware-address-input"
-                      value={binFlashAddress}
-                      onChange={(e) => setBinFlashAddress(e.target.value)}
-                      disabled={isUpdating}
-                      spellCheck={false}
-                      placeholder="0x08008000"
-                    />
-                    <p className="firmware-flasher-hint">
-                      Only needed for raw .bin — prefer <code>rusefi.hex</code> instead.
-                    </p>
+                  <div className="firmware-update-warning">
+                    Using raw <code>.bin</code> in DFU mode requires <code>dfu-util</code>.
+                    LibreTune will not use STM32CubeProgrammer for <code>.bin</code> and applies
+                    safe preset address <code>0x08008000</code> for rusEFI/epicEFI application
+                    flashing.
                   </div>
                 )}
 

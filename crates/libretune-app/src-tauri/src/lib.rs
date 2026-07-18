@@ -140,7 +140,9 @@ use commands::restore_points::{
 use commands::save_tune::{save_tune, save_tune_as};
 use commands::settings::{get_settings, update_heatmap_custom_stops, update_setting};
 use commands::start_autotune::start_autotune;
-use commands::sync_ecu_data::sync_ecu_data;
+use commands::sync_ecu_data::{
+    get_tune_mismatch_page_diff, get_tune_mismatch_page_readable_diff, sync_ecu_data,
+};
 use commands::system::{get_build_info, get_serial_ports};
 use commands::table_compare::compare_tables;
 use commands::table_ops::{
@@ -189,6 +191,7 @@ pub fn run() {
             ini_repository: Mutex::new(None),
             online_ini_repository: Mutex::new(OnlineIniRepository::new()),
             tune_cache: Mutex::new(None),
+            tune_mismatch_snapshot: Mutex::new(None),
             demo_mode: Mutex::new(false),
             console_history: Mutex::new(Vec::new()),
             rpm_state_tracker: Mutex::new(RpmStateTracker::new()),
@@ -206,6 +209,8 @@ pub fn run() {
             get_available_inis,
             connect_to_ecu,
             sync_ecu_data,
+            get_tune_mismatch_page_diff,
+            get_tune_mismatch_page_readable_diff,
             disconnect_ecu,
             enable_adaptive_timing,
             disable_adaptive_timing,

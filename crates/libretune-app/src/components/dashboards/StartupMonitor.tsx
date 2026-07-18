@@ -46,6 +46,8 @@ const COL_FUEL: TelemetryRow[] = [
   { key: 'lambda', label: 'Lambda', unit: 'λ', digits: 3, alt: 'afr', warnLo: 0.82, warnHi: 1.2 },
   { key: 'dutyCycle', label: 'Inj Duty', unit: '%', digits: 1, warnHi: 85, critHi: 95 },
   { key: 'pulseWidth', label: 'Inj PW', unit: 'ms', digits: 2 },
+  { key: 'lowFuelPressure', label: 'LPFP', unit: 'kPa', digits: 0, alt: 'fuelPressure' },
+  { key: 'highFuelPressure', label: 'HPFP', unit: 'kPa', digits: 0, alt: 'rawHighFuelPressure' },
 ];
 
 const COL_CRITICAL: TelemetryRow[] = [
@@ -163,7 +165,7 @@ function TelemetryColumns({ channels }: { channels: Record<string, number> }) {
 export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
   const channels = useChannels([
     'rpm', 'tps', 'map', 'lambda', 'afr', 'battery', 'coolant', 'iat', 'egt', 'egt1',
-    'oilPressure', 'oilTemp', 'fuelPressure', 'boost', 'advance',
+    'oilPressure', 'oilTemp', 'fuelPressure', 'lowFuelPressure', 'highFuelPressure', 'rawHighFuelPressure', 'boost', 'advance',
     'pulseWidth', 'dutyCycle', 'closedLoop', 'fuelPump', 'fan', 'knock',
     'softLimit', 'hardLimit', 'launch', 'ase',
   ]);

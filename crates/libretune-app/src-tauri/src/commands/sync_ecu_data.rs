@@ -1,8 +1,11 @@
 //! sync_ecu_data command (extracted from lib.rs).
 
+use crate::state::TuneMismatchSnapshot;
 use crate::{set_conn_lock_holder, AppState, SyncProgress, SyncResult};
+use libretune_core::ini::{Constant, DataType, Endianness};
 use libretune_core::tune::TuneFile;
-use std::collections::HashMap;
+use serde::Serialize;
+use std::collections::{BTreeMap, HashMap};
 use tauri::Emitter;
 
 async fn snapshot_baseline_pages(state: &AppState) -> HashMap<u8, Vec<u8>> {
@@ -67,6 +70,130 @@ async fn restore_baseline_pages(state: &AppState, baseline: &HashMap<u8, Vec<u8>
         }
         let mut tune_guard = state.current_tune.lock().await;
         *tune_guard = Some(tune);
+    }
+}
+
+#[derive(Serialize)]
+pub struct TuneMismatchByteDiff {
+    pub offset: u32,
+    pub project_value: u8,
+    pub ecu_value: u8,
+}
+
+#[derive(Serialize)]
+pub struct TuneMismatchPageDiff {
+    pub page: u8,
+    pub page_size: u32,
+    pub total_differences: u32,
+    pub returned_differences: u32,
+    pub differences: Vec<TuneMismatchByteDiff>,
+}
+
+#[derive(Serialize)]
+pub struct TuneMismatchReadableEntry {
+    pub name: String,
+    pub label: String,
+    pub kind: String,
+    pub context: Option<String>,
+    pub project_value: String,
+    pub ecu_value: String,
+    pub units: String,
+    pub changed_bytes: u32,
+}
+
+#[derive(Serialize)]
+pub struct TuneMismatchReadablePageDiff {
+    pub page: u8,
+    pub total_entries: u32,
+    pub returned_entries: u32,
+    pub entries: Vec<TuneMismatchReadableEntry>,
+}
+
+fn constant_size_for_diff(constant: &Constant) -> usize {
+    match constant.data_type {
+        DataType::Bits => 1,
+        DataType::String => constant.shape.element_count(),
+        _ => constant.size_bytes(),
+    }
+}
+
+fn read_const_byte(data: Option<&Vec<u8>>, idx: usize) -> u8 {
+    data.and_then(|v| v.get(idx)).copied().unwrap_or(0)
+}
+
+fn count_changed_bytes(
+    project: Option<&Vec<u8>>,
+    ecu: Option<&Vec<u8>>,
+    offset: usize,
+    length: usize,
+) -> u32 {
+    let mut changed = 0u32;
+    for i in 0..length {
+        if read_const_byte(project, offset + i) != read_const_byte(ecu, offset + i) {
+            changed += 1;
+        }
+    }
+    changed
+}
+
+fn format_numeric(value: f64, digits: u8) -> String {
+    let d = usize::from(digits.min(6));
+    if d == 0 {
+        format!("{:.0}", value)
+    } else {
+        format!("{:.*}", d, value)
+    }
+}
+
+fn decode_string_value(data: Option<&Vec<u8>>, offset: usize, length: usize) -> String {
+    let mut bytes = Vec::with_capacity(length);
+    for i in 0..length {
+        bytes.push(read_const_byte(data, offset + i));
+    }
+    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+    let s = String::from_utf8_lossy(&bytes[..end]).trim().to_string();
+    if s.is_empty() { "(empty)".to_string() } else { s }
+}
+
+fn decode_bits_value(data: Option<&Vec<u8>>, offset: usize, constant: &Constant) -> String {
+    let raw = read_const_byte(data, offset);
+    let bit_pos = usize::from(constant.bit_position.unwrap_or(0).min(7));
+    let bit_spec = constant.bit_size.unwrap_or(constant.bit_position.unwrap_or(0));
+    let bit_hi = usize::from(bit_spec.min(7));
+    let width = if bit_hi >= bit_pos {
+        (bit_hi - bit_pos + 1).min(8)
+    } else {
+        1
+    };
+    let mask = if width >= 8 {
+        0xFFu16
+    } else {
+        ((1u16 << width) - 1) << bit_pos
+    };
+    let mut value = (((raw as u16) & mask) >> bit_pos) as i32;
+    value += i32::from(constant.display_offset);
+    if !constant.bit_options.is_empty() && value >= 0 {
+        if let Some(option) = constant.bit_options.get(value as usize) {
+            return format!("{} ({})", option, value);
+        }
+    }
+    value.to_string()
+}
+
+fn decode_scalar_value(
+    data: Option<&Vec<u8>>,
+    offset: usize,
+    constant: &Constant,
+    default_endian: Endianness,
+) -> String {
+    let endian = constant.endianness_override.unwrap_or(default_endian);
+    let mut bytes = Vec::with_capacity(constant.data_type.size_bytes());
+    for i in 0..constant.data_type.size_bytes() {
+        bytes.push(read_const_byte(data, offset + i));
+    }
+    match constant.data_type.read_from_bytes(&bytes, 0, endian) {
+        Some(raw) => format_numeric(constant.raw_to_display(raw), constant.digits),
+        None => "?".to_string(),
     }
 }
 
@@ -205,6 +332,14 @@ pub async fn sync_ecu_data(
     if should_emit_mismatch {
         let baseline_page_nums: Vec<u8> = baseline_pages.keys().copied().collect();
         let ecu_page_nums: Vec<u8> = ecu_tune.pages.keys().copied().collect();
+        {
+            let mut snapshot_guard = state.tune_mismatch_snapshot.lock().await;
+            *snapshot_guard = Some(TuneMismatchSnapshot {
+                project_pages: baseline_pages.clone(),
+                ecu_pages: ecu_tune.pages.clone(),
+                diff_pages: diff_pages.clone(),
+            });
+        }
         let _ = app.emit(
             "tune:mismatch",
             &serde_json::json!({
@@ -216,8 +351,10 @@ pub async fn sync_ecu_data(
     } else if pages_failed > 0 && !was_modified {
         // Partial read with no local edits — restore pre-sync cache instead of leaving drift.
         restore_baseline_pages(state.inner(), &baseline_pages).await;
+        *state.tune_mismatch_snapshot.lock().await = None;
     } else if pages_failed == 0 {
         *state.tune_modified.lock().await = false;
+        *state.tune_mismatch_snapshot.lock().await = None;
     }
 
     // Log detailed errors for debugging
@@ -237,6 +374,175 @@ pub async fn sync_ecu_data(
         pages_failed,
         total_pages: n_pages,
         errors,
+    })
+}
+
+#[tauri::command]
+pub async fn get_tune_mismatch_page_diff(
+    state: tauri::State<'_, AppState>,
+    page: u8,
+    start_offset: Option<u32>,
+    max_rows: Option<u32>,
+) -> Result<TuneMismatchPageDiff, String> {
+    let snapshot_guard = state.tune_mismatch_snapshot.lock().await;
+    let snapshot = snapshot_guard
+        .as_ref()
+        .ok_or("No tune mismatch snapshot available. Re-sync ECU first.")?;
+
+    if !snapshot.diff_pages.contains(&page) {
+        return Err(format!("Page {} is not marked as mismatched", page));
+    }
+
+    let project = snapshot.project_pages.get(&page);
+    let ecu = snapshot.ecu_pages.get(&page);
+    let page_size = std::cmp::max(
+        project.map(|v| v.len()).unwrap_or(0),
+        ecu.map(|v| v.len()).unwrap_or(0),
+    ) as u32;
+
+    if page_size == 0 {
+        return Ok(TuneMismatchPageDiff {
+            page,
+            page_size: 0,
+            total_differences: 0,
+            returned_differences: 0,
+            differences: Vec::new(),
+        });
+    }
+
+    let start = start_offset.unwrap_or(0) as usize;
+    let limit = max_rows.unwrap_or(400) as usize;
+    let mut seen = 0usize;
+    let mut out = Vec::with_capacity(limit);
+
+    for idx in 0..page_size as usize {
+        let p = project.and_then(|v| v.get(idx)).copied().unwrap_or(0);
+        let e = ecu.and_then(|v| v.get(idx)).copied().unwrap_or(0);
+        if p != e {
+            if seen >= start && out.len() < limit {
+                out.push(TuneMismatchByteDiff {
+                    offset: idx as u32,
+                    project_value: p,
+                    ecu_value: e,
+                });
+            }
+            seen += 1;
+        }
+    }
+
+    Ok(TuneMismatchPageDiff {
+        page,
+        page_size,
+        total_differences: seen as u32,
+        returned_differences: out.len() as u32,
+        differences: out,
+    })
+}
+
+#[tauri::command]
+pub async fn get_tune_mismatch_page_readable_diff(
+    state: tauri::State<'_, AppState>,
+    page: u8,
+    start_index: Option<u32>,
+    max_rows: Option<u32>,
+) -> Result<TuneMismatchReadablePageDiff, String> {
+    let snapshot_guard = state.tune_mismatch_snapshot.lock().await;
+    let snapshot = snapshot_guard
+        .as_ref()
+        .ok_or("No tune mismatch snapshot available. Re-sync ECU first.")?;
+    if !snapshot.diff_pages.contains(&page) {
+        return Err(format!("Page {} is not marked as mismatched", page));
+    }
+
+    let def_guard = state.definition.lock().await;
+    let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+    let default_endian = def.endianness;
+
+    let mut table_context_by_constant: BTreeMap<String, String> = BTreeMap::new();
+    for table in def.tables.values() {
+        table_context_by_constant
+            .entry(table.map.clone())
+            .or_insert_with(|| format!("Table: {}", table.title));
+    }
+
+    let project_page = snapshot.project_pages.get(&page);
+    let ecu_page = snapshot.ecu_pages.get(&page);
+    let start = start_index.unwrap_or(0) as usize;
+    let limit = max_rows.unwrap_or(300) as usize;
+
+    let mut entries = Vec::new();
+    for constant in def.constants.values() {
+        if constant.is_pc_variable || constant.page != page {
+            continue;
+        }
+        let size = constant_size_for_diff(constant);
+        if size == 0 {
+            continue;
+        }
+        let offset = usize::from(constant.offset);
+        let changed_bytes = count_changed_bytes(project_page, ecu_page, offset, size);
+        if changed_bytes == 0 {
+            continue;
+        }
+
+        let kind = if constant.shape.element_count() > 1 {
+            if table_context_by_constant.contains_key(&constant.name) {
+                "table".to_string()
+            } else {
+                "array".to_string()
+            }
+        } else {
+            match constant.data_type {
+                DataType::String => "string".to_string(),
+                DataType::Bits => "bits".to_string(),
+                _ => "scalar".to_string(),
+            }
+        };
+
+        let project_value = if kind == "array" || kind == "table" {
+            format!("{} byte(s) changed", changed_bytes)
+        } else if constant.data_type == DataType::String {
+            decode_string_value(project_page, offset, size)
+        } else if constant.data_type == DataType::Bits {
+            decode_bits_value(project_page, offset, constant)
+        } else {
+            decode_scalar_value(project_page, offset, constant, default_endian)
+        };
+
+        let ecu_value = if kind == "array" || kind == "table" {
+            format!("{} byte(s) changed", changed_bytes)
+        } else if constant.data_type == DataType::String {
+            decode_string_value(ecu_page, offset, size)
+        } else if constant.data_type == DataType::Bits {
+            decode_bits_value(ecu_page, offset, constant)
+        } else {
+            decode_scalar_value(ecu_page, offset, constant, default_endian)
+        };
+
+        entries.push(TuneMismatchReadableEntry {
+            name: constant.name.clone(),
+            label: constant
+                .label
+                .clone()
+                .unwrap_or_else(|| constant.name.clone()),
+            kind,
+            context: table_context_by_constant.get(&constant.name).cloned(),
+            project_value,
+            ecu_value,
+            units: constant.units.clone(),
+            changed_bytes,
+        });
+    }
+
+    entries.sort_by(|a, b| a.label.cmp(&b.label).then(a.name.cmp(&b.name)));
+    let total = entries.len();
+    let paged = entries.into_iter().skip(start).take(limit).collect::<Vec<_>>();
+
+    Ok(TuneMismatchReadablePageDiff {
+        page,
+        total_entries: total as u32,
+        returned_entries: paged.len() as u32,
+        entries: paged,
     })
 }
 

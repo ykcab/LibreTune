@@ -26,6 +26,109 @@
   gap: var(--space-3);
 }
 
+.tune-mismatch-diff {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.tune-mismatch-diff-header h3 {
+  margin: 0 0 var(--space-1) 0;
+  font-size: var(--font-size-sm);
+}
+
+.tune-mismatch-diff-header p {
+  margin: 0 0 var(--space-2) 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.tune-mismatch-page-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.tune-mismatch-page-chip {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.tune-mismatch-page-chip.active {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+.tune-mismatch-diff-table-wrap {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.tune-mismatch-diff-status {
+  margin: 0;
+  padding: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.tune-mismatch-diff-status.error {
+  color: var(--state-danger, #ef4444);
+}
+
+.tune-mismatch-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono, monospace);
+}
+
+.tune-mismatch-diff-table th,
+.tune-mismatch-diff-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tune-mismatch-diff-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.tune-mismatch-setting-cell {
+  min-width: 260px;
+}
+
+.tune-mismatch-setting-label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tune-mismatch-setting-name {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.tune-mismatch-setting-context {
+  color: var(--accent-primary);
+  font-size: 11px;
+}
+
 .tune-option {
   display: flex;
   flex-direction: column;
