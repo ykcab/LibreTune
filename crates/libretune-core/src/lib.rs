@@ -62,8 +62,8 @@ pub mod unit_conversion;
 /// Re-export commonly used types
 pub mod prelude {
     pub use crate::autotune::{
-        AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneRecommendation, AutoTuneSettings,
-        AutoTuneState, reading_to_afr,
+        reading_to_afr, AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneRecommendation,
+        AutoTuneSettings, AutoTuneState,
     };
     pub use crate::dash::{DashFile, GaugeConfig, GaugePainter, IndicatorConfig};
     pub use crate::datalog::{DataLogger, LogEntry};

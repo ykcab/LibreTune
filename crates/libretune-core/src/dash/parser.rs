@@ -636,7 +636,9 @@ fn set_gauge_property(gauge: &mut GaugeConfig, prop: &str, value: &str) {
         "GaugePainter" => gauge.gauge_painter = GaugePainter::from_ts_string(value),
         "RunDemo" => gauge.run_demo = value.parse().unwrap_or(false),
         _ => {
-            gauge.extra_attrs.insert(prop.to_string(), value.to_string());
+            gauge
+                .extra_attrs
+                .insert(prop.to_string(), value.to_string());
         }
     }
 }

@@ -21,8 +21,6 @@ use state::{AppState, AutoTuneLoadSource, RpmState, RpmStateTracker, StreamStats
 pub(crate) use commands::app_settings::{
     get_commit_message_format, load_settings, save_settings, Settings,
 };
-#[cfg(test)]
-pub(crate) use commands::signature_helpers::compare_signatures;
 pub(crate) use commands::signature_helpers::{
     call_connection_factory_and_build_result, find_matching_inis_internal,
 };
@@ -49,7 +47,8 @@ use commands::annotations::{
 use commands::apply_base_map::apply_base_map;
 use commands::autotune_misc::{
     burn_autotune_recommendations, get_autotune_heatmap, get_autotune_recommendations,
-    lock_autotune_cells, send_autotune_recommendations, stop_autotune, unlock_autotune_cells,
+    get_autotune_status, lock_autotune_cells, send_autotune_recommendations, stop_autotune,
+    unlock_autotune_cells,
 };
 use commands::available_inis::get_available_inis;
 use commands::base_map::generate_base_map;
@@ -162,6 +161,7 @@ use commands::tune_migration::{
 };
 use commands::tune_misc::{update_constant_string, use_ecu_tune, use_project_tune};
 use commands::update_project_ini::update_project_ini;
+use commands::virtual_dyno::{check_virtual_dyno_vss, compute_virtual_dyno_pull};
 use commands::wasm_plugin::{
     execute_wasm_plugin, get_wasm_plugin_info, list_wasm_plugins, load_wasm_plugin,
     unload_wasm_plugin,
@@ -268,6 +268,7 @@ pub fn run() {
             start_autotune,
             stop_autotune,
             get_autotune_recommendations,
+            get_autotune_status,
             get_autotune_heatmap,
             send_autotune_recommendations,
             burn_autotune_recommendations,
@@ -286,6 +287,8 @@ pub fn run() {
             load_dyno_run,
             detect_dyno_headers,
             compare_dyno_runs,
+            check_virtual_dyno_vss,
+            compute_virtual_dyno_pull,
             get_dyno_table_overlay,
             rebin_table,
             smooth_table,

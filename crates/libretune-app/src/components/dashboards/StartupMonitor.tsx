@@ -46,8 +46,8 @@ const COL_FUEL: TelemetryRow[] = [
   { key: 'lambda', label: 'Lambda', unit: 'λ', digits: 3, alt: 'afr', warnLo: 0.82, warnHi: 1.2 },
   { key: 'dutyCycle', label: 'Inj Duty', unit: '%', digits: 1, warnHi: 85, critHi: 95 },
   { key: 'pulseWidth', label: 'Inj PW', unit: 'ms', digits: 2 },
-  { key: 'lowFuelPressure', label: 'LPFP', unit: 'kPa', digits: 0, alt: 'fuelPressure' },
-  { key: 'highFuelPressure', label: 'HPFP', unit: 'kPa', digits: 0, alt: 'rawHighFuelPressure' },
+  { key: 'lowFuelPressure', label: 'LPFP', unit: 'bar', digits: 1, alt: 'fuelPressure' },
+  { key: 'highFuelPressure', label: 'HPFP', unit: 'bar', digits: 1, alt: 'rawHighFuelPressure' },
 ];
 
 const COL_CRITICAL: TelemetryRow[] = [

@@ -410,8 +410,7 @@ impl AutoTuneState {
         let target_afr = reading_to_afr(target_from_table.unwrap_or(settings.target_afr));
         let actual_afr = reading_to_afr(point.afr);
 
-        let instantaneous_required =
-            self.calculate_required_ve(cell_ve, actual_afr, target_afr);
+        let instantaneous_required = self.calculate_required_ve(cell_ve, actual_afr, target_afr);
 
         let sample_weight = match settings.algorithm_kind() {
             AutotuneAlgorithm::Simple => 1.0,
@@ -446,20 +445,14 @@ impl AutoTuneState {
 
         let required_ve = match settings.algorithm_kind() {
             AutotuneAlgorithm::Simple => {
-                let accum = self
-                    .cell_accum
-                    .entry((cell_x_idx, cell_y_idx))
-                    .or_default();
+                let accum = self.cell_accum.entry((cell_x_idx, cell_y_idx)).or_default();
                 accum.weight_sum += 1.0;
                 accum.weighted_required_sum += instantaneous_required;
                 accum.weighted_required_sum / accum.weight_sum
             }
             AutotuneAlgorithm::Weighted => {
                 let w = sample_weight.max(0.05);
-                let accum = self
-                    .cell_accum
-                    .entry((cell_x_idx, cell_y_idx))
-                    .or_default();
+                let accum = self.cell_accum.entry((cell_x_idx, cell_y_idx)).or_default();
                 accum.weight_sum += w;
                 accum.weighted_required_sum += instantaneous_required * w;
                 accum.weighted_required_sum / accum.weight_sum
@@ -476,12 +469,9 @@ impl AutoTuneState {
                 const DT: f64 = 0.1; // ~10 Hz sample assumption
                 const INTEGRAL_LIMIT: f64 = 0.35;
 
-                let accum = self
-                    .cell_accum
-                    .entry((cell_x_idx, cell_y_idx))
-                    .or_default();
-                accum.integral_error =
-                    (accum.integral_error + error_ratio * DT).clamp(-INTEGRAL_LIMIT, INTEGRAL_LIMIT);
+                let accum = self.cell_accum.entry((cell_x_idx, cell_y_idx)).or_default();
+                accum.integral_error = (accum.integral_error + error_ratio * DT)
+                    .clamp(-INTEGRAL_LIMIT, INTEGRAL_LIMIT);
                 let correction = 1.0 + KP * error_ratio + KI * accum.integral_error;
                 beginning * correction.clamp(0.5, 1.5)
             }
@@ -735,7 +725,8 @@ mod tests {
         // Centered mild-lean sample should dominate over edge+transient lean spike
         let expected_mild = 100.0 * (15.0 / 14.7);
         assert!(
-            (rec.recommended_value - expected_mild).abs() < (rec.recommended_value - 100.0 * 16.0 / 14.7).abs(),
+            (rec.recommended_value - expected_mild).abs()
+                < (rec.recommended_value - 100.0 * 16.0 / 14.7).abs(),
             "weighted rec {} should be closer to mild correction {}",
             rec.recommended_value,
             expected_mild
@@ -788,7 +779,10 @@ mod tests {
         }
 
         let rec = &state.get_recommendations()[0];
-        assert!(rec.recommended_value > 100.0, "PID should raise VE when lean");
+        assert!(
+            rec.recommended_value > 100.0,
+            "PID should raise VE when lean"
+        );
     }
 
     #[test]
@@ -913,14 +907,7 @@ mod tests {
             ..VEDataPoint::default()
         };
 
-        state.add_data_point(
-            point,
-            &[2000.0],
-            &[50.0],
-            &settings,
-            &filters,
-            &authority,
-        );
+        state.add_data_point(point, &[2000.0], &[50.0], &settings, &filters, &authority);
         assert!(state.get_recommendations().is_empty());
     }
 

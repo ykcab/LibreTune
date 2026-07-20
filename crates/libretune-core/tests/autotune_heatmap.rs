@@ -18,7 +18,8 @@ fn heatmap_entries_accumulate_hits_and_compute_change() {
             load: 10.0,
             afr: 14.7,
             ve: 50.0,
-            clt: 170.0,
+            clt: 85.0,
+            afr_valid: true,
             ..Default::default()
         },
         VEDataPoint {
@@ -27,7 +28,8 @@ fn heatmap_entries_accumulate_hits_and_compute_change() {
             load: 10.0,
             afr: 13.0,
             ve: 50.0,
-            clt: 170.0,
+            clt: 85.0,
+            afr_valid: true,
             ..Default::default()
         },
         VEDataPoint {
@@ -36,7 +38,8 @@ fn heatmap_entries_accumulate_hits_and_compute_change() {
             load: 10.0,
             afr: 12.0,
             ve: 50.0,
-            clt: 170.0,
+            clt: 85.0,
+            afr_valid: true,
             ..Default::default()
         },
     ];

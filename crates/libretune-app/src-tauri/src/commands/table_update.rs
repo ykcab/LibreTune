@@ -1,7 +1,7 @@
 //! Table z-values update command.
 
-use crate::AppState;
 use crate::update_table_z_values_internal;
+use crate::AppState;
 
 #[tauri::command]
 pub async fn update_table_data(

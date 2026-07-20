@@ -80,7 +80,11 @@ fn decode_trigger_timestamps(raw_times: &[[u8; 4]]) -> Vec<u32> {
     let le: Vec<u32> = raw_times.iter().map(|b| u32::from_le_bytes(*b)).collect();
     let be_score = monotonic_score(&be);
     let le_score = monotonic_score(&le);
-    if le_score > be_score { le } else { be }
+    if le_score > be_score {
+        le
+    } else {
+        be
+    }
 }
 
 fn choose_entry_count(be_count: usize, le_count: usize, available: usize) -> usize {
@@ -157,7 +161,10 @@ where
     Ok(false)
 }
 
-fn read_rusefi_trigger_records<F>(mut read_once: F, timeout_ms: u64) -> Result<Vec<TriggerLogRecord>, String>
+fn read_rusefi_trigger_records<F>(
+    mut read_once: F,
+    timeout_ms: u64,
+) -> Result<Vec<TriggerLogRecord>, String>
 where
     F: FnMut() -> Result<Vec<u8>, String>,
 {

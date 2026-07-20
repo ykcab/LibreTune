@@ -13,6 +13,31 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-07-20 — DFU firmware update fix + simpler dialog
+
+#### Fixed
+- **DFU `.bin` flash address** — use `0x08000000` (same as epicEFI Firmware Flasher /
+  rusEFI Console). The previous `0x08008000` preset could brick OpenBLT boards.
+
+#### Changed
+- **Firmware Update dialog** — addresses baked into the backend; removed editable
+  address field and most guidance/tool clutter (mode + file + status/log).
+- Flashing helper processes on Windows no longer pop console windows.
+
+### 2026-07-18 — Upstream PRs #60–#63 on `dev`
+
+Cherry-picked from `main` onto `dev` with no conflicts.
+
+#### Added
+- **Live WBO status panel** beside the wideband tools dialog (#61).
+- **Grouped graph-log channel picker** for clearer channel selection (#63).
+
+#### Changed
+- **Table live cursor** — follow enabled by default, more accurate marker, fading trail (#62).
+
+#### Fixed
+- **Controller command variable substitution** for wideband / hardware tools (#60).
+
 ### 2026-07-14 — Startup live telemetry monitor
 
 #### Fixed

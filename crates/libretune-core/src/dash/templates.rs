@@ -147,7 +147,6 @@ const LT_LOG_CYAN: TsColor = TsColor {
     blue: 255,
 };
 
-
 /// Fixed live telemetry monitor surface. On-disk `.ltdash.xml` is a registry
 /// stub — the React `StartupMonitor` view owns the real fixed UI.
 pub const STARTUP_TEMPLATE_VERSION: &str = "4";
@@ -182,10 +181,7 @@ pub fn create_startup_dashboard() -> DashFile {
                     "lt_template_version".to_string(),
                     STARTUP_TEMPLATE_VERSION.to_string(),
                 );
-                m.insert(
-                    "lt_fixed_monitor".to_string(),
-                    "1".to_string(),
-                );
+                m.insert("lt_fixed_monitor".to_string(), "1".to_string());
                 m
             },
         },

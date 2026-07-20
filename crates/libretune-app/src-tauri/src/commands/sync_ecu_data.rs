@@ -152,13 +152,19 @@ fn decode_string_value(data: Option<&Vec<u8>>, offset: usize, length: usize) -> 
     }
     let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
     let s = String::from_utf8_lossy(&bytes[..end]).trim().to_string();
-    if s.is_empty() { "(empty)".to_string() } else { s }
+    if s.is_empty() {
+        "(empty)".to_string()
+    } else {
+        s
+    }
 }
 
 fn decode_bits_value(data: Option<&Vec<u8>>, offset: usize, constant: &Constant) -> String {
     let raw = read_const_byte(data, offset);
     let bit_pos = usize::from(constant.bit_position.unwrap_or(0).min(7));
-    let bit_spec = constant.bit_size.unwrap_or(constant.bit_position.unwrap_or(0));
+    let bit_spec = constant
+        .bit_size
+        .unwrap_or(constant.bit_position.unwrap_or(0));
     let bit_hi = usize::from(bit_spec.min(7));
     let width = if bit_hi >= bit_pos {
         (bit_hi - bit_pos + 1).min(8)
@@ -536,7 +542,11 @@ pub async fn get_tune_mismatch_page_readable_diff(
 
     entries.sort_by(|a, b| a.label.cmp(&b.label).then(a.name.cmp(&b.name)));
     let total = entries.len();
-    let paged = entries.into_iter().skip(start).take(limit).collect::<Vec<_>>();
+    let paged = entries
+        .into_iter()
+        .skip(start)
+        .take(limit)
+        .collect::<Vec<_>>();
 
     Ok(TuneMismatchReadablePageDiff {
         page,

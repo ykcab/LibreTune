@@ -16,7 +16,7 @@ interface LoggingStatus {
   is_recording: boolean;
   entry_count: number;
   duration_ms: number;
-  channels: string[];
+  channel_count: number;
 }
 
 interface LogEntry {
@@ -332,11 +332,12 @@ export const DataLogView: React.FC = () => {
       const channels = Object.keys(useRealtimeStore.getState().channels);
       if (channels.length === 0) return false;
       setAvailableChannels(channels);
-      const defaults = ['RPM', 'MAP', 'AFR', 'coolant', 'TPS'].filter((c) => channels.includes(c));
+      const defaults = ['RPM', 'MAP', 'AFR', 'lambda', 'coolant', 'TPS', 'battery']
+        .filter((c) => channels.includes(c));
       if (defaults.length > 0) {
-        setSelectedChannels(defaults.slice(0, 4));
+        setSelectedChannels(defaults.slice(0, 6));
       } else {
-        setSelectedChannels(channels.slice(0, 4));
+        setSelectedChannels(channels.slice(0, 6));
       }
       return true;
     };
@@ -362,7 +363,7 @@ export const DataLogView: React.FC = () => {
 
       // Auto-start recording on key-on
       if (newState === 'on' && !isRecording && viewMode === 'live') {
-        invoke('start_logging', { sampleRate, channels: neededChannelsRef.current })
+        invoke('start_logging', { sampleRate })
           .then(() => {
             setIsRecording(true);
           })
@@ -385,8 +386,7 @@ export const DataLogView: React.FC = () => {
   
   const handleStartLogging = useCallback(async () => {
     try {
-      // Recording appends to the current session log until Clear is pressed
-      await invoke('start_logging', { sampleRate, channels: neededChannelsRef.current });
+      await invoke('start_logging', { sampleRate });
       setIsRecording(true);
     } catch (err) {
       console.error('Failed to start logging:', err);
@@ -468,36 +468,32 @@ export const DataLogView: React.FC = () => {
     }
   }, []);
   
-  // Parse CSV file - supports both LibreTune and TunerStudio formats
   const parseLogCsv = useCallback((content: string, _fileName: string): { 
     data: { x: number; values: Record<string, number> }[];
     channels: string[];
   } => {
     const lines = content.trim().split('\n');
     if (lines.length < 2) return { data: [], channels: [] };
-    
-    // Parse header - handle both formats
+
     const headerLine = lines[0];
     const headers = headerLine.split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-    
-    // Detect format: TunerStudio uses "Time" column, LibreTune uses "timestamp_ms"
+
     const timeColIndex = headers.findIndex(h => 
       h.toLowerCase() === 'time' || 
       h.toLowerCase() === 'time (ms)' ||
       h.toLowerCase() === 'timestamp_ms' ||
       h.toLowerCase() === 'timestamp'
     );
-    
-    const isTunerStudioFormat = headers.some(h => h.toLowerCase() === 'time');
+
+    const timeIsSeconds = headers.some(h => h.toLowerCase() === 'time');
     const channels = headers.filter((_, i) => i !== timeColIndex);
-    
+
     const data: { x: number; values: Record<string, number> }[] = [];
-    
+
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      
-      // Parse CSV values (handle quoted values)
+
       const values: string[] = [];
       let current = '';
       let inQuotes = false;
@@ -512,22 +508,14 @@ export const DataLogView: React.FC = () => {
         }
       }
       values.push(current.trim());
-      
+
       if (values.length < headers.length) continue;
-      
-      // Parse timestamp
+
       let timestamp: number;
       if (timeColIndex >= 0) {
         const timeStr = values[timeColIndex];
-        if (isTunerStudioFormat) {
-          // TunerStudio format: seconds with decimals
-          timestamp = parseFloat(timeStr) * 1000;
-        } else {
-          // LibreTune format: milliseconds
-          timestamp = parseFloat(timeStr);
-        }
+        timestamp = timeIsSeconds ? parseFloat(timeStr) * 1000 : parseFloat(timeStr);
       } else {
-        // No time column - use index * 100ms
         timestamp = (i - 1) * 100;
       }
       
@@ -587,7 +575,7 @@ export const DataLogView: React.FC = () => {
         is_recording: false,
         entry_count: data.length,
         duration_ms: duration,
-        channels: channels
+        channel_count: channels.length
       });
       
     } catch (err) {
@@ -710,7 +698,7 @@ export const DataLogView: React.FC = () => {
               type="button"
               className={`log-button secondary ${chartMode === 'graphlog' ? 'active' : ''}`}
               onClick={() => setChartMode('graphlog')}
-              title="Stacked graph pages (TunerStudio-style graph log)"
+              title="Stacked graph pages"
             >
               <LayoutList size={14} /> Graph Log
             </button>
@@ -871,7 +859,7 @@ export const DataLogView: React.FC = () => {
           </span>
           <span className="status-stat">{status.entry_count.toLocaleString()} samples</span>
           <span className="status-stat">{formatDuration(status.duration_ms)}</span>
-          <span className="status-stat">{status.channels.length} channels</span>
+          <span className="status-stat">{status.channel_count} channels</span>
         </div>
       )}
       

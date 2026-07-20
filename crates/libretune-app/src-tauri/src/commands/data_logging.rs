@@ -11,7 +11,7 @@ pub struct LoggingStatus {
     is_recording: bool,
     entry_count: usize,
     duration_ms: u64,
-    channels: Vec<String>,
+    channel_count: usize,
 }
 
 #[derive(Serialize)]
@@ -26,48 +26,43 @@ pub async fn start_logging(
     sample_rate: Option<f64>,
     channels: Option<Vec<String>>,
 ) -> Result<(), String> {
-    let def_guard = state.definition.lock().await;
-    let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+    let channels = {
+        let def_guard = state.definition.lock().await;
+        let def = def_guard.as_ref().ok_or("Definition not loaded")?;
 
-    let mut available_channels: Vec<String> = def.output_channels.keys().cloned().collect();
-
-    // Also log the canonical alias names (RPM, MAP, TPS, …) that the realtime
-    // stream adds via apply_channel_aliases, so recorded logs and saved CSVs
-    // use the same channel names as the dashboards and graph pages.
-    let mut probe: HashMap<String, f64> = available_channels
-        .iter()
-        .map(|c| (c.clone(), 0.0))
-        .collect();
-    super::realtime_stream::apply_channel_aliases(&mut probe);
-    for name in probe.keys() {
-        if !available_channels.iter().any(|c| c == name) {
-            available_channels.push(name.clone());
-        }
-    }
-    let available_set: HashSet<&str> = available_channels.iter().map(|s| s.as_str()).collect();
-
-    let channels: Vec<String> = if let Some(requested) = channels {
-        let mut out = Vec::new();
-        let mut seen = HashSet::new();
-        for name in requested {
-            if available_set.contains(name.as_str()) && seen.insert(name.clone()) {
-                out.push(name);
+        let mut available_channels: Vec<String> = def.output_channels.keys().cloned().collect();
+        let mut probe: HashMap<String, f64> = available_channels
+            .iter()
+            .map(|c| (c.clone(), 0.0))
+            .collect();
+        super::realtime_stream::apply_channel_aliases(&mut probe);
+        for name in probe.keys() {
+            if !available_channels.iter().any(|c| c == name) {
+                available_channels.push(name.clone());
             }
         }
-        if out.is_empty() {
-            default_log_channels(&available_channels)
+        let available_set: HashSet<&str> = available_channels.iter().map(|s| s.as_str()).collect();
+
+        if let Some(requested) = channels {
+            let mut out = Vec::new();
+            let mut seen = HashSet::new();
+            for name in requested {
+                if available_set.contains(name.as_str()) && seen.insert(name.clone()) {
+                    out.push(name);
+                }
+            }
+            if out.is_empty() {
+                default_log_channels(&available_channels)
+            } else {
+                out
+            }
         } else {
-            out
+            default_log_channels(&available_channels)
         }
-    } else {
-        default_log_channels(&available_channels)
     };
 
     let mut logger = state.data_logger.lock().await;
 
-    // Recording appends to the current session (one continuous log until the
-    // user clears it). Only build a fresh logger when there is no session yet
-    // or the channel set changed (e.g. a different INI was loaded).
     let mut existing: Vec<&String> = logger.channels().iter().collect();
     let mut incoming: Vec<&String> = channels.iter().collect();
     existing.sort();
@@ -85,66 +80,82 @@ pub async fn start_logging(
 }
 
 fn default_log_channels(available: &[String]) -> Vec<String> {
-    // Keep the default capture focused on channels that are immediately useful
-    // for tuning sessions (closer to typical TS logs), instead of hundreds of
-    // low-value fields.
-    const PREFERRED: &[&str] = &[
-        "Time",
-        "time",
-        "RPM",
-        "rpm",
-        "RPMValue",
-        "instantRpm",
-        "MAP",
-        "map",
-        "instantMAPValue",
-        "TPS",
-        "tps",
-        "throttle",
-        "throttlePedalPosition",
-        "AFR",
-        "afr",
-        "lambda",
-        "lambdaValue",
-        "coolant",
-        "CLT",
-        "iat",
-        "IAT",
-        "battery",
-        "advance",
-        "spark",
-        "injPw",
-        "PW",
-        "fuelPulseWidth",
-        "dutyCycle",
-        "egoCorrection",
-        "correction",
-        "targetAfr",
-        "targetLambda",
-        "sync",
-        "engineSync",
-        "triggerSync",
-        "vehicleSpeed",
-        "vss",
-        "baro",
-        "baroPressure",
-    ];
-
+    let available_set: HashSet<&str> = available.iter().map(|s| s.as_str()).collect();
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for preferred in PREFERRED {
-        if available.iter().any(|c| c == preferred) && seen.insert(*preferred) {
-            out.push((*preferred).to_string());
+    for name in PRIORITY_CHANNELS {
+        if available_set.contains(name) && seen.insert(*name) {
+            out.push((*name).to_string());
         }
     }
-    // Fallback for unusual INIs: still capture some data even if none of the
-    // preferred names are present.
     if out.is_empty() {
-        available.iter().take(48).cloned().collect()
+        available.iter().take(16).cloned().collect()
     } else {
         out
     }
 }
+
+const PRIORITY_CHANNELS: &[&str] = &[
+    "Time",
+    "time",
+    "RPM",
+    "rpm",
+    "RPMValue",
+    "instantRpm",
+    "MAP",
+    "map",
+    "MAPValue",
+    "instantMAPValue",
+    "TPS",
+    "tps",
+    "TPSValue",
+    "throttle",
+    "throttlePedalPosition",
+    "AFR",
+    "afr",
+    "lambda",
+    "lambdaValue",
+    "coolant",
+    "CLT",
+    "iat",
+    "IAT",
+    "battery",
+    "VBatt",
+    "advance",
+    "spark",
+    "injPw",
+    "PW",
+    "fuelPulseWidth",
+    "actualLastInjection",
+    "dutyCycle",
+    "injectorDutyCycle",
+    "injectionOffset",
+    "egoCorrection",
+    "correction",
+    "targetAfr",
+    "targetLambda",
+    "sync",
+    "engineSync",
+    "triggerSync",
+    "vehicleSpeed",
+    "vss",
+    "baro",
+    "baroPressure",
+    "isCranking",
+    "crankingFuel_fuel",
+    "running_fuel",
+    "running_baseFuel",
+    "running_postCrankingFuelCorrection",
+    "revolutionCounterSinceStart",
+    "highFuelPressure",
+    "lowFuelPressure",
+    "fuelFlowRate",
+    "injectorState1",
+    "coilState1",
+    "currentVe",
+    "veValue",
+    "firmwareVersion",
+];
 
 #[tauri::command]
 pub async fn stop_logging(state: tauri::State<'_, AppState>) -> Result<(), String> {
@@ -162,7 +173,7 @@ pub async fn get_logging_status(
         is_recording: logger.is_recording(),
         entry_count: logger.entry_count(),
         duration_ms: logger.duration().as_millis() as u64,
-        channels: logger.channels().to_vec(),
+        channel_count: logger.channels().len(),
     })
 }
 
@@ -175,10 +186,6 @@ pub async fn get_log_entries(
 ) -> Result<Vec<LogEntryData>, String> {
     let logger = state.data_logger.lock().await;
     let all_channels = logger.channels();
-
-    // Only serialize the requested channels: an INI defines 1000+ output
-    // channels and shipping all of them per entry over IPC at high sample
-    // rates (100 Hz) is several MB per poll — enough to OOM the webview.
     let selected: Vec<(usize, &String)> = match &channels {
         Some(filter) => {
             let wanted: std::collections::HashSet<&str> =
@@ -227,11 +234,6 @@ pub async fn clear_log(state: tauri::State<'_, AppState>) -> Result<(), String> 
 pub async fn save_log(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
     let logger = state.data_logger.lock().await;
     let channels = logger.channels();
-
-    // Skip columns that are zero for the entire log: an INI defines far more
-    // output channels than the ECU (or demo simulator) actually streams, and
-    // those never-seen channels are logged as 0.0. Writing them out buries
-    // the real data in hundreds of dead columns.
     let mut has_data = vec![false; channels.len()];
     for entry in logger.entries() {
         for (i, &val) in entry.values.iter().enumerate() {

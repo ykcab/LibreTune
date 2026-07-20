@@ -3,10 +3,10 @@
 //! Records and plays back ECU real-time data.
 
 pub mod dyno;
-pub mod virtual_dyno;
 mod format;
 mod playback;
 mod recorder;
+pub mod virtual_dyno;
 
 pub use format::LogFormat;
 pub use playback::LogPlayer;

@@ -10,6 +10,18 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::time::sleep;
 
+#[cfg(windows)]
+fn configure_command(cmd: &mut Command) -> &mut Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW)
+}
+
+#[cfg(not(windows))]
+fn configure_command(cmd: &mut Command) -> &mut Command {
+    cmd
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FirmwareFlasherInfo {
     pub stm32_programmer_cli: Option<String>,
@@ -54,7 +66,9 @@ fn path_search_dirs() -> Vec<PathBuf> {
 
 #[cfg(windows)]
 fn windows_user_path_from_registry() -> Option<std::ffi::OsString> {
-    let output = Command::new("reg")
+    let mut cmd = Command::new("reg");
+    configure_command(&mut cmd);
+    let output = cmd
         .args(["query", r"HKCU\Environment", "/v", "Path"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -100,7 +114,9 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
 
 #[cfg(windows)]
 fn find_via_where(name: &str) -> Option<PathBuf> {
-    let output = Command::new("where.exe")
+    let mut cmd = Command::new("where.exe");
+    configure_command(&mut cmd);
+    let output = cmd
         .arg(name)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -433,7 +449,9 @@ fn resolve_bootloader_command(
 }
 
 fn run_command_capture(tool: &Path, args: &[&str]) -> Result<(bool, String), String> {
-    let output = Command::new(tool)
+    let mut cmd = Command::new(tool);
+    configure_command(&mut cmd);
+    let output = cmd
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -482,18 +500,12 @@ fn parse_flash_address(value: Option<&str>) -> Result<Option<u32>, String> {
 }
 
 fn default_bin_flash_address() -> u32 {
-    // rusEFI / epicEFI application region when a bootloader occupies the first 32 KB.
+    // Application region when OpenBLT occupies the first 32 KB (serial / recovery app slot).
     0x0800_8000
 }
 
-fn safe_bin_flash_address_for_ecu(ecu_type: libretune_core::ini::EcuType) -> u32 {
-    match ecu_type {
-        libretune_core::ini::EcuType::RusEFI
-        | libretune_core::ini::EcuType::FOME
-        | libretune_core::ini::EcuType::EpicEFI => 0x0800_8000,
-        _ => default_bin_flash_address(),
-    }
-}
+/// DFU `.bin` address used by epicEFI Firmware Flasher and rusEFI Console.
+const DFU_BIN_FLASH_ADDRESS: u32 = 0x0800_0000;
 
 const OPENBLT_BOOTLOADER_ADDRESS: u32 = 0x0800_0000;
 
@@ -529,7 +541,7 @@ fn flash_with_stm32_programmer(
     let ext = firmware_extension(firmware_path);
     let address_arg = if ext == "bin" {
         let address = bin_address.ok_or(
-            "Binary (.bin) files require a flash start address (default: 0x08008000 for rusEFI/epicEFI)",
+            "Binary (.bin) files require a flash start address (DFU default: 0x08000000)",
         )?;
         format!("0x{:08X}", address)
     } else {
@@ -574,7 +586,7 @@ fn flash_with_dfu_util(
     let ext = firmware_extension(firmware_path);
     let (ok, output) = if ext == "bin" {
         let address = bin_address.ok_or(
-            "Binary (.bin) files require a flash start address (default: 0x08008000 for rusEFI/epicEFI)",
+            "Binary (.bin) files require a flash start address (DFU default: 0x08000000)",
         )?;
         let sector = format!("0x{:X}:leave", address);
         let args = ["-a", "0", "-s", sector.as_str(), "-D", firmware];
@@ -623,7 +635,9 @@ fn flash_with_bootcommander(
 fn kill_stale_bootcommander_processes() {
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        let mut cmd = Command::new("taskkill");
+        configure_command(&mut cmd);
+        let _ = cmd
             .args(["/IM", "BootCommander.exe", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -723,14 +737,10 @@ fn classify_firmware_file(path: &Path, method: &str) -> FirmwareUpdateGuidance {
             risk_level = "low";
         }
         ("dfu", "raw_bin") => {
-            risk_level = "medium";
+            risk_level = "low";
             warnings.push(
-                format!(
-                    "For DFU + .bin, LibreTune uses dfu-util with safe preset address \
-                     0x{:08X} (rusEFI/epicEFI app region). STM32CubeProgrammer should \
-                     use .hex/.dfu only.",
-                    default_bin_flash_address()
-                ),
+                "DFU + .bin uses address 0x08000000 (same as epicEFI Firmware Flasher / rusEFI Console)."
+                    .into(),
             );
         }
         ("dfu", "srec" | "update_srec") => {
@@ -830,10 +840,9 @@ fn validate_firmware_file(path: &Path, method: &str) -> Result<(), String> {
         .unwrap_or("")
         .to_ascii_lowercase();
     match method {
-        "dfu" if !matches!(ext.as_str(), "dfu" | "hex" | "bin" | "s19" | "srec") => {
+        "dfu" if !matches!(ext.as_str(), "bin" | "dfu" | "hex" | "s19" | "srec") => {
             return Err(
-                "DFU update expects a .dfu, .hex, .bin, or .srec firmware file"
-                    .to_string(),
+                "DFU update expects a .bin, .dfu, .hex, or .srec firmware file".to_string(),
             );
         }
         "openblt" if !matches!(ext.as_str(), "srec" | "s19" | "hex" | "bin") => {
@@ -876,14 +885,18 @@ pub async fn update_ecu_firmware(
     }
 
     let ext = firmware_extension(&path);
-    let (command_name, ecu_type) = {
+    let command_name = {
         let def_guard = state.definition.lock().await;
         let def = def_guard.as_ref().ok_or("No INI definition loaded")?;
-        (resolve_bootloader_command(def, &method)?, def.ecu_type)
+        resolve_bootloader_command(def, &method)?
     };
     let resolved_bin_address = if ext == "bin" {
-        let safe_preset = safe_bin_flash_address_for_ecu(ecu_type);
-        Some(parse_flash_address(bin_flash_address.as_deref())?.unwrap_or(safe_preset))
+        let preset = if method == "dfu" {
+            DFU_BIN_FLASH_ADDRESS
+        } else {
+            default_bin_flash_address()
+        };
+        Some(parse_flash_address(bin_flash_address.as_deref())?.unwrap_or(preset))
     } else {
         None
     };
@@ -909,37 +922,8 @@ pub async fn update_ecu_firmware(
 
     let flash_output = match method.as_str() {
         "dfu" => {
-            if ext == "bin" {
-                // Important safety behavior: .bin is handled via dfu-util (same path used by
-                // rusEFI Console / epicEFI tooling). Do not use STM32CubeProgrammer for raw .bin.
-                let tool = find_dfu_util().ok_or(
-                    "dfu-util is required for DFU flashing of raw .bin files. \
-                     Install dfu-util or use rusefi.hex with STM32CubeProgrammer.",
-                )?;
-                push_log(
-                    &app,
-                    &mut log,
-                    format!(
-                        "Flashing .bin via {} with safe preset address 0x{:08X}…",
-                        tool.display(),
-                        resolved_bin_address.unwrap_or(default_bin_flash_address())
-                    ),
-                );
-                flash_with_dfu_util(&tool, &path, resolved_bin_address)?
-            } else if let Some(cli) = find_stm32_programmer_cli() {
-                if ext == "bin" {
-                    push_log(
-                        &app,
-                        &mut log,
-                        format!(
-                            "Flashing .bin at 0x{:08X} with {}…",
-                            resolved_bin_address.unwrap_or(default_bin_flash_address()),
-                            cli.display()
-                        ),
-                    );
-                } else {
-                    push_log(&app, &mut log, format!("Flashing with {}…", cli.display()));
-                }
+            if let Some(cli) = find_stm32_programmer_cli() {
+                push_log(&app, &mut log, format!("Flashing with {}…", cli.display()));
                 flash_with_stm32_programmer(&cli, &path, resolved_bin_address)?
             } else if let Some(tool) = find_dfu_util() {
                 push_log(&app, &mut log, format!("Flashing with {}…", tool.display()));

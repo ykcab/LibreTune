@@ -13,7 +13,11 @@ pub async fn check_virtual_dyno_vss(
     output_channels: Vec<String>,
     connected: bool,
 ) -> Result<VssReadiness, String> {
-    Ok(assess_vss_readiness(&constants, &output_channels, connected))
+    Ok(assess_vss_readiness(
+        &constants,
+        &output_channels,
+        connected,
+    ))
 }
 
 /// Compute HP/torque curve from a recorded acceleration pull.

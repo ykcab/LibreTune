@@ -25,6 +25,7 @@ export interface UseReconnectHandlerDeps {
 export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
   const depsRef = useRef(deps);
   depsRef.current = deps;
+  const busyRef = useRef(false);
 
   useEffect(() => {
     const handler = async (event: Event) => {
@@ -42,13 +43,13 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
         showToast,
       } = depsRef.current;
 
-      if (connecting || syncing) {
-        showToast('Reconnect requested but a connection is already in progress', 'info');
+      if (busyRef.current || connecting || syncing) {
         return;
       }
       if (status.state === 'Connected') {
         return;
       }
+      busyRef.current = true;
 
       const source = detail.source ?? 'unknown';
       const isFirmware = source.includes('firmware');
@@ -107,7 +108,7 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
         try {
           await connect({
             strictPort: !!targetPort,
-            silent: attempt > 0,
+            silent: true,
             port,
           });
           const latest = await invoke<ConnectionStatus>('get_connection_status');
@@ -130,7 +131,13 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
       );
     };
 
-    window.addEventListener('reconnect:request', handler);
-    return () => window.removeEventListener('reconnect:request', handler);
+    const wrapped = (event: Event) => {
+      void handler(event).finally(() => {
+        busyRef.current = false;
+      });
+    };
+
+    window.addEventListener('reconnect:request', wrapped);
+    return () => window.removeEventListener('reconnect:request', wrapped);
   }, []);
 }

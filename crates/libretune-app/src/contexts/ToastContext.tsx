@@ -16,23 +16,53 @@ interface ToastContextType {
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
+const MAX_VISIBLE = 3;
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(0);
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
 
   const removeToast = useCallback((id: number) => {
+    const t = timers.current.get(id);
+    if (t) {
+      clearTimeout(t);
+      timers.current.delete(id);
+    }
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   }, []);
 
   const showToast = useCallback(
     (message: string, type: ToastType = 'info', duration = 4000) => {
-      const id = nextId.current++;
-      setToasts((prev) => [...prev, { id, message, type }]);
+      setToasts((prev) => {
+        const existing = prev.find((t) => t.message === message && t.type === type);
+        if (existing) {
+          const old = timers.current.get(existing.id);
+          if (old) clearTimeout(old);
+          timers.current.set(
+            existing.id,
+            setTimeout(() => removeToast(existing.id), duration),
+          );
+          return prev;
+        }
 
-      // Auto-dismiss
-      setTimeout(() => {
-        removeToast(id);
-      }, duration);
+        const id = nextId.current++;
+        timers.current.set(
+          id,
+          setTimeout(() => removeToast(id), duration),
+        );
+        const next = [...prev, { id, message, type }];
+        if (next.length <= MAX_VISIBLE) return next;
+        const dropped = next.slice(0, next.length - MAX_VISIBLE);
+        for (const d of dropped) {
+          const t = timers.current.get(d.id);
+          if (t) {
+            clearTimeout(t);
+            timers.current.delete(d.id);
+          }
+        }
+        return next.slice(-MAX_VISIBLE);
+      });
     },
     [removeToast]
   );

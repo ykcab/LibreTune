@@ -14,6 +14,9 @@ const HP_PER_WATT: f64 = 1.0 / 745.7;
 const NM_TO_FT_LB: f64 = 0.737_562;
 const KPH_TO_MS: f64 = 1.0 / 3.6;
 
+/// (rpm, hp, torque_ftlb, afr, map_kpa)
+type PowerSample = (f64, f64, f64, Option<f64>, Option<f64>);
+
 /// Known INI constant names that indicate VSS hardware is assigned.
 const VSS_PIN_CONSTANTS: &[&str] = &[
     "vehicleSpeedSensorInputPin",
@@ -204,11 +207,9 @@ pub fn compute_virtual_dyno(
     }
 
     if validate_pull_samples(samples) != VssReadiness::Ready {
-        return Err(
-            "Vehicle speed data is invalid for this pull. \
+        return Err("Vehicle speed data is invalid for this pull. \
              Virtual Dyno requires a working VSS."
-                .into(),
-        );
+            .into());
     }
 
     let mass_kg = (profile.weight_kg + profile.cargo_kg).max(1.0);
@@ -222,7 +223,7 @@ pub fn compute_virtual_dyno(
     let gear_ok = verify_gear(samples, profile, &mut warnings);
 
     // Collect instantaneous power estimates during positive acceleration
-    let mut raw_points: Vec<(f64, f64, f64, Option<f64>, Option<f64>)> = Vec::new();
+    let mut raw_points: Vec<PowerSample> = Vec::new();
 
     for (i, sample) in samples.iter().enumerate() {
         let a = accelerations[i];
@@ -235,7 +236,12 @@ pub fn compute_virtual_dyno(
             continue;
         }
 
-        let drag = 0.5 * AIR_DENSITY_KG_M3 * v_ms * v_ms * profile.drag_coefficient * profile.frontal_area_m2;
+        let drag = 0.5
+            * AIR_DENSITY_KG_M3
+            * v_ms
+            * v_ms
+            * profile.drag_coefficient
+            * profile.frontal_area_m2;
         let rolling = ROLLING_RESISTANCE * mass_kg * GRAVITY;
         let force = mass_kg * a + drag + rolling;
         let wheel_watts = force * v_ms;
@@ -255,11 +261,9 @@ pub fn compute_virtual_dyno(
     }
 
     if raw_points.len() < 5 {
-        return Err(
-            "Not enough acceleration data in this pull. \
+        return Err("Not enough acceleration data in this pull. \
              Try a longer WOT pull in the selected gear."
-                .into(),
-        );
+            .into());
     }
 
     let data = bin_by_rpm(&raw_points, 50.0);
@@ -308,7 +312,9 @@ fn is_vss_configured(constants: &HashMap<String, f64>) -> bool {
 
     // No known VSS constant in INI — allow if speed channel exists at runtime
     // (Speeduino and others may not expose a pin constant name we know)
-    !constants.keys().any(|k| VSS_PIN_CONSTANTS.contains(&k.as_str()))
+    !constants
+        .keys()
+        .any(|k| VSS_PIN_CONSTANTS.contains(&k.as_str()))
 }
 
 /// Resolve the first matching speed channel name from available outputs.
@@ -335,16 +341,16 @@ fn smoothing_window(smoothing: u8, sample_count: usize) -> usize {
 
 fn smooth_speed(samples: &[VirtualDynoSample], window: usize) -> Vec<f64> {
     let n = samples.len();
-    let mut out = vec![0.0; n];
     let half = window / 2;
 
-    for i in 0..n {
-        let start = i.saturating_sub(half);
-        let end = (i + half + 1).min(n);
-        let slice = &samples[start..end];
-        out[i] = slice.iter().map(|s| s.speed_kph).sum::<f64>() / slice.len() as f64;
-    }
-    out
+    (0..n)
+        .map(|i| {
+            let start = i.saturating_sub(half);
+            let end = (i + half + 1).min(n);
+            let slice = &samples[start..end];
+            slice.iter().map(|s| s.speed_kph).sum::<f64>() / slice.len() as f64
+        })
+        .collect()
 }
 
 fn compute_accelerations(samples: &[VirtualDynoSample], smoothed_speed: &[f64]) -> Vec<f64> {
@@ -394,7 +400,11 @@ fn expected_speed_kph(rpm: f64, profile: &VirtualDynoProfile) -> f64 {
     speed_ms * 3.6
 }
 
-fn verify_gear(samples: &[VirtualDynoSample], profile: &VirtualDynoProfile, warnings: &mut Vec<String>) -> bool {
+fn verify_gear(
+    samples: &[VirtualDynoSample],
+    profile: &VirtualDynoProfile,
+    warnings: &mut Vec<String>,
+) -> bool {
     let mut checks = 0;
     let mut passes = 0;
 
@@ -421,10 +431,7 @@ fn verify_gear(samples: &[VirtualDynoSample], profile: &VirtualDynoProfile, warn
     passes * 2 >= checks
 }
 
-fn bin_by_rpm(
-    points: &[(f64, f64, f64, Option<f64>, Option<f64>)],
-    bin_width: f64,
-) -> Vec<DynoDataPoint> {
+fn bin_by_rpm(points: &[PowerSample], bin_width: f64) -> Vec<DynoDataPoint> {
     if points.is_empty() {
         return Vec::new();
     }
@@ -438,10 +445,7 @@ fn bin_by_rpm(
     let mut rpm = start;
     while rpm <= end {
         let next = rpm + bin_width;
-        let in_bin: Vec<_> = points
-            .iter()
-            .filter(|p| p.0 >= rpm && p.0 < next)
-            .collect();
+        let in_bin: Vec<_> = points.iter().filter(|p| p.0 >= rpm && p.0 < next).collect();
 
         if !in_bin.is_empty() {
             let n = in_bin.len() as f64;
