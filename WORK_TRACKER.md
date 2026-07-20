@@ -8,6 +8,10 @@ Lightweight running tracker for current support/dev work.
 
 ## Recently Done
 
+- Signature mismatch: stop re-prompting on every reconnect after INI update (partial matches no longer open dialog; stamp `CurrentTune.msq` + persist project INI path).
+- Tune mismatch resolve: **Use LibreTune Settings** saves chosen pages to `CurrentTune.msq` then writes/burns ECU; **Use ECU Settings** overwrites disk MSQ from ECU.
+- Use LibreTune Settings ECU write: chunked `write_page` + retries (fixes Windows os error 121 timeout on full-page serial writes).
+- Use LibreTune Settings: pause realtime stream + disable auto-burn during bulk write, then burn once and restart stream (prevents OCH poller from disconnecting the ECU).
 - Firmware update (DFU) aligned with epicEFI Flasher:
   - DFU `.bin` load address fixed at `0x08000000` (was wrongly `0x08008000` — caused brick).
   - Addresses baked into backend; UI no longer exposes editable flash address.
@@ -32,6 +36,7 @@ Lightweight running tracker for current support/dev work.
 - Confirmed epicEFI Firmware Flasher DFU `.bin` uses inferred address `0x08000000`; LibreTune matched that.
 - Simplified `FirmwareUpdateDialog.tsx` (removed address field, guidance/companion/tool-path clutter).
 - `firmware_update.rs`: DFU `.bin` default `0x08000000`; recovery app still `0x08008000`.
+- Fixed post-firmware signature dialog loop + tune mismatch disk persistence (`use_project_tune` / `use_ecu_tune` / `update_project_ini`).
 
 ## Session: 2026-07-18
 

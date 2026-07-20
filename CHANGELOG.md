@@ -18,11 +18,21 @@ relevant.
 #### Fixed
 - **DFU `.bin` flash address** — use `0x08000000` (same as epicEFI Firmware Flasher /
   rusEFI Console). The previous `0x08008000` preset could brick OpenBLT boards.
+- **Signature mismatch re-prompt** — after updating the project INI for a new firmware,
+  reconnect no longer re-opens the dialog for partial matches; `CurrentTune.msq`
+  signature is stamped to the new INI.
+- **Tune mismatch resolve** — Use LibreTune Settings saves to `CurrentTune.msq` then
+  writes/burns the ECU; Use ECU Settings overwrites the on-disk MSQ from the ECU.
+- **Use LibreTune Settings write timeout** — ECU page writes are chunked (blocking
+  factor) with retries; full-page USB writes were hitting Windows error 121.
+- **Use LibreTune Settings froze ECU link** — pause realtime streaming and disable
+  per-page auto-burn during bulk write; burn once, clear RX, restart stream.
 
 #### Changed
 - **Firmware Update dialog** — addresses baked into the backend; removed editable
   address field and most guidance/tool clutter (mode + file + status/log).
 - Flashing helper processes on Windows no longer pop console windows.
+- Tune mismatch dialog labels: “Use LibreTune Settings” / “Use ECU Settings”.
 
 ### 2026-07-18 — Upstream PRs #60–#63 on `dev`
 

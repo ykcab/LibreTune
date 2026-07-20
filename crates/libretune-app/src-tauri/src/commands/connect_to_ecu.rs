@@ -171,22 +171,30 @@ pub async fn connect_to_ecu(
                     // Find matching INIs from repository
                     let matching_inis = find_matching_inis_internal(&state, &signature).await;
 
-                    // Get current INI path from settings
+                    // Prefer the project INI path when a project is open
                     let current_ini_path = {
-                        let settings = load_settings(&app);
-                        settings.last_ini_path.clone()
+                        let project_guard = state.current_project.lock().await;
+                        if let Some(project) = project_guard.as_ref() {
+                            Some(project.ini_path().to_string_lossy().to_string())
+                        } else {
+                            let settings = load_settings(&app);
+                            settings.last_ini_path.clone()
+                        }
                     };
 
                     let info = SignatureMismatchInfo {
                         ecu_signature: signature.clone(),
                         ini_signature: expected.clone(),
-                        match_type,
+                        match_type: match_type.clone(),
                         current_ini_path,
                         matching_inis,
                     };
 
-                    // Also emit event for backward compatibility
-                    let _ = app.emit("signature:mismatch", &info);
+                    // Only emit for full mismatches. Partial is returned in ConnectResult
+                    // for an advisory toast; emitting would reopen the dialog every connect.
+                    if match_type == SignatureMatchType::Mismatch {
+                        let _ = app.emit("signature:mismatch", &info);
+                    }
 
                     Some(info)
                 } else {

@@ -96,8 +96,8 @@ export default function TuneMismatchDialog({
       onUseProject();
       onClose();
     } catch (err) {
-      console.error('Failed to load project tune:', err);
-      alert(`Failed to load project tune: ${err}`);
+      console.error('Failed to apply LibreTune settings:', err);
+      alert(`Failed to apply LibreTune settings: ${err}`);
     } finally {
       setIsLoading(false);
     }
@@ -110,8 +110,8 @@ export default function TuneMismatchDialog({
       onUseECU();
       onClose();
     } catch (err) {
-      console.error('Failed to use ECU tune:', err);
-      alert(`Failed to use ECU tune: ${err}`);
+      console.error('Failed to apply ECU settings:', err);
+      alert(`Failed to apply ECU settings: ${err}`);
     } finally {
       setIsLoading(false);
     }
@@ -209,23 +209,23 @@ export default function TuneMismatchDialog({
 
         <div className="tune-mismatch-options">
           <div className="tune-option">
-            <h3>Use Project Tune</h3>
+            <h3>Use LibreTune Settings</h3>
             <p>
-              Load the tune from your project file. This will overwrite the ECU tune with your
-              saved project data.
+              Keep LibreTune&apos;s tune, save it to <code>CurrentTune.msq</code>, and write it to
+              the ECU.
             </p>
             <Button variant="primary" onClick={handleUseProject} disabled={isLoading}>
-              {isLoading ? 'Loading...' : 'Use Project Tune'}
+              {isLoading ? 'Loading...' : 'Use LibreTune Settings'}
             </Button>
           </div>
 
           <div className="tune-option">
-            <h3>Use ECU Tune</h3>
+            <h3>Use ECU Settings</h3>
             <p>
-              Keep the tune currently on the ECU. Your project will be updated to match the ECU.
+              Keep the ECU tune and overwrite <code>CurrentTune.msq</code> on disk to match.
             </p>
             <Button variant="secondary" onClick={handleUseECU} disabled={isLoading}>
-              {isLoading ? 'Loading...' : 'Use ECU Tune'}
+              {isLoading ? 'Loading...' : 'Use ECU Settings'}
             </Button>
           </div>
         </div>

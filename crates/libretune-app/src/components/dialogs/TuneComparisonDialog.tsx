@@ -32,9 +32,12 @@ export default function TuneComparisonDialog({
     setError(null);
     try {
       await invoke("write_project_tune_to_ecu");
+      // write_project_tune_to_ecu pauses the realtime stream; restore it.
+      await invoke("start_realtime_stream", { intervalMs: 50 }).catch(() => {});
       onUseProjectTune();
       onClose();
     } catch (e) {
+      await invoke("start_realtime_stream", { intervalMs: 50 }).catch(() => {});
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);

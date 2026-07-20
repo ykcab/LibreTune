@@ -2,7 +2,7 @@
 
 use crate::{load_settings, save_settings, AppState};
 use libretune_core::ini::EcuDefinition;
-use libretune_core::tune::TuneCache;
+use libretune_core::tune::{TuneCache, TuneFile};
 use tauri::Emitter;
 
 /// Update the project's INI file and optionally force re-sync
@@ -18,6 +18,7 @@ pub async fn update_project_ini(
         .map_err(|e| format!("Failed to parse INI file: {}", e))?;
 
     // Update the project config if we have a project open
+    let mut project_ini_path_str: Option<String> = None;
     let mut proj_guard = state.current_project.lock().await;
     if let Some(ref mut project) = *proj_guard {
         // Copy the new INI to the project directory
@@ -30,6 +31,33 @@ pub async fn update_project_ini(
         project
             .save_config()
             .map_err(|e| format!("Failed to save project config: {}", e))?;
+
+        // Stamp CurrentTune.msq with the new signature so the next load/connect
+        // does not treat the old MSQ signature as another mismatch.
+        let tune_path = project.current_tune_path();
+        if tune_path.exists() {
+            match TuneFile::load(&tune_path) {
+                Ok(mut tune) => {
+                    tune.signature = new_def.signature.clone();
+                    if let Err(e) = tune.save(&tune_path) {
+                        eprintln!(
+                            "[WARN] update_project_ini: failed to update tune signature: {}",
+                            e
+                        );
+                    } else if let Some(ref mut project_tune) = project.current_tune {
+                        project_tune.signature = new_def.signature.clone();
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[WARN] update_project_ini: failed to load tune for signature stamp: {}",
+                        e
+                    );
+                }
+            }
+        }
+
+        project_ini_path_str = Some(project_ini_path.to_string_lossy().to_string());
     }
     drop(proj_guard);
 
@@ -39,10 +67,18 @@ pub async fn update_project_ini(
     *def_guard = Some(new_def);
     drop(def_guard);
 
-    // Update settings with new INI path
+    // Prefer the project copy so reconnects always use the persisted INI.
     let mut settings = load_settings(&app);
-    settings.last_ini_path = Some(ini_path);
+    settings.last_ini_path = project_ini_path_str.or(Some(ini_path));
     save_settings(&app, &settings);
+
+    // Keep in-memory current tune signature in sync
+    {
+        let mut tune_guard = state.current_tune.lock().await;
+        if let Some(tune) = tune_guard.as_mut() {
+            tune.signature = def_clone.signature.clone();
+        }
+    }
 
     // Re-initialize cache with new definition and re-apply project tune constants
     let project_tune = {

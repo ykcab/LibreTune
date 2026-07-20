@@ -33,6 +33,12 @@ export function useBackendEventListeners(deps: BackendEventListenerDeps): void {
     (async () => {
       try {
         unlisten = await listen<SignatureMismatchInfo>("signature:mismatch", (event) => {
+          // Partial matches are advisory only (toast in connect flow). Only full
+          // mismatches should reopen this dialog — otherwise every reconnect after
+          // a successful INI update re-prompts the user.
+          if (event.payload.match_type !== "mismatch") {
+            return;
+          }
           console.log("Signature mismatch detected:", event.payload);
           setSignatureMismatchInfo(event.payload);
           setSignatureMismatchOpen(true);
