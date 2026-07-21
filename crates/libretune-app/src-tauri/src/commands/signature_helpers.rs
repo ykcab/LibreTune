@@ -60,6 +60,15 @@ pub(crate) fn compare_signatures_with_prefix(
         }
     }
 
+    // Companion INI case (rusEFI / epicEFI): ECU reports `…uaefi.<buildHash>` while the
+    // INI signature stops before the hash. One string is a prefix of the other → Exact.
+    if !ecu_normalized.is_empty()
+        && !ini_normalized.is_empty()
+        && (ecu_normalized.starts_with(&ini_normalized) || ini_normalized.starts_with(&ecu_normalized))
+    {
+        return SignatureMatchType::Exact;
+    }
+
     // Check for common suffixes (hashes)
     // RusEFI signatures often end with a hash or unique ID (e.g. "rusEFI master 2024.02.24.simulator.12345678")
     // If both end with the same alphanumeric string > 6 chars, treat as Exact.
@@ -86,6 +95,11 @@ pub(crate) fn compare_signatures_with_prefix(
         {
             return SignatureMatchType::Exact;
         }
+    }
+
+    // ECU has an extra trailing build id token that the INI lacks (or vice versa).
+    if signatures_differ_only_by_trailing_build_id(&ecu_normalized, &ini_normalized) {
+        return SignatureMatchType::Exact;
     }
 
     if ecu_normalized.contains(&ini_normalized) || ini_normalized.contains(&ecu_normalized) {
@@ -124,6 +138,21 @@ pub(crate) fn compare_signatures_with_prefix(
     }
 
     SignatureMatchType::Mismatch
+}
+
+/// True when the longer signature is the shorter one plus a trailing build/hash token.
+fn signatures_differ_only_by_trailing_build_id(a: &str, b: &str) -> bool {
+    let (shorter, longer) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let short_tokens: Vec<&str> = shorter.split_whitespace().collect();
+    let long_tokens: Vec<&str> = longer.split_whitespace().collect();
+    if short_tokens.is_empty() || long_tokens.len() != short_tokens.len() + 1 {
+        return false;
+    }
+    if short_tokens != long_tokens[..short_tokens.len()] {
+        return false;
+    }
+    let extra = long_tokens[long_tokens.len() - 1];
+    extra.len() > 6 && extra.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 /// Build a shallow SignatureMismatchInfo (without resolving matching INIs) for testing

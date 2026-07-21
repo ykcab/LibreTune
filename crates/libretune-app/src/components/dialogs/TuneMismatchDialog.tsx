@@ -211,8 +211,8 @@ export default function TuneMismatchDialog({
           <div className="tune-option">
             <h3>Use LibreTune Settings</h3>
             <p>
-              Keep LibreTune&apos;s tune, save it to <code>CurrentTune.msq</code>, and write it to
-              the ECU.
+              Apply your loaded tune&apos;s settings onto the ECU (keeps other ECU fields intact),
+              save <code>CurrentTune.msq</code>, write, and burn.
             </p>
             <Button variant="primary" onClick={handleUseProject} disabled={isLoading}>
               {isLoading ? 'Loading...' : 'Use LibreTune Settings'}

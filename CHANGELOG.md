@@ -13,9 +13,21 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-07-21 — Bits range parse fix (Trigger visibility)
+
+#### Fixed
+- **INI bits `[start:end]` mis-parsed as `[position:size]`** — e.g. `consumeObdSensors`
+  `[6:6]` was treated as 6 bits instead of 1. Dialog conditions like
+  `{ consumeObdSensors == 0 }` failed, so Trigger (and other gated menus) looked
+  empty while TunerStudio showed the real settings. Size is now `end - start + 1`.
+
 ### 2026-07-20 — DFU firmware update fix + simpler dialog
 
 #### Fixed
+- **Tune mismatch wrote garbage to ECU** — Load Tune only overlays named MSQ
+  constants; choosing LibreTune Settings was bulk-writing the rest as zeros.
+  Sync/compare and apply now merge **ECU page base + MSQ constants** (and full
+  `<pageData>` when present). Load Tune always resets the cache first.
 - **DFU `.bin` flash address** — use `0x08000000` (same as epicEFI Firmware Flasher /
   rusEFI Console). The previous `0x08008000` preset could brick OpenBLT boards.
 - **Signature mismatch re-prompt** — after updating the project INI for a new firmware,
@@ -27,6 +39,8 @@ relevant.
   factor) with retries; full-page USB writes were hitting Windows error 121.
 - **Use LibreTune Settings froze ECU link** — pause realtime streaming and disable
   per-page auto-burn during bulk write; burn once, clear RX, restart stream.
+- **False “INI partially matches” toast** — ECU build-hash suffixes (rusEFI/epicEFI
+  companion INIs) are treated as an exact match, not partial.
 
 #### Changed
 - **Firmware Update dialog** — addresses baked into the backend; removed editable

@@ -4,9 +4,15 @@ import { ArrowLeft } from 'lucide-react';
 import './DialogRenderer.css';
 import {
   type DialogDefinition,
+  type DialogComponent,
   type FieldInfo,
 } from './types';
 import { DialogComponentsLayout } from './DialogComponentsLayout';
+
+function panelGateExpression(comp: DialogComponent): string | null {
+  if (comp.type !== 'Panel') return null;
+  return comp.visibility_condition || comp.enabled_condition || null;
+}
 
 export interface DialogRendererProps {
   definition: DialogDefinition;
@@ -32,6 +38,7 @@ export default function DialogRenderer({ definition, onBack, openTable, context,
   // State for help icon visibility setting (default true = show on all fields)
   const [showAllHelpIcons, setShowAllHelpIcons] = useState(true);
   const [isDialogEmpty, setIsDialogEmpty] = useState(false);
+  const [hiddenPanelHints, setHiddenPanelHints] = useState<string[]>([]);
   
   // Ref for scrolling to highlighted field
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,6 +99,7 @@ export default function DialogRenderer({ definition, onBack, openTable, context,
     const contentSelector = [
       '.dialog-field',
       '.nested-panel',
+      '.panel-loading',
       '.embedded-table-link',
       '.embedded-table',
       '.embedded-port-editor',
@@ -104,16 +112,58 @@ export default function DialogRenderer({ definition, onBack, openTable, context,
       '.dialog-gauge-stack',
     ].join(', ');
 
-    const refresh = () => {
+    let cancelled = false;
+
+    const refresh = async () => {
       const hasContent = container.querySelector(contentSelector) !== null;
       setIsDialogEmpty(!hasContent);
+      if (hasContent) {
+        setHiddenPanelHints([]);
+        return;
+      }
+
+      const gatedPanels = definition.components.filter(
+        (c) => c.type === 'Panel' && panelGateExpression(c),
+      );
+      const hints: string[] = [];
+      for (const panel of gatedPanels) {
+        const expr = panelGateExpression(panel);
+        if (!expr) continue;
+        try {
+          const visible = await invoke<boolean>('evaluate_expression', {
+            expression: expr,
+            context,
+          });
+          if (!visible) {
+            const vars = Array.from(
+              expr.matchAll(/\b([A-Za-z_]\w*)\b/g),
+              (m) => m[1],
+            ).filter((v) => !['and', 'or', 'not'].includes(v.toLowerCase()));
+            const uniqueVars = [...new Set(vars)];
+            const values = uniqueVars
+              .map((v) => `${v}=${context[v] ?? 0}`)
+              .join(', ');
+            hints.push(
+              `${panel.name ?? 'panel'} needs {${expr}}${values ? ` (now ${values})` : ''}`,
+            );
+          }
+        } catch {
+          // ignore eval errors for the hint list
+        }
+      }
+      if (!cancelled) setHiddenPanelHints(hints);
     };
 
-    refresh();
-    const obs = new MutationObserver(refresh);
+    void refresh();
+    const obs = new MutationObserver(() => {
+      void refresh();
+    });
     obs.observe(container, { childList: true, subtree: true });
-    return () => obs.disconnect();
-  }, [definition.name, definition.components]);
+    return () => {
+      cancelled = true;
+      obs.disconnect();
+    };
+  }, [definition.name, definition.components, context]);
   
   const handleFieldFocus = (info: FieldInfo) => {
     setSelectedField(info);
@@ -143,8 +193,25 @@ export default function DialogRenderer({ definition, onBack, openTable, context,
         />
         {isDialogEmpty ? (
           <div className="dialog-empty-state">
-            No settings are currently visible for this dialog. This usually means
-            the panel is conditionally hidden by current ECU/project configuration.
+            <p>
+              No settings are currently visible for this dialog. Panels are
+              hidden by INI conditions based on your current tune.
+            </p>
+            {hiddenPanelHints.length > 0 ? (
+              <ul className="dialog-empty-state-list">
+                {hiddenPanelHints.map((hint) => (
+                  <li key={hint}>{hint}</li>
+                ))}
+              </ul>
+            ) : null}
+            {definition.name.toLowerCase().includes('trigger') ? (
+              <p>
+                For Trigger, rusEFI/epicEFI only show these panels when{' '}
+                <code>consumeObdSensors == 0</code>. If that setting is on
+                (CAN/OBD consumer mode), open the CAN/OBD dialog and turn it
+                off — then Trigger settings return.
+              </p>
+            ) : null}
           </div>
         ) : null}
       </div>

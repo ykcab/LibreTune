@@ -198,6 +198,15 @@ mod signature_tests {
             SignatureMatchType::Exact
         );
 
+        // Companion INI: ECU adds build hash after the INI signature
+        assert_eq!(
+            compare_signatures(
+                "rusEFI master.2025.07.30.uaefi.3074276223",
+                "rusEFI master.2025.07.30.uaefi"
+            ),
+            SignatureMatchType::Exact
+        );
+
         // Partial when base matches but versions differ
         assert_eq!(
             compare_signatures("rusEFI v1.2.3", "rusEFI v1.2.4"),

@@ -159,25 +159,14 @@ pub async fn load_tune(
         let def = def_guard.as_ref();
         let mut cache_guard = state.tune_cache.lock().await;
 
-        // Initialize cache if it doesn't exist, or reinitialize if it was reset
-        if cache_guard.is_none() {
-            if let Some(def) = def {
-                eprintln!("[DEBUG] load_tune: Initializing cache from definition");
-                *cache_guard = Some(TuneCache::from_definition(def));
-            } else {
-                eprintln!("[WARN] load_tune: No definition loaded, cannot initialize cache");
-                return Err("No ECU definition loaded. Please open a project first.".to_string());
-            }
-        }
-
-        // Ensure cache is initialized even if it exists but is empty
-        if let Some(cache) = cache_guard.as_mut() {
-            if cache.page_count() == 0 {
-                if let Some(def) = def {
-                    eprintln!("[DEBUG] load_tune: Cache exists but is empty, reinitializing from definition");
-                    *cache_guard = Some(TuneCache::from_definition(def));
-                }
-            }
+        // Always reset the cache. Overlaying an MSQ onto a previous ECU sync leaves
+        // stale bytes that later look like a "project tune" and can corrupt the ECU.
+        if let Some(def) = def {
+            eprintln!("[DEBUG] load_tune: Initializing cache from definition");
+            *cache_guard = Some(TuneCache::from_definition(def));
+        } else {
+            eprintln!("[WARN] load_tune: No definition loaded, cannot initialize cache");
+            return Err("No ECU definition loaded. Please open a project first.".to_string());
         }
 
         if let Some(cache) = cache_guard.as_mut() {

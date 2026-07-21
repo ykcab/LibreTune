@@ -1,5 +1,6 @@
 //! Miscellaneous tune commands: string constant updates, tune source switching.
 
+use crate::commands::tune_apply::materialize_project_pages;
 use crate::state::AppState;
 use libretune_core::ini::DataType;
 use libretune_core::tune::TuneFile;
@@ -90,7 +91,9 @@ pub async fn update_constant_string(
     Ok(())
 }
 
-/// Use LibreTune / project settings: persist them to CurrentTune.msq, then push to ECU.
+/// Use LibreTune / project settings: merge MSQ constants onto the ECU base, save, write, burn.
+///
+/// Never bulk-writes zero-padded "project pages" from Load Tune — that corrupts the ECU.
 #[tauri::command]
 pub async fn use_project_tune(
     state: tauri::State<'_, AppState>,
@@ -110,55 +113,68 @@ pub async fn use_project_tune(
         (tune_path, ini_signature)
     };
 
-    // Prefer the mismatch snapshot's LibreTune/project pages (what the dialog showed).
-    // Fall back to CurrentTune.msq on disk.
-    let mut tune = {
+    let mut project_msq = if tune_path.exists() {
+        TuneFile::load(&tune_path).map_err(|e| format!("Failed to load project tune: {}", e))?
+    } else {
+        return Err("Project tune file not found".to_string());
+    };
+    project_msq.signature = ini_signature.clone();
+
+    // Safe pages = ECU base (from mismatch snapshot) + MSQ constants / full pageData.
+    // Fall back to in-memory ECU tune pages if snapshot is gone.
+    let ecu_base = {
         let snapshot_guard = state.tune_mismatch_snapshot.lock().await;
         if let Some(snapshot) = snapshot_guard.as_ref() {
-            let mut tune = if tune_path.exists() {
-                TuneFile::load(&tune_path).unwrap_or_else(|_| TuneFile::new(&ini_signature))
-            } else {
-                TuneFile::new(&ini_signature)
-            };
-            tune.pages = snapshot.project_pages.clone();
-            tune
-        } else if tune_path.exists() {
-            TuneFile::load(&tune_path)
-                .map_err(|e| format!("Failed to load project tune: {}", e))?
+            snapshot.ecu_pages.clone()
         } else {
-            return Err("Project tune file not found".to_string());
+            let tune_guard = state.current_tune.lock().await;
+            tune_guard
+                .as_ref()
+                .map(|t| t.pages.clone())
+                .unwrap_or_default()
         }
     };
-    tune.signature = ini_signature;
 
-    // Populate cache from chosen LibreTune pages
+    if ecu_base.is_empty() {
+        return Err(
+            "No ECU page data available to merge. Connect and sync first, then choose LibreTune settings."
+                .to_string(),
+        );
+    }
+
+    let merged_pages = {
+        let def_guard = state.definition.lock().await;
+        let def = def_guard.as_ref().ok_or("Definition not loaded")?;
+        materialize_project_pages(def, &project_msq, &ecu_base)
+    };
+
+    project_msq.pages = merged_pages;
+
     {
         let mut cache_guard = state.tune_cache.lock().await;
         if let Some(cache) = cache_guard.as_mut() {
-            for (page_num, page_data) in &tune.pages {
+            for (page_num, page_data) in &project_msq.pages {
                 cache.load_page(*page_num, page_data.clone());
             }
         }
     }
 
-    // Persist to disk first — "Use LibreTune settings" must update CurrentTune.msq
-    tune.save(&tune_path)
+    project_msq
+        .save(&tune_path)
         .map_err(|e| format!("Failed to save project tune: {}", e))?;
 
-    *state.current_tune.lock().await = Some(tune);
+    *state.current_tune.lock().await = Some(project_msq);
     *state.current_tune_path.lock().await = Some(tune_path);
     *state.tune_modified.lock().await = false;
     *state.tune_mismatch_snapshot.lock().await = None;
 
     let _ = app.emit("tune:loaded", "project");
 
-    // Push to ECU when connected and burn so controller flash matches.
     if state.connection.lock().await.is_some() {
         let write_result =
             crate::commands::project_tune_sync::write_project_tune_to_ecu(app.clone(), state.clone())
                 .await;
         if let Err(e) = write_result {
-            // Best-effort: restart stream even after failure so UI is not left dead.
             let _ = crate::commands::realtime_stream::start_realtime_stream(
                 app.clone(),
                 state.clone(),
@@ -172,7 +188,6 @@ pub async fn use_project_tune(
         }
 
         let burn_result = crate::commands::tune_io::burn_to_ecu(app.clone(), state.clone()).await;
-        // Clear any burn/write leftovers, then restore live telemetry.
         {
             let mut conn_guard = state.connection.lock().await;
             if let Some(conn) = conn_guard.as_mut() {
@@ -203,7 +218,6 @@ pub async fn use_ecu_tune(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    // Prefer snapshot ECU pages (authoritative post-sync read).
     {
         let snapshot_guard = state.tune_mismatch_snapshot.lock().await;
         if let Some(snapshot) = snapshot_guard.as_ref() {

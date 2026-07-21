@@ -8,7 +8,10 @@ Lightweight running tracker for current support/dev work.
 
 ## Recently Done
 
+- **CRITICAL:** Bits INI `[start:end]` was parsed as `[position:size]` — single-bit flags like `consumeObdSensors = [6:6]` read as 6 bits, so Trigger panels stayed hidden while TunerStudio correctly showed `false`. Fixed to inclusive start:end (`size = end - start + 1`).
+- **CRITICAL:** Tune mismatch / Use LibreTune Settings no longer bulk-writes zero-padded MSQ pages (was corrupting ECU fields). Merge = ECU base + MSQ constants; Load Tune resets cache; sync compares materialized project pages.
 - Signature mismatch: stop re-prompting on every reconnect after INI update (partial matches no longer open dialog; stamp `CurrentTune.msq` + persist project INI path).
+- Signature compare: ECU build-hash suffix vs companion INI → Exact (stops “partially matches” toast spam).
 - Tune mismatch resolve: **Use LibreTune Settings** saves chosen pages to `CurrentTune.msq` then writes/burns ECU; **Use ECU Settings** overwrites disk MSQ from ECU.
 - Use LibreTune Settings ECU write: chunked `write_page` + retries (fixes Windows os error 121 timeout on full-page serial writes).
 - Use LibreTune Settings: pause realtime stream + disable auto-burn during bulk write, then burn once and restart stream (prevents OCH poller from disconnecting the ECU).
