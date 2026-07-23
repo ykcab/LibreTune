@@ -182,9 +182,14 @@ pub async fn load_tune(
 
             // Then, apply constants from tune file to cache
             if let Some(def) = def {
+                // Complete <pageData> is authoritative — do not re-apply stale
+                // named constants over those pages (can flip packed bits / brick).
+                let complete_pages =
+                    crate::commands::tune_apply::pages_with_complete_page_data(def, &tune);
                 eprintln!(
-                    "[DEBUG] load_tune: Definition loaded - {} constants in definition",
-                    def.constants.len()
+                    "[DEBUG] load_tune: Definition loaded - {} constants in definition, {} pages with complete pageData",
+                    def.constants.len(),
+                    complete_pages.len()
                 );
 
                 // Debug: Check if VE table constants are in the definition
@@ -220,6 +225,10 @@ pub async fn load_tune(
 
                     // Look up constant in definition
                     if let Some(constant) = def.constants.get(name) {
+                        if !constant.is_pc_variable && complete_pages.contains(&constant.page) {
+                            skipped_count += 1;
+                            continue;
+                        }
                         // PC variables are stored locally, not in page data
                         if constant.is_pc_variable {
                             match tune_value {

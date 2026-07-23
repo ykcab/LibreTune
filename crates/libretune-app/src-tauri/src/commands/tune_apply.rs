@@ -4,10 +4,31 @@
 //! images. Painting those onto zeroed pages and writing the result to the ECU
 //! zeros/corrupts every field the MSQ did not define. Always start from a real
 //! ECU page base (or complete `<pageData>`), then overlay constants.
+//!
+//! When the MSQ already has a complete `<pageData>` for a page, that image is
+//! authoritative — do **not** re-apply named constants on top. After
+//! "Use LibreTune Settings" we save full pages but may keep stale constant XML;
+//! re-applying those on the next connect corrupts critical bits and can brick.
 
 use libretune_core::ini::{DataType, EcuDefinition};
 use libretune_core::tune::{TuneCache, TuneFile, TuneValue};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// Pages in `tune` that already have a full raw image matching the INI page size.
+pub fn pages_with_complete_page_data(def: &EcuDefinition, tune: &TuneFile) -> HashSet<u8> {
+    let mut complete = HashSet::new();
+    for (page_num, page_data) in &tune.pages {
+        let expected = def
+            .page_sizes
+            .get(*page_num as usize)
+            .copied()
+            .unwrap_or(0) as usize;
+        if expected > 0 && page_data.len() == expected {
+            complete.insert(*page_num);
+        }
+    }
+    complete
+}
 
 /// Build full page images = `ecu_base` + optional complete MSQ page blobs + MSQ constants.
 pub fn materialize_project_pages(
@@ -24,18 +45,15 @@ pub fn materialize_project_pages(
     }
 
     // Complete raw page blobs from the MSQ replace the ECU base for that page.
-    for (page_num, page_data) in &project_tune.pages {
-        let expected = def
-            .page_sizes
-            .get(*page_num as usize)
-            .copied()
-            .unwrap_or(0) as usize;
-        if expected > 0 && page_data.len() == expected {
+    let complete_pages = pages_with_complete_page_data(def, project_tune);
+    for page_num in &complete_pages {
+        if let Some(page_data) = project_tune.pages.get(page_num) {
             cache.load_page(*page_num, page_data.clone());
         }
     }
 
-    apply_tune_constants_to_cache(&mut cache, def, project_tune);
+    // Only overlay named constants onto pages that still need them.
+    apply_tune_constants_to_cache(&mut cache, def, project_tune, &complete_pages);
 
     let mut pages = HashMap::new();
     for page in 0..cache.page_count() {
@@ -47,15 +65,21 @@ pub fn materialize_project_pages(
 }
 
 /// Overlay `tune.constants` onto an existing cache (bits use read-modify-write).
+///
+/// Constants whose page is in `skip_pages` are ignored (complete pageData wins).
 pub fn apply_tune_constants_to_cache(
     cache: &mut TuneCache,
     def: &EcuDefinition,
     tune: &TuneFile,
+    skip_pages: &HashSet<u8>,
 ) {
     for (name, tune_value) in &tune.constants {
         let Some(constant) = def.constants.get(name) else {
             continue;
         };
+        if !constant.is_pc_variable && skip_pages.contains(&constant.page) {
+            continue;
+        }
         if constant.is_pc_variable {
             match tune_value {
                 TuneValue::Scalar(v) => {
@@ -194,4 +218,57 @@ fn apply_bits_constant(
     }
 
     let _ = cache.write_bytes(constant.page, read_offset, &current_bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libretune_core::ini::{Constant, DataType, EcuDefinition};
+    use std::collections::HashMap;
+
+    fn tiny_def() -> EcuDefinition {
+        let mut def = EcuDefinition {
+            n_pages: 1,
+            page_sizes: vec![4],
+            ..EcuDefinition::default()
+        };
+        let mut flag = Constant::new("flagBits", 0, 0, DataType::Bits);
+        flag.bit_position = Some(0);
+        flag.bit_size = Some(1);
+        flag.bit_options = vec!["false".into(), "true".into()];
+        def.constants.insert("flagBits".into(), flag);
+        def
+    }
+
+    #[test]
+    fn complete_page_data_not_overwritten_by_stale_constants() {
+        let def = tiny_def();
+        // ECU / previously-written page: flag bit set (true)
+        let mut ecu_base = HashMap::new();
+        ecu_base.insert(0u8, vec![0x01, 0x00, 0x00, 0x00]);
+
+        let mut msq = TuneFile::new("test");
+        // Complete pageData matches ECU (good image after first apply)
+        msq.pages.insert(0, vec![0x01, 0x00, 0x00, 0x00]);
+        // Stale constant XML still says false — must NOT clear the bit
+        msq.constants
+            .insert("flagBits".into(), TuneValue::String("false".into()));
+
+        let pages = materialize_project_pages(&def, &msq, &ecu_base);
+        assert_eq!(pages.get(&0).unwrap()[0], 0x01);
+    }
+
+    #[test]
+    fn constants_still_apply_when_page_data_missing() {
+        let def = tiny_def();
+        let mut ecu_base = HashMap::new();
+        ecu_base.insert(0u8, vec![0x01, 0x00, 0x00, 0x00]);
+
+        let mut msq = TuneFile::new("test");
+        msq.constants
+            .insert("flagBits".into(), TuneValue::String("false".into()));
+
+        let pages = materialize_project_pages(&def, &msq, &ecu_base);
+        assert_eq!(pages.get(&0).unwrap()[0], 0x00);
+    }
 }
