@@ -229,3 +229,49 @@ fn parse_command_string(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libretune_core::ini::{CommandPart, ControllerCommand, EcuDefinition};
+
+    fn def_with_cmd(name: &str, raw: &str) -> EcuDefinition {
+        let mut def = EcuDefinition::default();
+        def.controller_commands.insert(
+            name.to_string(),
+            ControllerCommand {
+                name: name.to_string(),
+                label: name.to_string(),
+                parts: vec![CommandPart::Raw(raw.to_string())],
+                enable_condition: None,
+            },
+        );
+        def
+    }
+
+    #[test]
+    fn resolves_bench_injector_z_command_bytes() {
+        let def = def_with_cmd("cmd_test_inj1", r"Z\x00\x13\x00\x01");
+        let bytes = resolve_command_bytes(
+            &def,
+            "cmd_test_inj1",
+            &std::collections::HashMap::new(),
+            &mut std::collections::HashSet::new(),
+        )
+        .expect("resolve");
+        assert_eq!(bytes, vec![b'Z', 0x00, 0x13, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn resolves_bench_cancel_z_command_bytes() {
+        let def = def_with_cmd("cmd_test_cancel", r"Z\x00\x16\x00\x10");
+        let bytes = resolve_command_bytes(
+            &def,
+            "cmd_test_cancel",
+            &std::collections::HashMap::new(),
+            &mut std::collections::HashSet::new(),
+        )
+        .expect("resolve");
+        assert_eq!(bytes, vec![b'Z', 0x00, 0x16, 0x00, 0x10]);
+    }
+}

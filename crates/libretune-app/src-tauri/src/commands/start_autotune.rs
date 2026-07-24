@@ -20,6 +20,7 @@ pub struct AutoTuneStartResult {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_autotune(
     state: tauri::State<'_, AppState>,
     table_name: String,
