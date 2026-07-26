@@ -163,15 +163,7 @@ fn decode_string_value(data: Option<&Vec<u8>>, offset: usize, length: usize) -> 
 fn decode_bits_value(data: Option<&Vec<u8>>, offset: usize, constant: &Constant) -> String {
     let raw = read_const_byte(data, offset);
     let bit_pos = usize::from(constant.bit_position.unwrap_or(0).min(7));
-    let bit_spec = constant
-        .bit_size
-        .unwrap_or(constant.bit_position.unwrap_or(0));
-    let bit_hi = usize::from(bit_spec.min(7));
-    let width = if bit_hi >= bit_pos {
-        (bit_hi - bit_pos + 1).min(8)
-    } else {
-        1
-    };
+    let width = usize::from(constant.bit_size.unwrap_or(1).min(8));
     let mask = if width >= 8 {
         0xFFu16
     } else {
@@ -368,6 +360,25 @@ pub async fn sync_ecu_data(
                 ecu_pages: ecu_tune.pages.clone(),
                 diff_pages: diff_pages.clone(),
             });
+        }
+        // Keep UI on project tune until user resolves Use ECU / Use Project.
+        {
+            let mut cache_guard = state.tune_cache.lock().await;
+            if let Some(cache) = cache_guard.as_mut() {
+                for (page_num, page_data) in &project_pages {
+                    cache.load_page(*page_num, page_data.clone());
+                }
+            }
+        }
+        {
+            let mut tune = TuneFile::new(&signature);
+            if let Some(msq) = &project_msq {
+                tune.constants = msq.constants.clone();
+            }
+            for (page_num, page_data) in &project_pages {
+                tune.pages.insert(*page_num, page_data.clone());
+            }
+            *state.current_tune.lock().await = Some(tune);
         }
         let _ = app.emit(
             "tune:mismatch",

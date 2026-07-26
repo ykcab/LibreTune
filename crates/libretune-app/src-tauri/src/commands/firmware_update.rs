@@ -905,10 +905,10 @@ pub async fn update_ecu_firmware(
     push_log(&app, &mut log, "Preparing firmware update…");
 
     let bytes = resolve_controller_command(&state, &command_name).await?;
+    stop_metrics_task(state.clone()).await;
     push_log(&app, &mut log, format!("Sending {} to ECU…", command_name));
     send_controller_command_bytes(&state, &bytes).await?;
 
-    stop_metrics_task(state.clone()).await;
     {
         let mut conn_guard = state.connection.lock().await;
         *conn_guard = None;

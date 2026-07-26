@@ -149,7 +149,7 @@ describe('App integration (toolbar connection-info)', () => {
     await waitFor(() => expect(container.querySelector('.packet-mode')?.textContent).toBe('—'));
   });
 
-  it('proceeds to sync on partial signature mismatch (advisory)', async () => {
+  it('blocks sync on partial signature mismatch until INI is resolved', async () => {
     let syncCalled = false;
 
     (invoke as unknown as any).mockImplementation((cmd: string) => {
@@ -214,17 +214,11 @@ describe('App integration (toolbar connection-info)', () => {
     const dialogConnect = await screen.findByText('Connect');
     dialogConnect.click();
 
-    // Wait for sync to be called due to advisory partial mismatch
-    await waitFor(() => expect(syncCalled).toBe(true));
-
-    // A warning toast should have been shown informing the user about the partial match
+    // INI dialog first — sync must not run yet
     await waitFor(() => {
-      const toastMsg = container.querySelector('.toast-message')?.textContent || '';
-      if (!toastMsg.toLowerCase().includes('partially matches')) throw new Error('warning toast not found');
+      expect(screen.getByText('INI Signature Mismatch')).toBeTruthy();
     });
-
-    // Ensure the signature mismatch dialog did NOT open (partial is advisory)
-    expect(screen.queryByText('INI Signature Mismatch')).toBeNull();
+    expect(syncCalled).toBe(false);
   });
 
   it('auto-selects runtime packet mode (Auto → ForceOCH when INI supports OCH)', async () => {

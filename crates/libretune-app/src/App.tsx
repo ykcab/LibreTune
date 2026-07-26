@@ -812,23 +812,11 @@ function AppContent() {
       });
       await checkStatus();
       
-      // If there's a signature mismatch, behave based on severity
+      // INI first — mismatch_info is only set when signature is not Exact
       if (result.mismatch_info) {
-        const mi = result.mismatch_info;
-        setSignatureMismatchInfo(mi);
-        if (mi.match_type === 'mismatch') {
-          // Block automatic sync for full mismatches and require explicit user decision
-          console.log("Signature mismatch detected:", mi);
-          setSignatureMismatchOpen(true);
-          return;
-        } else {
-          // Partial match: advisory only — warn user but continue to sync
-          showToast(
-            `Connected: ECU signature partially matches the loaded INI (ECU: ${mi.ecu_signature}). Proceeding with sync.`,
-            "warning"
-          );
-          // continue with sync
-        }
+        setSignatureMismatchInfo(result.mismatch_info);
+        setSignatureMismatchOpen(true);
+        return;
       }
       
       // If connected and has definition (and no mismatch), sync ECU data

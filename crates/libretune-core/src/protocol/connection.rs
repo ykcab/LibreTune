@@ -1639,8 +1639,11 @@ impl Connection {
             self.use_modern_protocol
         );
         if self.use_modern_protocol {
-            let packet = Packet::new(bytes.to_vec());
-            self.send_packet_no_response(packet)
+            // Consume ACK (bench Z). Timeout/serial OK — DFU drops the COM port.
+            match self.send_packet(Packet::new(bytes.to_vec())) {
+                Ok(_) | Err(ProtocolError::Timeout) | Err(ProtocolError::SerialError(_)) => Ok(()),
+                Err(e) => Err(e),
+            }
         } else {
             self.send_raw_command_no_response(bytes)
         }

@@ -6,12 +6,18 @@ Lightweight running tracker for current support/dev work.
 
 - Trigger logger reliability (rusEFI/epicEFI): validating capture behavior on real ECU after parser/readiness/retry fixes.
 
+## Open Issues
+
+- (none)
+
 ## Recently Done
 
+- **Dialog values vs TunerStudio:** after tune mismatch, keep working tune on project (not ECU); `get_constant_value` reads named MSQ / cache before live ECU (fixes GP PWM Y Axis / table / frequency looking wrong while TS shows project).
+- **Connect order:** any non-Exact signature → INI dialog first; sync/tune diff only after Continue/select INI.
+- **Firmware DFU:** COM disconnect after `cmd_dfu` treated as success; stop metrics before DFU send.
 - **CRITICAL:** Bits INI `[start:end]` was parsed as `[position:size]` — single-bit flags like `consumeObdSensors = [6:6]` read as 6 bits, so Trigger panels stayed hidden while TunerStudio correctly showed `false`. Fixed to inclusive start:end (`size = end - start + 1`).
 - **CRITICAL:** Tune mismatch / Use LibreTune Settings no longer bulk-writes zero-padded MSQ pages (was corrupting ECU fields). Merge = ECU base + MSQ constants; Load Tune resets cache; sync compares materialized project pages.
-- Signature mismatch: stop re-prompting on every reconnect after INI update (partial matches no longer open dialog; stamp `CurrentTune.msq` + persist project INI path).
-- Signature compare: ECU build-hash suffix vs companion INI → Exact (stops “partially matches” toast spam).
+- Signature compare: ECU build-hash / companion prefix → Exact (avoids false partial spam when signatures truly match).
 - Tune mismatch resolve: **Use LibreTune Settings** saves chosen pages to `CurrentTune.msq` then writes/burns ECU; **Use ECU Settings** overwrites disk MSQ from ECU.
 - Use LibreTune Settings ECU write: chunked `write_page` + retries (fixes Windows os error 121 timeout on full-page serial writes).
 - Use LibreTune Settings: pause realtime stream + disable auto-burn during bulk write, then burn once and restart stream (prevents OCH poller from disconnecting the ECU).
@@ -33,6 +39,12 @@ Lightweight running tracker for current support/dev work.
   - rusEFI trigger read retries, readiness polling, safer timestamp decoding/interval filtering.
   - Composite timestamps normalized and sample-rate derived from actual capture.
 - Startup monitor dashboard: added `LPFP` and `HPFP` rows in Fuel section with channel fallbacks.
+
+## Session: 2026-07-24
+
+- Restored INI-first connect gating (partial was skipping straight to tune sync/diff).
+- DFU firmware update: tolerate serial disconnect after `cmd_dfu`; stop metrics before reboot command.
+- Slimmed `send_raw_bytes` reboot handling (Timeout | SerialError → Ok).
 
 ## Session: 2026-07-20
 
