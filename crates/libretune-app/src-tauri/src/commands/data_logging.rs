@@ -45,19 +45,17 @@ pub async fn start_logging(
 
         if let Some(requested) = channels {
             let mut out = Vec::new();
-            let mut seen = HashSet::new();
+            let mut seen_groups = HashSet::new();
             for name in requested {
-                if available_set.contains(name.as_str()) && seen.insert(name.clone()) {
-                    out.push(name);
-                }
+                push_unique_log_channel(&mut out, &mut seen_groups, &name, &available_set);
             }
             if out.is_empty() {
-                default_log_channels(&available_channels)
+                default_log_channels(&available_set)
             } else {
                 out
             }
         } else {
-            default_log_channels(&available_channels)
+            default_log_channels(&available_set)
         }
     };
 
@@ -79,82 +77,94 @@ pub async fn start_logging(
     Ok(())
 }
 
-fn default_log_channels(available: &[String]) -> Vec<String> {
-    let available_set: HashSet<&str> = available.iter().map(|s| s.as_str()).collect();
+fn push_unique_log_channel(
+    out: &mut Vec<String>,
+    seen_groups: &mut HashSet<String>,
+    preferred: &str,
+    available: &HashSet<&str>,
+) {
+    let key = super::realtime_stream::channel_canonical_key(preferred).to_string();
+    if !seen_groups.insert(key) {
+        return;
+    }
+    if let Some(name) = super::realtime_stream::resolve_log_channel_name(preferred, available) {
+        out.push(name);
+    }
+}
+
+fn default_log_channels(available: &HashSet<&str>) -> Vec<String> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen_groups = HashSet::new();
     for name in PRIORITY_CHANNELS {
-        if available_set.contains(name) && seen.insert(*name) {
-            out.push((*name).to_string());
-        }
+        push_unique_log_channel(&mut out, &mut seen_groups, name, available);
     }
     if out.is_empty() {
-        available.iter().take(16).cloned().collect()
+        available.iter().take(16).map(|s| (*s).to_string()).collect()
     } else {
         out
     }
 }
 
+/// Default datalog channels for rusEFI / Epic family ECUs.
+///
+/// Use canonical alias names where possible (`rpm`, `map`, `tps`, …). Members of the
+/// same alias group are deduplicated so CSVs do not contain identical columns like
+/// `rpm` + `RPMValue` or `dutyCycle` + `injectorDutyCycle`.
 const PRIORITY_CHANNELS: &[&str] = &[
-    "Time",
-    "time",
-    "RPM",
+    // Core engine
     "rpm",
-    "RPMValue",
     "instantRpm",
-    "MAP",
     "map",
-    "MAPValue",
     "instantMAPValue",
-    "TPS",
     "tps",
-    "TPSValue",
-    "throttle",
     "throttlePedalPosition",
-    "AFR",
-    "afr",
-    "lambda",
-    "lambdaValue",
+    "DriverThrottleIntent",
     "coolant",
-    "CLT",
     "iat",
-    "IAT",
     "battery",
-    "VBatt",
+    // Spark
     "advance",
-    "spark",
-    "injPw",
-    "PW",
-    "fuelPulseWidth",
+    "runningAdvance",
+    "rpmForIgnitionIdleTableDot",
+    // Fuel
     "actualLastInjection",
     "dutyCycle",
-    "injectorDutyCycle",
     "injectionOffset",
-    "egoCorrection",
     "correction",
-    "targetAfr",
     "targetLambda",
+    "RealLambdaValue1",
+    "stftCorrection1",
     "sync",
-    "engineSync",
-    "triggerSync",
-    "vehicleSpeed",
-    "vss",
     "baro",
-    "baroPressure",
     "isCranking",
     "crankingFuel_fuel",
     "running_fuel",
     "running_baseFuel",
     "running_postCrankingFuelCorrection",
     "revolutionCounterSinceStart",
-    "highFuelPressure",
-    "lowFuelPressure",
     "fuelFlowRate",
     "injectorState1",
     "coilState1",
-    "currentVe",
-    "veValue",
+    "ve",
+    "fuelingLoad",
+    "veTableYAxis",
     "firmwareVersion",
+    // AE / cuts / idle / ETB diagnostics
+    "fuelCutReason",
+    "sparkCutReason",
+    "isAboveAccelThreshold",
+    "deltaTps",
+    "smoothedDeltaTps",
+    "tpsAccelFuel",
+    "belowEpsilon",
+    "dfcoActive",
+    "totalFuelCut",
+    "totalSparkCut",
+    "isIdling",
+    "idleTarget",
+    "idleTargetError",
+    "etb1etbCurrentTarget",
+    "etb1targetWithIdlePosition",
 ];
 
 #[tauri::command]
@@ -277,4 +287,57 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn write_text_file(path: String, contents: String) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| format!("Failed to write file: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::realtime_stream::{channel_canonical_key, resolve_log_channel_name};
+
+    #[test]
+    fn canonical_key_groups_rusefi_duplicates() {
+        assert_eq!(channel_canonical_key("RPMValue"), "rpm");
+        assert_eq!(channel_canonical_key("rpm"), "rpm");
+        assert_eq!(channel_canonical_key("injectorDutyCycle"), "dutyCycle");
+        assert_eq!(channel_canonical_key("fuelCutReason"), "fuelCutReason");
+    }
+
+    #[test]
+    fn default_log_channels_deduplicate_alias_groups() {
+        let available: HashSet<&str> = [
+            "rpm",
+            "RPMValue",
+            "map",
+            "MAPValue",
+            "tps",
+            "TPSValue",
+            "battery",
+            "VBatt",
+            "dutyCycle",
+            "injectorDutyCycle",
+            "fuelCutReason",
+        ]
+        .into_iter()
+        .collect();
+
+        let channels = default_log_channels(&available);
+        assert!(channels.contains(&"rpm".to_string()));
+        assert!(!channels.contains(&"RPMValue".to_string()));
+        assert!(channels.contains(&"map".to_string()));
+        assert!(!channels.contains(&"MAPValue".to_string()));
+        assert!(channels.contains(&"fuelCutReason".to_string()));
+    }
+
+    #[test]
+    fn resolve_prefers_preferred_then_canonical() {
+        let available: HashSet<&str> = ["RPMValue", "MAPValue"].into_iter().collect();
+        assert_eq!(
+            resolve_log_channel_name("rpm", &available),
+            Some("RPMValue".to_string())
+        );
+        assert_eq!(
+            resolve_log_channel_name("RPMValue", &available),
+            Some("RPMValue".to_string())
+        );
+    }
 }

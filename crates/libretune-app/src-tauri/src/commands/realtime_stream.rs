@@ -63,7 +63,7 @@ const REALTIME_CHANNEL_ALIASES: &[(&str, &[&str])] = &[
     (
         "ve",
         &[
-            "veValue", "VE1", "ve1", "veMain", "VEValue", "ve", "VE", "veCurr",
+            "veValue", "currentVe", "VE1", "ve1", "veMain", "VEValue", "ve", "VE", "veCurr",
         ],
     ),
     (
@@ -138,6 +138,45 @@ const REALTIME_CHANNEL_ALIASES: &[(&str, &[&str])] = &[
         &["isMapValid", "sync", "engineSync", "hasSync", "triggerSync"],
     ),
 ];
+
+/// Canonical alias group for a channel name (returns the name itself when ungrouped).
+pub(crate) fn channel_canonical_key(name: &str) -> &str {
+    for (alias, candidates) in REALTIME_CHANNEL_ALIASES {
+        if *alias == name || candidates.contains(&name) {
+            return alias;
+        }
+    }
+    name
+}
+
+/// Pick the best available channel name for logging, preferring `preferred` then the
+/// canonical alias, then any other member of the same alias group.
+pub(crate) fn resolve_log_channel_name(
+    preferred: &str,
+    available: &std::collections::HashSet<&str>,
+) -> Option<String> {
+    if available.contains(preferred) {
+        return Some(preferred.to_string());
+    }
+    let key = channel_canonical_key(preferred);
+    if key != preferred && available.contains(key) {
+        return Some(key.to_string());
+    }
+    if key == preferred {
+        return None;
+    }
+    for (alias, candidates) in REALTIME_CHANNEL_ALIASES {
+        if *alias != key {
+            continue;
+        }
+        for &candidate in *candidates {
+            if available.contains(candidate) {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    None
+}
 
 /// Map ECU-specific output channel names to the canonical names used by default
 /// dashboards. Also applies derived aliases (e.g. totalFuelCorrection → correction %).
