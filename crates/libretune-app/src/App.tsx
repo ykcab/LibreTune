@@ -69,6 +69,40 @@ import {
 } from "./types/app";
 import "./styles";
 
+/**
+ * Root application component.
+ *
+ * `AppContent` is the orchestrator that wires together ~20 hooks and holds the
+ * top-level state that other components read via props/contexts. The bulk of
+ * the file is organized as:
+ *
+ *   1. State declarations (project, connection, menus, tabs, dialogs...).
+ *   2. Effects that react to connection/definition changes.
+ *   3. Action handlers (connect, save/load/burn, tab open/close...).
+ *   4. Render tree (layout + overlays).
+ *
+ * # Connection lifecycle (the central state machine)
+ *
+ * Connection status lives in `status: ConnectionStatus` and drives most of the
+ * app. The meaningful phases are encoded across `status.state` and
+ * `status.has_definition`:
+ *   - No project loaded → nothing to connect to; tabs/menus empty.
+ *   - Project loaded, disconnected → user (or auto-connect) picks a port.
+ *   - Connecting → handshake in flight (see `useAutoConnect`/`useReconnectHandler`).
+ *   - Connected + has_definition → INI matched the ECU; menus, tables, and the
+ *     realtime stream can all come up.
+ *   - Connected + signature mismatch → INI doesn't match the ECU; the mismatch
+ *     dialog is shown and table/menu loading is skipped.
+ *
+ * # Effect ordering
+ *
+ * The realtime stream hook (`useRealtimeStream`) and the menu/table loaders all
+ * gate on `status` / `status.has_definition` so they only run once an INI is
+ * matched. Several effects were extracted to hooks to keep this file readable;
+ * see those hooks for their internal rationale. The realtime listener itself
+ * is intentionally registered once at module level (NOT in an effect) to dodge
+ * a StrictMode double-invoke race — see the comment near `useRealtimeStream`.
+ */
 function AppContent() {
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation('menu');
@@ -168,6 +202,12 @@ function AppContent() {
   // Sidebar state
   const [sidebarVisible, setSidebarVisible] = useState(true);
 
+  // Gate: don't persist UI state until after the initial restore from
+  // settings has completed. Without this, the persist effects fire on first
+  // render with the default values (sidebar=true, agent=false) and overwrite
+  // the saved values before the async restore runs.
+  const uiStateRestored = useRef(false);
+
   // Dialog state
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [loadDialogOpen, setLoadDialogOpen] = useState(false);
@@ -222,7 +262,39 @@ function AppContent() {
   
   // WASM Plugin panel state
   const [pluginPanelOpen, setPluginPanelOpen] = useState(false);
-  
+
+  // AI assistant side panel state (right-hand, non-modal). Toggle controls
+  // docked visibility; popping out hides the docked panel.
+  const [agentPanelVisible, setAgentPanelVisible] = useState(false);
+
+  // Pop the AI assistant out into its own window (mirrors the tab pop-out
+  // pattern in hooks/useTabPopout.ts). Uses hash routing handled by
+  // PopOutWindow.tsx + a localStorage handoff.
+  const handleAgentPopOut = useCallback(async () => {
+    const tabId = `agent-assistant`;
+    const storageKey = `popout-${tabId}`;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ data: null }));
+      const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+      const currentOrigin = window.location.origin;
+      const url = `${currentOrigin}/#/popout?tabId=${encodeURIComponent(tabId)}&type=agent&title=${encodeURIComponent('AI Assistant')}`;
+      const label = `popout-${tabId}`;
+      await new WebviewWindow(label, {
+        url,
+        title: 'AI Assistant',
+        width: 460,
+        height: 720,
+        center: true,
+        decorations: true,
+        devtools: true,
+      });
+      // Hide the docked panel once popped out.
+      setAgentPanelVisible(false);
+    } catch (e) {
+      console.error('[AgentPopOut] failed:', e);
+    }
+  }, []);
+
   // Sync status tracking (for partial sync warning)
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
@@ -239,6 +311,18 @@ function AppContent() {
 
   // Tauri check
   const [isTauri, setIsTauri] = useState(true);
+
+  // Persist UI layout state to settings so it's restored on next launch.
+  // Gated on uiStateRestored so the initial defaults don't overwrite saved
+  // values before the async restore completes.
+  useEffect(() => {
+    if (!uiStateRestored.current) return;
+    void invoke('update_setting', { key: 'sidebar_visible', value: String(sidebarVisible) }).catch(() => {});
+  }, [sidebarVisible]);
+  useEffect(() => {
+    if (!uiStateRestored.current) return;
+    void invoke('update_setting', { key: 'agent_panel_visible', value: String(agentPanelVisible) }).catch(() => {});
+  }, [agentPanelVisible]);
 
   // Check if running in Tauri
   useEffect(() => {
@@ -296,6 +380,11 @@ function AppContent() {
         if (settings.auto_burn_on_close !== undefined) setAutoBurnOnClose(settings.auto_burn_on_close);
         if (settings.status_bar_channels) setStatusBarChannels(settings.status_bar_channels);
         if (settings.last_serial_port) setLastSerialPort(settings.last_serial_port);
+        // Restore UI layout state.
+        if (settings.sidebar_visible !== undefined) setSidebarVisible(!!settings.sidebar_visible);
+        if (settings.agent_panel_visible !== undefined) setAgentPanelVisible(!!settings.agent_panel_visible);
+        // Mark restore complete so the persist effects can start saving.
+        uiStateRestored.current = true;
         // Honor saved UI language preference (mirror to localStorage so the
         // i18n LanguageDetector picks it up on next app start, and switch live now).
         if (settings.language && typeof settings.language === 'string') {
@@ -315,6 +404,9 @@ function AppContent() {
         }
       } catch (e) {
         console.warn("Failed to load settings:", e);
+        // Even if settings load failed, let persistence start so future
+        // changes are saved.
+        uiStateRestored.current = true;
       }
       
       // Load custom hotkey bindings
@@ -562,7 +654,12 @@ function AppContent() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load menus when definition is loaded
+  // Load menus when definition is loaded.
+  // Gated on has_definition (not just connection) because the menu tree is
+  // built from the INI definition, and on a signature mismatch we deliberately
+  // keep the old UI rather than rebuilding against a non-matching INI.
+  // Constants are fetched first because some menu entries' labels/visibility
+  // depend on constant values, so they must be in hand before building the tree.
   useEffect(() => {
     if (status.has_definition) {
       fetchConstants().then((values) => {
@@ -786,20 +883,12 @@ function AppContent() {
         : availablePorts[0];
 
       // Connect and get mismatch info directly (no async race)
-      let runtimeMode = connectionRuntimePacketMode || defaultRuntimePacketMode;
-
-      // If runtime mode is Auto, try to detect best mode from INI capabilities
-      if (runtimeMode === 'Auto') {
-        try {
-          // Attempt to query backend capabilities directly. If a definition isn't loaded
-          // the command will error and we'll fall back to a safe default.
-          const caps = await invoke<{ supports_och: boolean }>('get_protocol_capabilities');
-          runtimeMode = caps && caps.supports_och ? 'ForceOCH' : 'ForceBurst';
-        } catch (e) {
-          console.warn('Runtime mode auto-detect failed, defaulting to ForceBurst:', e);
-          runtimeMode = 'ForceBurst';
-        }
-      }
+      // Issue #71 follow-up: the backend's choose_runtime_command already
+      // implements ECU-aware Auto selection (Speeduino/MS2/MS3/Unknown stay on
+      // Burst; rusEFI/FOME/epicEFI use OCH heuristics). Preemptively forcing
+      // OCH here based only on INI och_block_size bypassed that safeguard and
+      // collapsed Speeduino throughput to ~14 B/s. Pass Auto through untouched.
+      const runtimeMode = connectionRuntimePacketMode || defaultRuntimePacketMode;
 
       const result = await invoke<ConnectResult>("connect_to_ecu", { 
         portName: portToUse, 
@@ -1273,6 +1362,24 @@ function AppContent() {
     setTabs(newTabs);
   }, []);
 
+  // Persist the active tab + open-tab list so they can be restored on launch.
+  // Debounced so rapid tab switches don't hammer the settings file.
+  const saveTabsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (saveTabsTimer.current) clearTimeout(saveTabsTimer.current);
+    saveTabsTimer.current = setTimeout(() => {
+      void invoke('update_setting', { key: 'last_active_tab', value: activeTabId ?? '' }).catch(() => {});
+      // Serialize the tab list (id+title+icon+type) for restore. Only
+      // include closable content tabs (skip the dashboard, which is always
+      // re-created).
+      const serializable = tabs
+        .filter((t) => t.id !== 'dashboard' && t.closable !== false)
+        .map((t) => ({ id: t.id, title: t.title, icon: t.icon, type: tabContents[t.id]?.type }));
+      void invoke('update_setting', { key: 'open_tabs', value: JSON.stringify(serializable) }).catch(() => {});
+    }, 500);
+    return () => { if (saveTabsTimer.current) clearTimeout(saveTabsTimer.current); };
+  }, [tabs, activeTabId, tabContents]);
+
   // Pop-out windows: handleTabPopout + tab:dock + table:updated listeners.
   const { handleTabPopout } = useTabPopout({
     tabs,
@@ -1291,10 +1398,25 @@ function AppContent() {
     setNewProjectDialogOpen, setImportProjectOpen, setSaveDialogOpen, setLoadDialogOpen,
     setBurnDialogOpen, setFirmwareUpdateDialogOpen, setRestorePointsOpen, setTuneHistoryOpen, setSettingsDialogOpen,
     setMathChannelsDialogOpen, setBaseMapDialogOpen, setTableComparisonOpen,
-    setTuneFileDiffOpen, setDynoOverlayOpen, setPluginPanelOpen, setConnectionDialogOpen,
+    setTuneFileDiffOpen, setDynoOverlayOpen, setPluginPanelOpen, agentPanelVisible, setAgentPanelVisible, setConnectionDialogOpen,
     setUserManualOpen, setUserManualSection, setAboutDialogOpen, setSidebarVisible,
     setTheme, setTabs, setTabContents, setActiveTabId,
-  }), [backendMenus, theme, sidebarVisible, status.state, ecuType, iniCapabilities, openTarget, handleStdTarget, openHelpTopic, currentProject, tuneModified, showToast, t, tabs]);
+  }), [backendMenus, theme, sidebarVisible, agentPanelVisible, status.state, ecuType, iniCapabilities, openTarget, handleStdTarget, openHelpTopic, currentProject, tuneModified, showToast, t, tabs]);
+
+  // Listen for the agent pop-out window's "dock back" signal: re-show the
+  // docked side panel. (Mirrors the tab:dock handling in useTabPopout.)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen('agent:dock', () => setAgentPanelVisible(true));
+      } catch {
+        // non-fatal
+      }
+    })();
+    return () => { unlisten?.(); };
+  }, []);
 
   // Toolbar items
   const toolbarItems: ToolbarItem[] = useMemo(() => buildToolbarItems({
@@ -1437,6 +1559,9 @@ function AppContent() {
         onConnectionClick={() => setConnectionDialogOpen(true)}
         projectName={currentProject?.name}
         unitsSystem={unitsSystem}
+        agentPanelVisible={agentPanelVisible}
+        onAgentPanelCollapse={() => setAgentPanelVisible(false)}
+        onAgentPanelPopOut={handleAgentPopOut}
         realtimeChannels={statusBarChannels}
         channelInfoMap={channelInfoMap}
       >

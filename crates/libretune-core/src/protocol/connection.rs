@@ -13,7 +13,9 @@ use super::{
     serial::{clear_buffers, configure_port, list_ports, open_port, PortInfo},
     Command, CommandBuilder, Packet, ProtocolError, DEFAULT_BAUD_RATE, DEFAULT_TIMEOUT_MS,
 };
-use crate::ini::{AdaptiveTiming, AdaptiveTimingConfig, Endianness, ProtocolSettings};
+use crate::ini::{AdaptiveTiming, AdaptiveTimingConfig, EcuType, Endianness, ProtocolSettings};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Parse a command string with escape sequences into raw bytes
 /// Handles: \xNN (hex), \n, \r, \t, \\, \0, and regular characters
@@ -101,8 +103,8 @@ fn strip_status_byte(payload: &[u8], expected_data_len: usize, label: &str) -> V
         }
         if payload.len() == expected_data_len + 1 && payload[0] != 0 {
             let code = super::ResponseCode::from_byte(payload[0]);
-            eprintln!(
-                "[WARN] {} response: ECU status=0x{:02x} ({}), using data anyway",
+            tracing::warn!(
+                "{} response: ECU status=0x{:02x} ({}), using data anyway",
                 label,
                 payload[0],
                 code.message()
@@ -115,9 +117,11 @@ fn strip_status_byte(payload: &[u8], expected_data_len: usize, label: &str) -> V
         payload[1..].to_vec()
     } else {
         // Don't error — just return the full payload; channel offsets will be relative to byte 0
-        eprintln!(
-            "[WARN] {} response: unexpected first byte 0x{:02x} (expected_len={}), using full payload",
-            label, payload[0], expected_data_len
+        tracing::warn!(
+            "{} response: unexpected first byte 0x{:02x} (expected_len={}), using full payload",
+            label,
+            payload[0],
+            expected_data_len
         );
         payload.to_vec()
     }
@@ -186,8 +190,8 @@ fn write_and_wait(
     let min_ms = min_wait_ms.unwrap_or(10);
     let wait_ms = std::cmp::max(min_ms, transmit_time_ms + 5);
 
-    eprintln!(
-        "[DEBUG] write_and_wait: wrote {} bytes, waiting {}ms for transmission (baud={}, min={})",
+    tracing::debug!(
+        "write_and_wait: wrote {} bytes, waiting {}ms for transmission (baud={}, min={})",
         data.len(),
         wait_ms,
         safe_baud,
@@ -324,6 +328,13 @@ pub struct Connection {
     /// Page targeted by the most recent successful write, used by the auto-burn-on-page-change
     /// safety policy (msEnvelope_1.0 spec §6.2). `None` after construction or after a burn.
     last_written_page: Option<u8>,
+    /// ECU type detected from the INI signature (Issue #71).
+    /// Drives conservative runtime-command selection for Speeduino/MS2/MS3.
+    ecu_type: EcuType,
+    /// Cancellation flag shared with the owner (Tauri AppState). When set, all
+    /// blocking I/O polling loops abort early so `disconnect()` can complete even
+    /// while another thread is mid-read (Issue #71: "disconnect does nothing").
+    cancel: Arc<AtomicBool>,
 }
 
 impl Connection {
@@ -346,6 +357,8 @@ impl Connection {
             tx_packets: 0,
             rx_packets: 0,
             last_written_page: None,
+            ecu_type: EcuType::Unknown,
+            cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -377,6 +390,8 @@ impl Connection {
             tx_packets: 0,
             rx_packets: 0,
             last_written_page: None,
+            ecu_type: EcuType::Unknown,
+            cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -387,6 +402,30 @@ impl Connection {
         self.command_builder = CommandBuilder::new(endianness == Endianness::Little);
         self.endianness = endianness;
         self.protocol_settings = Some(protocol);
+    }
+
+    /// Set the detected ECU type (called after the INI is loaded, Issue #71).
+    /// Drives conservative runtime-command selection for Speeduino/MS2/MS3.
+    pub fn set_ecu_type(&mut self, ecu_type: EcuType) {
+        self.ecu_type = ecu_type;
+    }
+
+    /// Get the detected ECU type.
+    pub fn ecu_type(&self) -> EcuType {
+        self.ecu_type
+    }
+
+    /// Get a clone of the cancellation handle. The owner (e.g. Tauri AppState)
+    /// can call `request_cancel()` on its clone to interrupt in-flight blocking
+    /// I/O so `disconnect()` is not blocked by a streaming task mid-read.
+    pub fn cancel_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancel)
+    }
+
+    /// Request cancellation of any in-flight blocking I/O. Safe to call from a
+    /// different thread than the one performing the read (Issue #71).
+    pub fn request_cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
     }
 
     /// Get cumulative tx/rx bytes and packet counters
@@ -410,9 +449,11 @@ impl Connection {
         let mut timing = AdaptiveTiming::new(cfg);
         timing.set_enabled(true);
         self.adaptive_timing = Some(timing);
-        eprintln!(
-            "[INFO] Adaptive timing enabled (multiplier={:.1}x, range={}–{}ms)",
-            multiplier, min_ms, max_ms
+        tracing::info!(
+            "Adaptive timing enabled (multiplier={:.1}x, range={}–{}ms)",
+            multiplier,
+            min_ms,
+            max_ms
         );
     }
 
@@ -421,7 +462,7 @@ impl Connection {
         if let Some(timing) = &mut self.adaptive_timing {
             timing.set_enabled(false);
         }
-        eprintln!("[INFO] Adaptive timing disabled");
+        tracing::info!("Adaptive timing disabled");
     }
 
     /// Get adaptive timing stats for diagnostics
@@ -546,7 +587,7 @@ impl Connection {
                 let host = self.config.tcp_host.as_deref().unwrap_or("localhost");
                 let port = self.config.tcp_port.unwrap_or(29001);
                 let addr = format!("{}:{}", host, port);
-                eprintln!("[INFO] Connecting to ECU via TCP: {}", addr);
+                tracing::info!("Connecting to ECU via TCP: {}", addr);
                 let stream = TcpStream::connect(&addr)
                     .map_err(|e| ProtocolError::ConnectionFailed(e.to_string()))?;
                 stream.set_nodelay(true).ok();
@@ -561,8 +602,8 @@ impl Connection {
             .as_ref()
             .map(|p| p.delay_after_port_open)
             .unwrap_or(1000);
-        eprintln!(
-            "[DEBUG] connect: waiting {}ms after port open for ECU stabilization (from INI)",
+        tracing::debug!(
+            "connect: waiting {}ms after port open for ECU stabilization (from INI)",
             port_open_delay
         );
         std::thread::sleep(Duration::from_millis(port_open_delay as u64));
@@ -590,10 +631,18 @@ impl Connection {
     }
 
     /// Disconnect from the ECU
+    ///
+    /// Sets the cancellation flag first so any blocking I/O polling loop running
+    /// in another thread (e.g. the realtime stream task) aborts its current
+    /// read promptly instead of waiting for the full timeout (Issue #71).
     pub fn disconnect(&mut self) {
+        // Signal in-flight blocking reads to abort.
+        self.cancel.store(true, Ordering::Relaxed);
         self.channel = None;
         self.signature = None;
         self.state = ConnectionState::Disconnected;
+        // Reset the flag so a reconnect starts clean.
+        self.cancel.store(false, Ordering::Relaxed);
     }
 
     /// Perform handshake and get ECU signature
@@ -613,9 +662,10 @@ impl Connection {
             .map(|p| p.uses_modern_protocol())
             .unwrap_or(false);
 
-        eprintln!(
-            "[DEBUG] handshake: query_cmd = {:?}, ini_uses_modern = {}",
-            query_cmd, ini_uses_modern
+        tracing::debug!(
+            "handshake: query_cmd = {:?}, ini_uses_modern = {}",
+            query_cmd,
+            ini_uses_modern
         );
 
         let cmd_bytes = parse_command_string(&query_cmd);
@@ -625,7 +675,7 @@ impl Connection {
         // Then fall back to legacy. This prioritizes modern protocol for speed.
 
         if ini_uses_modern {
-            eprintln!("[DEBUG] handshake: trying CRC protocol first");
+            tracing::debug!("handshake: trying CRC protocol first");
 
             // Clear buffers before CRC attempt
             if let Some(channel) = self.channel.as_mut() {
@@ -634,7 +684,7 @@ impl Connection {
 
             let packet = Packet::new(cmd_bytes.clone());
             if let Ok(response_packet) = self.send_packet(packet) {
-                eprintln!("[DEBUG] handshake: CRC protocol succeeded");
+                tracing::debug!("handshake: CRC protocol succeeded");
                 self.use_modern_protocol = true;
 
                 // Handle status byte: response may start with 0x00 (success)
@@ -646,19 +696,16 @@ impl Connection {
                 };
 
                 let signature = String::from_utf8_lossy(signature_bytes).trim().to_string();
-                eprintln!(
-                    "[DEBUG] handshake: CRC success, signature = {:?}",
-                    signature
-                );
+                tracing::debug!("handshake: CRC success, signature = {:?}", signature);
                 return Ok(signature);
             } else {
-                eprintln!("[DEBUG] handshake: CRC protocol failed, trying legacy");
+                tracing::debug!("handshake: CRC protocol failed, trying legacy");
             }
         }
 
         // Try legacy protocol (raw ASCII command)
-        eprintln!(
-            "[DEBUG] handshake: trying legacy protocol, sending byte 0x{:02x}",
+        tracing::debug!(
+            "handshake: trying legacy protocol, sending byte 0x{:02x}",
             cmd_byte
         );
 
@@ -669,24 +716,18 @@ impl Connection {
 
         match self.send_raw_command(&[cmd_byte]) {
             Ok(response) => {
-                eprintln!(
-                    "[DEBUG] handshake: legacy succeeded, {} bytes",
-                    response.len()
-                );
+                tracing::debug!("handshake: legacy succeeded, {} bytes", response.len());
                 self.use_modern_protocol = false;
                 let signature = String::from_utf8_lossy(&response).trim().to_string();
-                eprintln!(
-                    "[DEBUG] handshake: legacy success, signature = {:?}",
-                    signature
-                );
+                tracing::debug!("handshake: legacy success, signature = {:?}", signature);
                 Ok(signature)
             }
             Err(e) => {
-                eprintln!("[DEBUG] handshake: legacy failed ({:?})", e);
+                tracing::debug!("handshake: legacy failed ({:?})", e);
 
                 // If INI doesn't specify modern and legacy failed, try CRC as last resort
                 if !ini_uses_modern {
-                    eprintln!("[DEBUG] handshake: trying CRC as fallback");
+                    tracing::debug!("handshake: trying CRC as fallback");
 
                     if let Some(channel) = self.channel.as_mut() {
                         let _ = channel.clear_input_buffer();
@@ -695,7 +736,7 @@ impl Connection {
 
                     let packet = Packet::new(cmd_bytes);
                     if let Ok(response_packet) = self.send_packet(packet) {
-                        eprintln!("[DEBUG] handshake: CRC fallback succeeded");
+                        tracing::debug!("handshake: CRC fallback succeeded");
                         self.use_modern_protocol = true;
 
                         let payload = &response_packet.payload;
@@ -706,8 +747,8 @@ impl Connection {
                         };
 
                         let signature = String::from_utf8_lossy(signature_bytes).trim().to_string();
-                        eprintln!(
-                            "[DEBUG] handshake: CRC fallback success, signature = {:?}",
+                        tracing::debug!(
+                            "handshake: CRC fallback success, signature = {:?}",
                             signature
                         );
                         return Ok(signature);
@@ -732,16 +773,19 @@ impl Connection {
         } else {
             2
         };
+        // Clone the cancel handle before borrowing the channel so the cancel check
+        // in the read loop does not conflict with the mutable channel borrow.
+        let cancel = Arc::clone(&self.cancel);
 
         let channel = self.channel.as_mut().ok_or(ProtocolError::NotConnected)?;
 
-        eprintln!("[DEBUG] send_raw_command: clearing buffers before send");
+        tracing::debug!("send_raw_command: clearing buffers before send");
         // Clear any stale data in buffers
         let _ = channel.clear_input_buffer();
         let _ = channel.clear_output_buffer();
 
-        eprintln!(
-            "[DEBUG] send_raw_command: sending {} bytes: {:02x?}",
+        tracing::debug!(
+            "send_raw_command: sending {} bytes: {:02x?}",
             cmd.len(),
             cmd
         );
@@ -754,8 +798,8 @@ impl Connection {
         write_and_wait(channel, cmd, baud_rate, min_wait)
             .map_err(|e| ProtocolError::SerialError(e.to_string()))?;
 
-        eprintln!(
-            "[DEBUG] send_raw_command: command sent, timeout={}ms, inter_char={}ms",
+        tracing::debug!(
+            "send_raw_command: command sent, timeout={}ms, inter_char={}ms",
             timeout.as_millis(),
             inter_char_timeout.as_millis()
         );
@@ -768,15 +812,23 @@ impl Connection {
 
         loop {
             if start.elapsed() > timeout {
-                eprintln!("[DEBUG] send_raw_command: overall timeout reached");
+                tracing::debug!("send_raw_command: overall timeout reached");
                 break;
+            }
+
+            // Cancellation check (Issue #71): abort promptly if disconnect() was called
+            // while this blocking read is in flight.
+            if cancel.load(Ordering::Relaxed) {
+                tracing::debug!("send_raw_command: cancelled by disconnect");
+                self.reset_adaptive_timing_on_error();
+                return Err(ProtocolError::ConnectionClosed);
             }
 
             // Check how many bytes are available without blocking
             let available = match channel.bytes_to_read() {
                 Ok(n) => n,
                 Err(e) => {
-                    eprintln!("[DEBUG] send_raw_command: bytes_to_read error: {}", e);
+                    tracing::debug!("send_raw_command: bytes_to_read error: {}", e);
                     return Err(ProtocolError::SerialError(e.to_string()));
                 }
             };
@@ -785,14 +837,14 @@ impl Connection {
                 let to_read = std::cmp::min(available as usize, buffer.len());
                 match channel.read(&mut buffer[..to_read]) {
                     Ok(0) => {
-                        eprintln!("[DEBUG] send_raw_command: read returned 0 (EOF)");
+                        tracing::debug!("send_raw_command: read returned 0 (EOF)");
                         break;
                     }
                     Ok(n) => {
                         response.extend_from_slice(&buffer[..n]);
                         last_data_time = Instant::now();
-                        eprintln!(
-                            "[DEBUG] send_raw_command: read {} bytes, total = {}, data = {:02x?}",
+                        tracing::debug!(
+                            "send_raw_command: read {} bytes, total = {}, data = {:02x?}",
                             n,
                             response.len(),
                             &buffer[..n]
@@ -805,7 +857,7 @@ impl Connection {
                         // Non-blocking, continue polling
                     }
                     Err(e) => {
-                        eprintln!("[DEBUG] send_raw_command: read error: {}", e);
+                        tracing::debug!("send_raw_command: read error: {}", e);
                         self.reset_adaptive_timing_on_error();
                         return Err(ProtocolError::SerialError(e.to_string()));
                     }
@@ -816,9 +868,7 @@ impl Connection {
             } else {
                 // We have some data - check inter-character timeout
                 if last_data_time.elapsed() > inter_char_timeout {
-                    eprintln!(
-                        "[DEBUG] send_raw_command: inter-character timeout, message complete"
-                    );
+                    tracing::debug!("send_raw_command: inter-character timeout, message complete");
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(poll_interval));
@@ -826,8 +876,8 @@ impl Connection {
         }
 
         let elapsed = send_start.elapsed();
-        eprintln!(
-            "[DEBUG] send_raw_command: completed with {} bytes in {}ms: {:?}",
+        tracing::debug!(
+            "send_raw_command: completed with {} bytes in {}ms: {:?}",
             response.len(),
             elapsed.as_millis(),
             String::from_utf8_lossy(&response)
@@ -856,8 +906,8 @@ impl Connection {
 
         let channel = self.channel.as_mut().ok_or(ProtocolError::NotConnected)?;
 
-        eprintln!(
-            "[DEBUG] send_raw_command_no_response: sending {} bytes: {:02x?}",
+        tracing::debug!(
+            "send_raw_command_no_response: sending {} bytes: {:02x?}",
             cmd.len(),
             cmd
         );
@@ -866,7 +916,7 @@ impl Connection {
         write_and_wait(channel, cmd, baud_rate, min_wait)
             .map_err(|e| ProtocolError::SerialError(e.to_string()))?;
 
-        eprintln!("[DEBUG] send_raw_command_no_response: command sent, not waiting for response");
+        tracing::debug!("send_raw_command_no_response: command sent, not waiting for response");
 
         Ok(())
     }
@@ -876,10 +926,7 @@ impl Connection {
         let channel = self.channel.as_mut().ok_or(ProtocolError::NotConnected)?;
         let bytes = packet.to_bytes();
 
-        eprintln!(
-            "[DEBUG] send_packet_no_response: sending {} bytes",
-            bytes.len()
-        );
+        tracing::debug!("send_packet_no_response: sending {} bytes", bytes.len());
 
         self.tx_bytes = self.tx_bytes.saturating_add(bytes.len() as u64);
         self.tx_packets = self.tx_packets.saturating_add(1);
@@ -890,7 +937,7 @@ impl Connection {
             .flush()
             .map_err(|e| ProtocolError::SerialError(e.to_string()))?;
 
-        eprintln!("[DEBUG] send_packet_no_response: packet sent, not waiting for response");
+        tracing::debug!("send_packet_no_response: packet sent, not waiting for response");
 
         Ok(())
     }
@@ -963,6 +1010,9 @@ impl Connection {
         } else {
             2
         };
+        // Clone the cancel handle before borrowing the channel so the disjoint
+        // borrow of self.cancel does not conflict with the mutable channel borrow.
+        let cancel = Arc::clone(&self.cancel);
 
         let channel = self.channel.as_mut().ok_or(ProtocolError::NotConnected)?;
 
@@ -989,18 +1039,25 @@ impl Connection {
             buf: &mut [u8],
             timeout: Duration,
             poll_ms: u64,
+            cancel: &AtomicBool,
         ) -> Result<(), ProtocolError> {
             let start = Instant::now();
             let mut offset = 0;
 
             while offset < buf.len() {
                 if start.elapsed() > timeout {
-                    eprintln!(
-                        "[WARN] read_exact_timeout: timed out after reading {} of {} bytes",
+                    tracing::warn!(
+                        "read_exact_timeout: timed out after reading {} of {} bytes",
                         offset,
                         buf.len()
                     );
                     return Err(ProtocolError::Timeout);
+                }
+
+                // Cancellation check (Issue #71): abort promptly if disconnect() was called.
+                if cancel.load(Ordering::Relaxed) {
+                    tracing::debug!("read_exact_timeout: cancelled by disconnect");
+                    return Err(ProtocolError::ConnectionClosed);
                 }
 
                 // Check how many bytes are available
@@ -1019,7 +1076,7 @@ impl Connection {
                 let to_read = std::cmp::min(available, buf.len() - offset);
                 match channel.read(&mut buf[offset..offset + to_read]) {
                     Ok(0) => {
-                        eprintln!("[WARN] read_exact_timeout: EOF after {} bytes", offset);
+                        tracing::warn!("read_exact_timeout: EOF after {} bytes", offset);
                         return Err(ProtocolError::Timeout);
                     }
                     Ok(n) => {
@@ -1032,7 +1089,7 @@ impl Connection {
                         continue;
                     }
                     Err(e) => {
-                        eprintln!("[WARN] read_exact_timeout: error: {}", e);
+                        tracing::warn!("read_exact_timeout: error: {}", e);
                         return Err(ProtocolError::SerialError(e.to_string()));
                     }
                 }
@@ -1042,7 +1099,8 @@ impl Connection {
 
         // Read response header (2 bytes for length)
         let mut header = [0u8; 2];
-        if let Err(e) = read_exact_timeout(channel, &mut header, timeout, poll_interval_ms) {
+        if let Err(e) = read_exact_timeout(channel, &mut header, timeout, poll_interval_ms, &cancel)
+        {
             // Drain any buffered bytes first (uses channel borrow), then reset timing
             let _ = channel.clear_input_buffer();
             self.reset_adaptive_timing_on_error();
@@ -1052,8 +1110,8 @@ impl Connection {
         // Parse length
         let length = u16::from_be_bytes(header) as usize;
         if length > super::MAX_PACKET_SIZE {
-            eprintln!(
-                "[WARN] send_packet: response length {} exceeds MAX_PACKET_SIZE",
+            tracing::warn!(
+                "send_packet: response length {} exceeds MAX_PACKET_SIZE",
                 length
             );
             let _ = channel.clear_input_buffer();
@@ -1062,8 +1120,13 @@ impl Connection {
 
         // Read payload + CRC
         let mut payload_and_crc = vec![0u8; length + 4];
-        if let Err(e) = read_exact_timeout(channel, &mut payload_and_crc, timeout, poll_interval_ms)
-        {
+        if let Err(e) = read_exact_timeout(
+            channel,
+            &mut payload_and_crc,
+            timeout,
+            poll_interval_ms,
+            &cancel,
+        ) {
             // Drain the rest of the packet body (uses channel borrow), then reset timing
             drain_input_with_timeout(
                 channel,
@@ -1095,6 +1158,17 @@ impl Connection {
     }
 
     /// Decide which runtime fetch command to use (Burst vs OCH)
+    /// Decide which runtime fetch command to use (Burst vs OCH)
+    ///
+    /// **Issue #71 fix**: For Speeduino / MegaSquirt (MS2/MS3), the Burst ('A')
+    /// command is the well-tested, high-throughput path (observed ~1 KB/sec).
+    /// Auto mode previously could silently switch to OCH based on loose
+    /// heuristics (maxUnusedRuntimeRange, slow-link, adaptive-timing averages),
+    /// collapsing throughput to ~13 B/sec and stalling gauges. These ECUs now
+    /// stay on Burst unless the user explicitly forces OCH.
+    ///
+    /// For rusEFI / FOME / epicEFI (little-endian, msEnvelope_1.0), OCH is the
+    /// standard modern realtime path, so the existing heuristics are retained.
     pub fn choose_runtime_command(&self) -> (RuntimeFetch, String) {
         // Respect explicit overrides
         let forced = self.config.runtime_packet_mode;
@@ -1131,7 +1205,29 @@ impl Connection {
             );
         }
 
-        // Auto heuristics
+        // === Auto mode ===
+        //
+        // For Speeduino / MS2 / MS3 (big-endian, classic MegaSquirt lineage),
+        // Burst ('A') is the canonical high-throughput realtime path. The OCH
+        // heuristics below were observed to mis-select OCH on real Speeduino
+        // 202501 hardware, dropping throughput from ~1 KB/sec to ~13 B/sec
+        // (Issue #71). Lock these ECUs to Burst in Auto mode.
+        let burst_ecu = matches!(
+            self.ecu_type,
+            EcuType::Speeduino | EcuType::MS2 | EcuType::MS3 | EcuType::Unknown
+        );
+
+        // Unknown ECU type: also default to Burst to be safe. Only rusEFI-lineage
+        // ECUs (detected from the INI signature) are allowed to auto-select OCH.
+        if burst_ecu {
+            return (
+                RuntimeFetch::Burst(burst_cmd),
+                format!("auto: Burst (ecu={})", self.ecu_type.display_name()),
+            );
+        }
+
+        // rusEFI / FOME / epicEFI: apply the original heuristics to choose OCH.
+
         // 1) INI hint: maxUnusedRuntimeRange > 0 => prefer OCH if available
         if let Some(p) = &self.protocol_settings {
             if p.max_unused_runtime_range > 0 {
@@ -1190,9 +1286,47 @@ impl Connection {
     pub fn get_realtime_data(&mut self) -> Result<Vec<u8>, ProtocolError> {
         let (choice, _reason) = self.choose_runtime_command();
 
+        // Safety net (Issue #71): if Auto/forced OCH was selected but the INI
+        // did not declare a valid och_block_size, the OCH command cannot be
+        // framed correctly and the ECU will return a mis-sized response that
+        // stalls the stream. Fall back to Burst instead of guessing 256 bytes.
+        let choice = match &choice {
+            RuntimeFetch::OCH(_) => {
+                let och_block_size = self
+                    .protocol_settings
+                    .as_ref()
+                    .map(|p| p.och_block_size)
+                    .unwrap_or(0);
+                if och_block_size == 0 {
+                    tracing::debug!(
+                        "get_realtime_data: OCH selected but och_block_size=0, \
+                         falling back to Burst to avoid stream stall (Issue #71)"
+                    );
+                    let burst_cmd = self
+                        .protocol_settings
+                        .as_ref()
+                        .and_then(|p| p.burst_get_command.clone())
+                        .unwrap_or_else(|| "A".to_string());
+                    RuntimeFetch::Burst(burst_cmd)
+                } else {
+                    choice
+                }
+            }
+            _ => choice,
+        };
+
         match choice {
             RuntimeFetch::Burst(cmd) => {
-                if self.use_modern_protocol {
+                // Issue #71 follow-up: Speeduino / MS2 / MS3 / Unknown must use the
+                // legacy raw-ASCII Burst path even if the handshake or INI somehow
+                // left use_modern_protocol enabled. These ECUs do not accept a
+                // CRC-framed Burst request. rusEFI/FOME/epicEFI keep CRC framing
+                // when modern protocol is active.
+                let force_raw_burst = matches!(
+                    self.ecu_type,
+                    EcuType::Speeduino | EcuType::MS2 | EcuType::MS3 | EcuType::Unknown
+                );
+                if self.use_modern_protocol && !force_raw_burst {
                     let expected_len = self
                         .protocol_settings
                         .as_ref()
@@ -1225,7 +1359,7 @@ impl Connection {
                         .unwrap_or(0) as u16;
 
                     if block_size == 0 {
-                        eprintln!("[WARN] get_realtime_data: OCH selected but block size is 0! Defaulting to 256.");
+                        tracing::warn!("get_realtime_data: OCH selected but block size is 0! Defaulting to 256.");
                         // Fallback to 256 if 0, but log warning
                     }
                     let effective_size = if block_size > 0 { block_size } else { 256 };
@@ -1243,8 +1377,8 @@ impl Connection {
                         std::sync::atomic::AtomicU64::new(0);
                     let n = OCH_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if n < 3 || n.is_multiple_of(100) {
-                        eprintln!(
-                            "[OCH] tick={} use_modern={} cmd_bytes={:02x?} och_block_size={}",
+                        tracing::warn!(
+                            "tick={} use_modern={} cmd_bytes={:02x?} och_block_size={}",
                             n,
                             self.use_modern_protocol,
                             cmd_bytes,
@@ -1446,9 +1580,12 @@ impl Connection {
                         if !transient || attempt == 2 {
                             return Err(e);
                         }
-                        eprintln!(
-                            "[WARN] write_page: transient error on page {} offset {} (attempt {}): {}",
-                            page, offset, attempt + 1, msg
+                        tracing::warn!(
+                            "write_page: transient error on page {} offset {} (attempt {}): {}",
+                            page,
+                            offset,
+                            attempt + 1,
+                            msg
                         );
                         self.clear_rx_buffer();
                         std::thread::sleep(Duration::from_millis(50 * (attempt as u64 + 1)));
@@ -1477,9 +1614,10 @@ impl Connection {
         if self.config.auto_burn_on_page_change {
             if let Some(prev_page) = self.last_written_page {
                 if prev_page != params.page {
-                    eprintln!(
-                        "[INFO] auto-burn: page change {} -> {}, burning previous page first",
-                        prev_page, params.page
+                    tracing::info!(
+                        "auto-burn: page change {} -> {}, burning previous page first",
+                        prev_page,
+                        params.page
                     );
                     self.burn(BurnParams {
                         page: prev_page,
@@ -1549,10 +1687,7 @@ impl Connection {
 
         // Empty burn command means page is not burnable (already in flash or read-only)
         if burn_format.is_empty() {
-            eprintln!(
-                "[DEBUG] burn: page {} has empty burn command, skipping",
-                page
-            );
+            tracing::debug!("burn: page {} has empty burn command, skipping", page);
             return Ok(());
         }
 
@@ -1561,9 +1696,11 @@ impl Connection {
             .command_builder
             .build_burn_command(&burn_format, page_id)?;
 
-        eprintln!(
-            "[DEBUG] burn: sending burn command for page {}, format='{}', cmd = {:02x?}",
-            page, burn_format, cmd
+        tracing::debug!(
+            "burn: sending burn command for page {}, format='{}', cmd = {:02x?}",
+            page,
+            burn_format,
+            cmd
         );
 
         // Send burn command WITHOUT waiting for response
@@ -1587,13 +1724,10 @@ impl Connection {
             .map(|p| p.page_activation_delay.max(2000))
             .unwrap_or(2000);
 
-        eprintln!(
-            "[DEBUG] burn: waiting {}ms for flash write to complete",
-            delay
-        );
+        tracing::debug!("burn: waiting {}ms for flash write to complete", delay);
         std::thread::sleep(Duration::from_millis(delay as u64));
 
-        eprintln!("[DEBUG] burn: flash write complete for page {}", page);
+        tracing::debug!("burn: flash write complete for page {}", page);
         // Successful burn clears the auto-burn-on-page-change tracker.
         if self.last_written_page == Some(params.page) {
             self.last_written_page = None;
@@ -1609,7 +1743,7 @@ impl Connection {
             return Ok(());
         }
         if let Some(page) = self.last_written_page {
-            eprintln!("[INFO] auto-burn: dialog close, burning page {}", page);
+            tracing::info!("auto-burn: dialog close, burning page {}", page);
             self.burn(BurnParams { page, can_id: 0 })?;
         }
         Ok(())
@@ -1632,18 +1766,15 @@ impl Connection {
         if bytes.is_empty() {
             return Ok(());
         }
-        eprintln!(
-            "[DEBUG] send_raw_bytes: sending {} bytes: {:02x?} (modern={})",
+        tracing::debug!(
+            "send_raw_bytes: sending {} bytes: {:02x?} (modern={})",
             bytes.len(),
             bytes,
             self.use_modern_protocol
         );
         if self.use_modern_protocol {
-            // Consume ACK (bench Z). Timeout/serial OK — DFU drops the COM port.
-            match self.send_packet(Packet::new(bytes.to_vec())) {
-                Ok(_) | Err(ProtocolError::Timeout) | Err(ProtocolError::SerialError(_)) => Ok(()),
-                Err(e) => Err(e),
-            }
+            let packet = Packet::new(bytes.to_vec());
+            self.send_packet_no_response(packet)
         } else {
             self.send_raw_command_no_response(bytes)
         }
@@ -1667,8 +1798,8 @@ impl Connection {
         // Clear buffers
         let _ = channel.clear_input_buffer();
 
-        eprintln!(
-            "[DEBUG] send_raw_bytes_with_response: sending {} bytes: {:02x?}",
+        tracing::debug!(
+            "send_raw_bytes_with_response: sending {} bytes: {:02x?}",
             bytes.len(),
             bytes
         );
@@ -1686,8 +1817,8 @@ impl Connection {
 
         loop {
             if start.elapsed() > timeout {
-                eprintln!(
-                    "[DEBUG] send_raw_bytes_with_response: overall timeout reached ({} bytes read)",
+                tracing::debug!(
+                    "send_raw_bytes_with_response: overall timeout reached ({} bytes read)",
                     response.len()
                 );
                 break;
@@ -1695,8 +1826,8 @@ impl Connection {
 
             // If we have data and haven't received more in inter_char_timeout, we're done
             if !response.is_empty() && last_data_time.elapsed() > inter_char_timeout {
-                eprintln!(
-                    "[DEBUG] send_raw_bytes_with_response: inter-char timeout, done ({} bytes)",
+                tracing::debug!(
+                    "send_raw_bytes_with_response: inter-char timeout, done ({} bytes)",
                     response.len()
                 );
                 break;
@@ -1705,10 +1836,7 @@ impl Connection {
             let available = match channel.bytes_to_read() {
                 Ok(n) => n,
                 Err(e) => {
-                    eprintln!(
-                        "[DEBUG] send_raw_bytes_with_response: bytes_to_read error: {}",
-                        e
-                    );
+                    tracing::debug!("send_raw_bytes_with_response: bytes_to_read error: {}", e);
                     if !response.is_empty() {
                         break;
                     }
@@ -1742,8 +1870,8 @@ impl Connection {
             self.rx_packets = self.rx_packets.saturating_add(1);
         }
 
-        eprintln!(
-            "[DEBUG] send_raw_bytes_with_response: got {} bytes response",
+        tracing::debug!(
+            "send_raw_bytes_with_response: got {} bytes response",
             response.len()
         );
 
@@ -1765,9 +1893,10 @@ impl Connection {
         &mut self,
         cmd: &super::commands::ConsoleCommand,
     ) -> Result<String, ProtocolError> {
-        eprintln!(
-            "[DEBUG] send_console_command: sending '{}' (modern={})",
-            cmd.command, self.use_modern_protocol
+        tracing::debug!(
+            "send_console_command: sending '{}' (modern={})",
+            cmd.command,
+            self.use_modern_protocol
         );
 
         if self.use_modern_protocol {
@@ -1794,7 +1923,7 @@ impl Connection {
         // Step 0: Drain any stale buffered text from the ECU.
         // The ECU accumulates ALL efiPrintf output (boot messages, periodic status, wave charts, etc.)
         // since the last 'G' poll. If we don't drain first, we'll get everything mixed in.
-        eprintln!("[DEBUG] send_console_command_modern: draining stale text buffer");
+        tracing::debug!("send_console_command_modern: draining stale text buffer");
         self.drain_text_buffer();
 
         // Step 1: Send 'E' + command text as CRC-framed packet
@@ -1809,8 +1938,8 @@ impl Connection {
         if !response.payload.is_empty() && response.payload[0] != 0 {
             let status = response.payload[0];
             let code = super::ResponseCode::from_byte(status);
-            eprintln!(
-                "[WARN] send_console_command_modern: 'E' command returned status 0x{:02x} ({})",
+            tracing::warn!(
+                "send_console_command_modern: 'E' command returned status 0x{:02x} ({})",
                 status,
                 code.message()
             );
@@ -1832,7 +1961,7 @@ impl Connection {
             }
         }
 
-        eprintln!("[DEBUG] send_console_command_modern: 'E' command accepted, polling text output");
+        tracing::debug!("send_console_command_modern: 'E' command accepted, polling text output");
 
         // Step 2: Poll 'G' (TS_GET_TEXT) to retrieve the command output
         // The ECU buffers console output; we may need to poll multiple times.
@@ -1847,7 +1976,7 @@ impl Connection {
 
         for poll_idx in 0..max_polls {
             if poll_start.elapsed() > poll_timeout {
-                eprintln!("[DEBUG] send_console_command_modern: poll timeout reached");
+                tracing::debug!("send_console_command_modern: poll timeout reached");
                 break;
             }
 
@@ -1870,9 +1999,10 @@ impl Connection {
 
                     if text_data.is_empty() {
                         empty_polls += 1;
-                        eprintln!(
-                            "[DEBUG] send_console_command_modern: poll {} empty (empty_count={})",
-                            poll_idx, empty_polls
+                        tracing::debug!(
+                            "send_console_command_modern: poll {} empty (empty_count={})",
+                            poll_idx,
+                            empty_polls
                         );
                         // If we already have text and get an empty poll, output is complete
                         if !collected_text.is_empty() || empty_polls >= 2 {
@@ -1882,8 +2012,8 @@ impl Connection {
                         std::thread::sleep(Duration::from_millis(50));
                     } else {
                         let text_chunk = String::from_utf8_lossy(text_data);
-                        eprintln!(
-                            "[DEBUG] send_console_command_modern: poll {} got {} bytes",
+                        tracing::debug!(
+                            "send_console_command_modern: poll {} got {} bytes",
                             poll_idx,
                             text_data.len(),
                         );
@@ -1894,9 +2024,10 @@ impl Connection {
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[WARN] send_console_command_modern: 'G' poll {} failed: {:?}",
-                        poll_idx, e
+                    tracing::warn!(
+                        "send_console_command_modern: 'G' poll {} failed: {:?}",
+                        poll_idx,
+                        e
                     );
                     // If we already have some text, return what we have
                     if !collected_text.is_empty() {
@@ -1913,8 +2044,8 @@ impl Connection {
         // We extract msg entries and format them as newline-separated text.
         let result = Self::parse_rusefi_text_output(&collected_text);
 
-        eprintln!(
-            "[DEBUG] send_console_command_modern: parsed {} bytes from {} raw bytes",
+        tracing::debug!(
+            "send_console_command_modern: parsed {} bytes from {} raw bytes",
             result.len(),
             collected_text.len(),
         );
@@ -1943,9 +2074,10 @@ impl Connection {
                     } else {
                         0
                     };
-                    eprintln!(
-                        "[DEBUG] drain_text_buffer: poll {} drained {} bytes",
-                        drain_idx, data_len
+                    tracing::debug!(
+                        "drain_text_buffer: poll {} drained {} bytes",
+                        drain_idx,
+                        data_len
                     );
                     if data_len == 0 {
                         break; // Buffer is empty
@@ -1954,10 +2086,7 @@ impl Connection {
                     std::thread::sleep(Duration::from_millis(30));
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[WARN] drain_text_buffer: poll {} failed: {:?}",
-                        drain_idx, e
-                    );
+                    tracing::warn!("drain_text_buffer: poll {} failed: {:?}", drain_idx, e);
                     break;
                 }
             }
@@ -2077,7 +2206,7 @@ impl Connection {
         write_and_wait(channel, &cmd_bytes, baud_rate, min_wait)
             .map_err(|e| ProtocolError::SerialError(e.to_string()))?;
 
-        eprintln!("[DEBUG] send_console_command_legacy: command sent, waiting for response");
+        tracing::debug!("send_console_command_legacy: command sent, waiting for response");
 
         // Read response with timeout
         let mut response = Vec::new();
@@ -2087,17 +2216,14 @@ impl Connection {
 
         loop {
             if start.elapsed() > timeout {
-                eprintln!("[DEBUG] send_console_command_legacy: overall timeout reached");
+                tracing::debug!("send_console_command_legacy: overall timeout reached");
                 break;
             }
 
             let available = match channel.bytes_to_read() {
                 Ok(n) => n,
                 Err(e) => {
-                    eprintln!(
-                        "[DEBUG] send_console_command_legacy: bytes_to_read error: {}",
-                        e
-                    );
+                    tracing::debug!("send_console_command_legacy: bytes_to_read error: {}", e);
                     return Err(ProtocolError::SerialError(e.to_string()));
                 }
             };
@@ -2131,8 +2257,8 @@ impl Connection {
 
         let response_str = String::from_utf8_lossy(&response).trim().to_string();
 
-        eprintln!(
-            "[DEBUG] send_console_command_legacy: received {} bytes: '{}'",
+        tracing::debug!(
+            "send_console_command_legacy: received {} bytes: '{}'",
             response.len(),
             response_str
         );
@@ -2211,9 +2337,12 @@ mod tests {
 
     #[test]
     fn test_choose_runtime_command_rfcomm() {
+        // rusEFI keeps the slow-link heuristic (Issue #71: Speeduino/Unknown now
+        // stay on Burst regardless of link speed).
         let mut cfg = ConnectionConfig::default();
         cfg.port_name = "rfcomm0".to_string();
         let mut conn = Connection::new(cfg);
+        conn.set_ecu_type(EcuType::RusEFI);
         let mut proto = ProtocolSettings::default();
         proto.och_get_command = Some("O".to_string());
         proto.burst_get_command = Some("A".to_string());
@@ -2229,6 +2358,66 @@ mod tests {
                 || reason.contains("slow")
                 || reason.contains("adaptive")
         );
+    }
+
+    /// Issue #71: Speeduino (and MS2/MS3/Unknown) must stay on Burst in Auto mode
+    /// even when the INI declares maxUnusedRuntimeRange, a slow link, or slow
+    /// adaptive-timing averages — these heuristics previously collapsed
+    /// throughput to ~13 B/sec on real Speeduino 202501 hardware.
+    #[test]
+    fn test_speeduino_auto_stays_on_burst() {
+        for ecu in [
+            EcuType::Speeduino,
+            EcuType::MS2,
+            EcuType::MS3,
+            EcuType::Unknown,
+        ] {
+            // Slow link (rfcomm) + INI hint + slow adaptive timing all set.
+            let mut cfg = ConnectionConfig::default();
+            cfg.port_name = "rfcomm0".to_string();
+            let mut conn = Connection::new(cfg);
+            conn.set_ecu_type(ecu);
+            let mut proto = ProtocolSettings::default();
+            proto.och_get_command = Some("O".to_string());
+            proto.burst_get_command = Some("A".to_string());
+            proto.max_unused_runtime_range = 999; // would normally trigger OCH
+            conn.set_protocol(proto, Endianness::Big);
+            // Slow adaptive timing average that would normally trigger OCH.
+            conn.enable_adaptive_timing(None);
+            conn.record_response_time(std::time::Duration::from_millis(200));
+            conn.record_response_time(std::time::Duration::from_millis(180));
+
+            let (choice, reason) = conn.choose_runtime_command();
+            match &choice {
+                RuntimeFetch::Burst(cmd) => assert_eq!(cmd, "A"),
+                _ => panic!("{:?} should use Burst in Auto, got {:?}", ecu, choice),
+            }
+            assert!(
+                reason.contains("Burst"),
+                "unexpected reason for {:?}: {}",
+                ecu,
+                reason
+            );
+        }
+    }
+
+    /// Issue #71: ForceOCH must still override the Speeduino Burst default so the
+    /// user can manually select OCH when appropriate.
+    #[test]
+    fn test_speeduino_force_och_override() {
+        let mut cfg = ConnectionConfig::default();
+        cfg.runtime_packet_mode = RuntimePacketMode::ForceOCH;
+        let mut conn = Connection::new(cfg);
+        conn.set_ecu_type(EcuType::Speeduino);
+        let mut proto = ProtocolSettings::default();
+        proto.och_get_command = Some("O".to_string());
+        proto.burst_get_command = Some("A".to_string());
+        conn.set_protocol(proto, Endianness::Big);
+        let (choice, _) = conn.choose_runtime_command();
+        match choice {
+            RuntimeFetch::OCH(cmd) => assert_eq!(cmd, "O"),
+            _ => panic!("ForceOCH should override Speeduino Burst default"),
+        }
     }
 
     #[test]
@@ -2258,8 +2447,10 @@ mod tests {
 
     #[test]
     fn test_adaptive_switch_to_och() {
+        // rusEFI keeps the adaptive-timing heuristic (Issue #71).
         let cfg = ConnectionConfig::default();
         let mut conn = Connection::new(cfg);
+        conn.set_ecu_type(EcuType::RusEFI);
         let mut proto = ProtocolSettings::default();
         proto.och_get_command = Some("O".to_string());
         proto.burst_get_command = Some("A".to_string());

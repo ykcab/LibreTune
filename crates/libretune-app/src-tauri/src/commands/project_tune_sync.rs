@@ -99,8 +99,10 @@ pub async fn write_project_tune_to_ecu(
     _app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let project_guard = state.current_project.lock().await;
+    // Lock order: definition before current_project, matching apply_base_map —
+    // avoids an AB-BA deadlock against it.
     let def_guard = state.definition.lock().await;
+    let project_guard = state.current_project.lock().await;
 
     let project = project_guard.as_ref().ok_or("No project open")?;
     let _def = def_guard.as_ref().ok_or("Definition not loaded")?;
@@ -115,11 +117,7 @@ pub async fn write_project_tune_to_ecu(
 
     pause_realtime_stream(&state).await;
 
-    let mut pages: Vec<(u8, Vec<u8>)> = tune
-        .pages
-        .iter()
-        .map(|(k, v)| (*k, v.clone()))
-        .collect();
+    let mut pages: Vec<(u8, Vec<u8>)> = tune.pages.iter().map(|(k, v)| (*k, v.clone())).collect();
     pages.sort_by_key(|(p, _)| *p);
 
     {
@@ -182,10 +180,7 @@ pub async fn save_tune_to_project(state: tauri::State<'_, AppState>) -> Result<(
     // Sync cache pages into the in-memory tune before writing disk.
     let mut tune = {
         let tune_guard = state.current_tune.lock().await;
-        tune_guard
-            .as_ref()
-            .ok_or("No tune loaded")?
-            .clone()
+        tune_guard.as_ref().ok_or("No tune loaded")?.clone()
     };
     {
         let cache_guard = state.tune_cache.lock().await;

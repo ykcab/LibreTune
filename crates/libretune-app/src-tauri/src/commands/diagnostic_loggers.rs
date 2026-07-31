@@ -4,197 +4,6 @@ use serde::Serialize;
 use tauri::Emitter;
 
 use crate::state::AppState;
-use libretune_core::ini::EcuType;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LoggerEcuKind {
-    Speeduino,
-    RusEfiFamily,
-    MegaSquirt,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct TriggerLogRecord {
-    flags: u8,
-    time_us: u32,
-}
-
-const RUSEFI_TRIGGER_START: [u8; 2] = [b'l', 0x01];
-const RUSEFI_TRIGGER_STOP: [u8; 2] = [b'l', 0x02];
-const RUSEFI_TRIGGER_READ: [u8; 2] = [b'l', 0x03];
-
-fn detect_logger_ecu_kind(def_type: EcuType, signature: &str) -> LoggerEcuKind {
-    match def_type {
-        EcuType::Speeduino => return LoggerEcuKind::Speeduino,
-        EcuType::RusEFI | EcuType::FOME | EcuType::EpicEFI => return LoggerEcuKind::RusEfiFamily,
-        EcuType::MS2 | EcuType::MS3 => return LoggerEcuKind::MegaSquirt,
-        EcuType::Unknown => {}
-    }
-
-    let sig = signature.to_lowercase();
-    if sig.contains("speeduino") {
-        LoggerEcuKind::Speeduino
-    } else if sig.contains("rusefi")
-        || sig.contains("fome")
-        || sig.contains("epicefi")
-        || sig.contains("epicecu")
-    {
-        LoggerEcuKind::RusEfiFamily
-    } else if sig.contains("ms2")
-        || sig.contains("ms3")
-        || sig.contains("mega")
-        || sig.contains("megasquirt")
-    {
-        LoggerEcuKind::MegaSquirt
-    } else {
-        LoggerEcuKind::Unknown
-    }
-}
-
-fn monotonic_score(samples: &[u32]) -> i64 {
-    if samples.len() < 2 {
-        return 0;
-    }
-    let mut score: i64 = 0;
-    for pair in samples.windows(2) {
-        let prev = pair[0];
-        let curr = pair[1];
-        if curr > prev {
-            score += 2;
-            let delta = curr - prev;
-            if delta <= 5_000_000 {
-                score += 1;
-            }
-        } else if curr == prev {
-            score += 0;
-        } else {
-            score -= 3;
-        }
-    }
-    score
-}
-
-fn decode_trigger_timestamps(raw_times: &[[u8; 4]]) -> Vec<u32> {
-    let be: Vec<u32> = raw_times.iter().map(|b| u32::from_be_bytes(*b)).collect();
-    let le: Vec<u32> = raw_times.iter().map(|b| u32::from_le_bytes(*b)).collect();
-    let be_score = monotonic_score(&be);
-    let le_score = monotonic_score(&le);
-    if le_score > be_score {
-        le
-    } else {
-        be
-    }
-}
-
-fn choose_entry_count(be_count: usize, le_count: usize, available: usize) -> usize {
-    if available == 0 {
-        return 0;
-    }
-    match (be_count, le_count) {
-        (0, 0) => 0,
-        (0, le) => le.min(available),
-        (be, 0) => be.min(available),
-        (be, le) => {
-            let be_diff = be.abs_diff(available);
-            let le_diff = le.abs_diff(available);
-            if le_diff < be_diff {
-                le.min(available)
-            } else {
-                be.min(available)
-            }
-        }
-    }
-}
-
-fn parse_rusefi_trigger_records(response: &[u8]) -> Result<Vec<TriggerLogRecord>, String> {
-    if response.len() < 2 {
-        return Err("Trigger logger returned no data".to_string());
-    }
-
-    let be_count = u16::from_be_bytes([response[0], response[1]]) as usize;
-    let le_count = u16::from_le_bytes([response[0], response[1]]) as usize;
-    let available = (response.len().saturating_sub(2)) / 5;
-    let parse_count = choose_entry_count(be_count, le_count, available);
-    if parse_count == 0 {
-        return Err(format!(
-            "Trigger logger response had 0 records (reported be={}, le={}, bytes {})",
-            be_count,
-            le_count,
-            response.len()
-        ));
-    }
-
-    let mut raw_times = Vec::with_capacity(parse_count);
-    let mut flags = Vec::with_capacity(parse_count);
-    for i in 0..parse_count {
-        let offset = 2 + i * 5;
-        flags.push(response[offset]);
-        raw_times.push([
-            response[offset + 1],
-            response[offset + 2],
-            response[offset + 3],
-            response[offset + 4],
-        ]);
-    }
-
-    let decoded_times = decode_trigger_timestamps(&raw_times);
-    let out: Vec<TriggerLogRecord> = flags
-        .into_iter()
-        .zip(decoded_times)
-        .map(|(flags, time_us)| TriggerLogRecord { flags, time_us })
-        .collect();
-    Ok(out)
-}
-
-fn wait_for_condition<F>(timeout_ms: u64, poll_ms: u64, mut check: F) -> Result<bool, String>
-where
-    F: FnMut() -> Result<bool, String>,
-{
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
-    while std::time::Instant::now() < deadline {
-        if check()? {
-            return Ok(true);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(poll_ms));
-    }
-    Ok(false)
-}
-
-fn read_rusefi_trigger_records<F>(
-    mut read_once: F,
-    timeout_ms: u64,
-) -> Result<Vec<TriggerLogRecord>, String>
-where
-    F: FnMut() -> Result<Vec<u8>, String>,
-{
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
-    let mut last_err = String::new();
-
-    while std::time::Instant::now() < deadline {
-        let response = read_once()?;
-
-        match parse_rusefi_trigger_records(&response) {
-            Ok(records) if !records.is_empty() => return Ok(records),
-            Ok(_) => {
-                last_err = "Trigger logger returned empty record list".to_string();
-            }
-            Err(e) => {
-                last_err = e;
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(120));
-    }
-
-    Err(format!(
-        "Timed out waiting for trigger logger data: {}",
-        if last_err.is_empty() {
-            "no data received"
-        } else {
-            &last_err
-        }
-    ))
-}
 
 /// Tooth log entry (single tooth timing)
 #[derive(Debug, Clone, Serialize)]
@@ -257,19 +66,25 @@ pub async fn start_tooth_logger(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<ToothLogResult, String> {
-    let mut conn_guard = state.connection.lock().await;
-    let def_guard = state.definition.lock().await;
+    // Just confirming a definition is loaded — drop the lock immediately
+    // rather than holding it across the blocking ECU read below, which would
+    // starve every other command that needs the definition (e.g. load_tune).
+    {
+        let def_guard = state.definition.lock().await;
+        if def_guard.is_none() {
+            return Err("Definition not loaded".to_string());
+        }
+    }
 
+    let mut conn_guard = state.connection.lock().await;
     let conn = conn_guard.as_mut().ok_or("Not connected to ECU")?;
-    let def = def_guard.as_ref().ok_or("Definition not loaded")?;
 
     // Detect ECU type from signature
     let signature = conn.signature().unwrap_or_default().to_lowercase();
-    let ecu_kind = detect_logger_ecu_kind(def.ecu_type, &signature);
 
     let teeth: Vec<ToothLogEntry>;
 
-    if ecu_kind == LoggerEcuKind::Speeduino {
+    if signature.contains("speeduino") || signature.contains("202") {
         // Speeduino protocol: Send 'H' command for tooth log
         // Response format: 2-byte count (little-endian) + (count * 4-byte entries)
         // Each entry: 2 bytes tooth number (LE) + 2 bytes time in 0.5µs units (LE)
@@ -315,69 +130,60 @@ pub async fn start_tooth_logger(
             .collect();
 
         eprintln!("[Tooth Logger] Parsed {} teeth from response", teeth.len());
-    } else if ecu_kind == LoggerEcuKind::RusEfiFamily {
-        // rusEFI/epicEFI/FOME trigger logger definition (from INI):
-        // startCommand=l1, stopCommand=l2, dataReadCommand=l3
-        // record: 1-byte flags + 4-byte timestamp (µs)
+    } else if signature.contains("rusefi") || signature.contains("fome") {
+        // rusEFI protocol: Binary commands
+        // 'l\x01' = start tooth logger
+        // 'l\x02' = get tooth data
+        // 'l\x03' = stop tooth logger
+        // Response to 'l\x02': 2-byte count (BE) + (count * 4-byte entries)
+        // Each entry: 4 bytes time in µs (big-endian, u32)
         eprintln!("[Tooth Logger] Starting rusEFI tooth capture...");
 
         // Start logger
-        conn.send_raw_bytes(&RUSEFI_TRIGGER_START)
+        conn.send_raw_bytes(&[b'l', 0x01])
             .map_err(|e| format!("Failed to start tooth logger: {}", e))?;
 
-        // Wait for INI-defined readiness signal when available; fallback to a
-        // short capture window if channel is absent.
-        if let Some(ready_ch) = def.output_channels.get("toothLogReady") {
-            let _ = wait_for_condition(2200, 80, || {
-                let raw = conn
-                    .get_realtime_data()
-                    .map_err(|e| format!("Failed to poll trigger readiness: {}", e))?;
-                Ok(ready_ch.parse(&raw, def.endianness).unwrap_or(0.0) > 0.5)
-            })?;
-        } else {
-            std::thread::sleep(std::time::Duration::from_millis(700));
+        // Wait for capture
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // Get data
+        let response = conn
+            .send_raw_bytes_with_response(&[b'l', 0x02], std::time::Duration::from_millis(2000))
+            .map_err(|e| format!("Failed to get tooth data: {}", e))?;
+
+        // Stop logger
+        let _ = conn.send_raw_bytes(&[b'l', 0x03]);
+
+        if response.len() < 2 {
+            return Err("Tooth logger returned no data".into());
         }
 
-        // Stop before read so ECU finalizes buffer
-        conn.send_raw_bytes(&RUSEFI_TRIGGER_STOP)
-            .map_err(|e| format!("Failed to stop tooth logger: {}", e))?;
+        // rusEFI uses big-endian 2-byte count
+        let tooth_count = u16::from_be_bytes([response[0], response[1]]) as usize;
+        eprintln!("[Tooth Logger] ECU reports {} teeth", tooth_count);
 
-        let records = read_rusefi_trigger_records(
-            || {
-                conn.send_raw_bytes_with_response(
-                    &RUSEFI_TRIGGER_READ,
-                    std::time::Duration::from_millis(1200),
-                )
-                .map_err(|e| format!("Failed to get tooth data: {}", e))
-            },
-            3500,
-        )?;
-        eprintln!("[Tooth Logger] Parsed {} trigger records", records.len());
+        let available_teeth = (response.len().saturating_sub(2)) / 4;
+        let parse_count = available_teeth.min(tooth_count);
 
-        // Derive tooth intervals from successive trigger timestamps.
-        let mut derived = Vec::new();
-        for i in 1..records.len() {
-            let prev = records[i - 1].time_us;
-            let curr = records[i].time_us;
-            let delta = curr.wrapping_sub(prev);
-            if delta > 0 && delta < 5_000_000 {
-                derived.push(ToothLogEntry {
-                    tooth_number: (derived.len() as u16),
-                    tooth_time_us: delta,
+        teeth = (0..parse_count)
+            .map(|i| {
+                let offset = 2 + i * 4;
+                let tooth_time_us = u32::from_be_bytes([
+                    response[offset],
+                    response[offset + 1],
+                    response[offset + 2],
+                    response[offset + 3],
+                ]);
+                ToothLogEntry {
+                    tooth_number: i as u16,
+                    tooth_time_us,
                     crank_angle: None,
-                });
-            }
-        }
-        if derived.is_empty() {
-            return Err(format!(
-                "Trigger logger returned {} records but no valid tooth intervals",
-                records.len()
-            ));
-        }
-        teeth = derived;
+                }
+            })
+            .collect();
 
         eprintln!("[Tooth Logger] Parsed {} teeth from response", teeth.len());
-    } else if ecu_kind == LoggerEcuKind::MegaSquirt {
+    } else if signature.contains("ms2") || signature.contains("ms3") || signature.contains("mega") {
         // Megasquirt protocol: Read tooth log page
         // MS2/MS3 uses page 0xF0 for tooth log data
         // Response: raw bytes, each 2-byte pair is tooth time in µs (big-endian)
@@ -454,19 +260,13 @@ pub async fn start_tooth_logger(
 #[tauri::command]
 pub async fn stop_tooth_logger(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut conn_guard = state.connection.lock().await;
-    let def_guard = state.definition.lock().await;
 
     if let Some(conn) = conn_guard.as_mut() {
         let signature = conn.signature().unwrap_or_default().to_lowercase();
-        let def_type = def_guard
-            .as_ref()
-            .map(|d| d.ecu_type)
-            .unwrap_or(EcuType::Unknown);
-        let ecu_kind = detect_logger_ecu_kind(def_type, &signature);
 
-        if ecu_kind == LoggerEcuKind::RusEfiFamily {
+        if signature.contains("rusefi") || signature.contains("fome") {
             // rusEFI: Send stop command
-            conn.send_raw_bytes(&RUSEFI_TRIGGER_STOP)
+            conn.send_raw_bytes(&[b'l', 0x03])
                 .map_err(|e| format!("Failed to stop tooth logger: {}", e))?;
         }
         // Speeduino and MS don't need explicit stop
@@ -481,18 +281,24 @@ pub async fn start_composite_logger(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<CompositeLogResult, String> {
-    let mut conn_guard = state.connection.lock().await;
-    let def_guard = state.definition.lock().await;
+    // Just confirming a definition is loaded — drop the lock immediately
+    // rather than holding it across the blocking ECU read below, which would
+    // starve every other command that needs the definition (e.g. load_tune).
+    {
+        let def_guard = state.definition.lock().await;
+        if def_guard.is_none() {
+            return Err("Definition not loaded".to_string());
+        }
+    }
 
+    let mut conn_guard = state.connection.lock().await;
     let conn = conn_guard.as_mut().ok_or("Not connected to ECU")?;
-    let def = def_guard.as_ref().ok_or("Definition not loaded")?;
 
     let signature = conn.signature().unwrap_or_default().to_lowercase();
-    let ecu_kind = detect_logger_ecu_kind(def.ecu_type, &signature);
 
     let entries: Vec<CompositeLogEntry>;
 
-    if ecu_kind == LoggerEcuKind::Speeduino {
+    if signature.contains("speeduino") || signature.contains("202") {
         // Speeduino composite logger commands:
         // 'J' = Start composite logger
         // 'O' = Get composite data
@@ -507,7 +313,7 @@ pub async fn start_composite_logger(
         conn.send_raw_bytes(b"J")
             .map_err(|e| format!("Failed to start composite logger: {}", e))?;
 
-        std::thread::sleep(std::time::Duration::from_millis(650));
+        std::thread::sleep(std::time::Duration::from_millis(500));
 
         let response = conn
             .send_raw_bytes_with_response(b"O", std::time::Duration::from_millis(2000))
@@ -537,48 +343,49 @@ pub async fn start_composite_logger(
             "[Composite Logger] Parsed {} entries from response",
             entries.len()
         );
-    } else if ecu_kind == LoggerEcuKind::RusEfiFamily {
-        // Use trigger logger records (same source as TS Trigger Logger):
-        // start=l1, stop=l2, read=l3
+    } else if signature.contains("rusefi") || signature.contains("fome") {
+        // rusEFI: 'l\x04' start, 'l\x05' get, 'l\x06' stop
+        // Response to 'l\x05': 2-byte count (BE) + (count * 5-byte entries)
+        // Each entry: 4 bytes time_us (BE u32) + 1 byte flags
+        //   flags bit 0: primary, bit 1: secondary, bit 2: sync
         eprintln!("[Composite Logger] Starting rusEFI composite capture...");
 
-        conn.send_raw_bytes(&RUSEFI_TRIGGER_START)
+        conn.send_raw_bytes(&[b'l', 0x04])
             .map_err(|e| format!("Failed to start composite logger: {}", e))?;
 
-        if let Some(ready_ch) = def.output_channels.get("toothLogReady") {
-            let _ = wait_for_condition(2200, 80, || {
-                let raw = conn
-                    .get_realtime_data()
-                    .map_err(|e| format!("Failed to poll trigger readiness: {}", e))?;
-                Ok(ready_ch.parse(&raw, def.endianness).unwrap_or(0.0) > 0.5)
-            })?;
-        } else {
-            std::thread::sleep(std::time::Duration::from_millis(700));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        let response = conn
+            .send_raw_bytes_with_response(&[b'l', 0x05], std::time::Duration::from_millis(2000))
+            .map_err(|e| format!("Failed to get composite data: {}", e))?;
+
+        let _ = conn.send_raw_bytes(&[b'l', 0x06]);
+
+        if response.len() < 2 {
+            return Err("Composite logger returned no data".into());
         }
 
-        conn.send_raw_bytes(&RUSEFI_TRIGGER_STOP)
-            .map_err(|e| format!("Failed to stop composite logger: {}", e))?;
+        let entry_count = u16::from_be_bytes([response[0], response[1]]) as usize;
+        let available = (response.len().saturating_sub(2)) / 5;
+        let parse_count = available.min(entry_count);
 
-        let records = read_rusefi_trigger_records(
-            || {
-                conn.send_raw_bytes_with_response(
-                    &RUSEFI_TRIGGER_READ,
-                    std::time::Duration::from_millis(1200),
-                )
-                .map_err(|e| format!("Failed to get composite data: {}", e))
-            },
-            3500,
-        )?;
-        let base_time = records.first().map(|r| r.time_us).unwrap_or(0);
-        entries = records
-            .into_iter()
-            .map(|r| CompositeLogEntry {
-                time_us: r.time_us.wrapping_sub(base_time),
-                primary: (r.flags & 0x01) != 0,
-                secondary: (r.flags & 0x02) != 0,
-                // INI recordField has sync on bit 3.
-                sync: (r.flags & 0x08) != 0,
-                voltage: None,
+        entries = (0..parse_count)
+            .map(|i| {
+                let offset = 2 + i * 5;
+                let time_us = u32::from_be_bytes([
+                    response[offset],
+                    response[offset + 1],
+                    response[offset + 2],
+                    response[offset + 3],
+                ]);
+                let flags = response[offset + 4];
+                CompositeLogEntry {
+                    time_us,
+                    primary: (flags & 0x01) != 0,
+                    secondary: (flags & 0x02) != 0,
+                    sync: (flags & 0x04) != 0,
+                    voltage: None,
+                }
             })
             .collect();
 
@@ -586,7 +393,7 @@ pub async fn start_composite_logger(
             "[Composite Logger] Parsed {} entries from response",
             entries.len()
         );
-    } else if ecu_kind == LoggerEcuKind::MegaSquirt {
+    } else if signature.contains("ms2") || signature.contains("ms3") || signature.contains("mega") {
         // Megasquirt: Page 0xF2 for composite log data
         // Response: raw bytes, each entry is 6 bytes:
         //   4 bytes time_us (BE u32), 1 byte flags, 1 byte voltage (0-255 mapped to 0-5V)
@@ -642,28 +449,10 @@ pub async fn start_composite_logger(
 
     let _ = app.emit("composite_logger:data", &entries);
 
-    let sample_rate_hz = if entries.len() > 1 {
-        let mut deltas = Vec::with_capacity(entries.len() - 1);
-        for i in 1..entries.len() {
-            let dt = entries[i].time_us.saturating_sub(entries[i - 1].time_us);
-            if dt > 0 {
-                deltas.push(dt);
-            }
-        }
-        if deltas.is_empty() {
-            10_000
-        } else {
-            let avg = deltas.iter().copied().sum::<u32>() as f32 / deltas.len() as f32;
-            (1_000_000.0 / avg).round().clamp(1.0, 200_000.0) as u32
-        }
-    } else {
-        10_000
-    };
-
     Ok(CompositeLogResult {
         entries,
         capture_time_ms: 500,
-        sample_rate_hz,
+        sample_rate_hz: 10000,
     })
 }
 
@@ -675,18 +464,12 @@ pub async fn start_composite_logger(
 #[tauri::command]
 pub async fn stop_composite_logger(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut conn_guard = state.connection.lock().await;
-    let def_guard = state.definition.lock().await;
 
     if let Some(conn) = conn_guard.as_mut() {
         let signature = conn.signature().unwrap_or_default().to_lowercase();
-        let def_type = def_guard
-            .as_ref()
-            .map(|d| d.ecu_type)
-            .unwrap_or(EcuType::Unknown);
-        let ecu_kind = detect_logger_ecu_kind(def_type, &signature);
 
-        if ecu_kind == LoggerEcuKind::RusEfiFamily {
-            conn.send_raw_bytes(&RUSEFI_TRIGGER_STOP)
+        if signature.contains("rusefi") || signature.contains("fome") {
+            conn.send_raw_bytes(&[b'l', 0x06])
                 .map_err(|e| format!("Failed to stop composite logger: {}", e))?;
         }
     }

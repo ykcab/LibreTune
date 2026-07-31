@@ -1,4 +1,12 @@
-import { Fragment, useState, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
+import {
+  Fragment,
+  useState,
+  useRef,
+  useMemo,
+  useCallback,
+  useLayoutEffect,
+  type CSSProperties,
+} from 'react';
 import { valueToHeatmapColor, contrastTextColor, HeatmapScheme } from '../../utils/heatmapColors';
 
 export interface SelectionRange {
@@ -31,6 +39,11 @@ interface TableGridProps {
   heatmapScheme?: HeatmapScheme | string[]; // Scheme name or custom color stops
   /** Embedded/dialog tables: fixed compact layout (GP#1–4, etc.) */
   compact?: boolean;
+  /**
+   * VE main table only: shrink cell geometry to fit the parent viewport.
+   * Other tables must keep fixed rem sizing.
+   */
+  fitViewport?: boolean;
 }
 
 export default function TableGrid({
@@ -53,8 +66,11 @@ export default function TableGrid({
   heatmapScheme = 'tunerstudio',
   compact = false,
   yAxisBottom = false,
+  fitViewport = false,
 }: TableGridProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const [fitPx, setFitPx] = useState<{ axis: number; col: number; row: number } | null>(null);
   const [editingCell, setEditingCell] = useState<[number, number] | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   // cellDrag stores the anchor point of the selection
@@ -67,12 +83,21 @@ export default function TableGrid({
   const x_size = x_bins.length;
   const y_size = y_bins.length;
 
-  // Calculate live cursor position (fractional cell indices)
+  // Live cursor position as FRACTIONAL cell indices. Returns null when the
+  // cursor is disabled or has no value. Each axis is converted independently
+  // from a raw channel value (e.g. RPM) into a cell index + fraction, so the
+  // cursor can sit between cells and animate smoothly.
   const liveCursorPosition = useMemo(() => {
     if (!showLiveCursor || liveCursorX === undefined || liveCursorY === undefined) {
       return null;
     }
 
+    // Map a scalar value onto the bin array as a fractional index. Handles
+    // both ascending (normal) and descending (reversed) bin orders without
+    // assuming direction. Returns `i + ratio` where i is the lower bin index
+    // and ratio is the linear interpolation [0,1) across the bin. Values
+    // outside the bin range are clamped to the first/last index so the cursor
+    // never leaves the table.
     const computePosition = (value: number, bins: number[]) => {
       if (bins.length === 0) return 0;
       const ascending = bins[0] <= bins[bins.length - 1];
@@ -80,16 +105,21 @@ export default function TableGrid({
       for (let i = 0; i < bins.length - 1; i++) {
         const start = bins[i];
         const end = bins[i + 1];
+        // Direction-aware containment check so reversed bins work too.
         const inRange = ascending
           ? value >= start && value <= end
           : value <= start && value >= end;
         if (inRange) {
+          // denom===0 means two equal adjacent bins (degenerate); avoid NaN
+          // by falling back to ratio 0 (snap to the lower bin).
           const denom = end - start;
           const ratio = denom !== 0 ? (value - start) / denom : 0;
           return i + ratio;
         }
       }
 
+      // Below the first bin → clamp to index 0; above the last → last index.
+      // Direction-aware comparisons again so descending bins clamp correctly.
       if ((ascending && value < bins[0]) || (!ascending && value > bins[0])) {
         return 0;
       }
@@ -174,7 +204,12 @@ export default function TableGrid({
     
     let anchorIndex = index;
 
-    // Check if we should extend the selection (Shift key + existing compatible selection)
+    // Shift-click extends a header selection. But we only extend if the
+    // PREVIOUS selection was already a full row/column select (i.e. it spans
+    // the entire opposite axis) — otherwise a cell-range select would get
+    // silently widened into a row/column select, which is surprising. The
+    // full-range check (min===0 && max===size-1) is how we tell header-derived
+    // selections apart from drag cell selections.
     if (e.shiftKey && selectionRange) {
       if (axis === 'x') {
         // Only extend if previous selection covers full Y range (i.e. was a column selection)
@@ -309,18 +344,80 @@ export default function TableGrid({
     );
   };
 
-  // Fixed column widths — tuning tables must not stretch with the panel
-  const axisCol = compact ? '3.25rem' : '2.75rem';
-  const dataCol = compact ? '3.5rem' : '3rem';
-  const gridTemplateColumns = `${axisCol} repeat(${x_size}, ${dataCol})`;
+  // Fixed column widths — tuning tables must not stretch with the panel.
+  // Exception: fitViewport (veTableTbl only) sizes cells from the parent box.
+  useLayoutEffect(() => {
+    if (!fitViewport) {
+      setFitPx(null);
+      return;
+    }
+    const host = hostRef.current;
+    if (!host) return;
 
-  return (
-    <div 
+    const measure = () => {
+      const availW = host.clientWidth;
+      const availH = host.clientHeight;
+      if (availW < 32 || availH < 32 || x_size < 1 || y_size < 1) return;
+
+      // The grid container has a 1px border on every side (2px total per
+      // axis). If we fit columns/rows to the raw clientWidth/clientHeight,
+      // the border pushes the grid 2px past the host -> a scrollbar appears
+      // -> clientWidth shrinks -> ResizeObserver refits -> scrollbar vanishes
+      // -> clientWidth snaps back -> overflow again. That oscillation is the
+      // visible "twitch". Subtract the border so the fit never overflows.
+      const fitW = availW - 2;
+      const fitH = availH - 2;
+
+      const minCol = 22;
+      const minRow = 16;
+      const minAxis = 28;
+      const preferredCol = compact ? 56 : 48;
+      const preferredRow = 32;
+      const preferredAxis = compact ? 52 : 44;
+
+      let col = Math.floor((fitW - minAxis) / x_size);
+      col = Math.max(minCol, Math.min(preferredCol, col));
+      let axis = Math.floor(fitW - col * x_size);
+      axis = Math.max(minAxis, Math.min(preferredAxis, axis));
+      if (axis + col * x_size > fitW) {
+        col = Math.max(minCol, Math.floor((fitW - minAxis) / x_size));
+        axis = Math.max(minAxis, fitW - col * x_size);
+      }
+
+      let row = Math.floor(fitH / (y_size + 1));
+      row = Math.max(minRow, Math.min(preferredRow, row));
+
+      setFitPx((prev) =>
+        prev && prev.axis === axis && prev.col === col && prev.row === row
+          ? prev
+          : { axis, col, row },
+      );
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [fitViewport, x_size, y_size, compact]);
+
+  const axisCol = fitPx ? `${fitPx.axis}px` : compact ? '3.25rem' : '2.75rem';
+  const dataCol = fitPx ? `${fitPx.col}px` : compact ? '3.5rem' : '3rem';
+  const gridTemplateColumns = `${axisCol} repeat(${x_size}, ${dataCol})`;
+  const gridStyle: CSSProperties = fitPx
+    ? {
+        gridTemplateColumns,
+        ['--table-row-h' as string]: `${fitPx.row}px`,
+        fontSize: `${Math.max(9, Math.min(13, Math.floor(fitPx.col * 0.32)))}px`,
+      }
+    : { gridTemplateColumns };
+
+  const grid = (
+    <div
       ref={gridRef}
-      className={`table-grid-container${compact ? ' table-grid-container--compact' : ''}`}
+      className={`table-grid-container${compact ? ' table-grid-container--compact' : ''}${fitViewport ? ' table-grid-container--fit-ve' : ''}`}
       onMouseUp={handleMouseUp}
       onMouseMove={handleCellMouseMove}
-      style={{ gridTemplateColumns }}
+      style={gridStyle}
     >
       {/* Corner cell (row 0, col 0) */}
       <div className="axis-corner" />
@@ -463,6 +560,16 @@ export default function TableGrid({
           </div>
         );
       })()}
+    </div>
+  );
+
+  if (!fitViewport) {
+    return grid;
+  }
+
+  return (
+    <div ref={hostRef} className="table-grid-fit-host">
+      {grid}
     </div>
   );
 }

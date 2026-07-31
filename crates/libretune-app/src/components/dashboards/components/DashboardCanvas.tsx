@@ -4,6 +4,7 @@ import { DashFile, GaugeCluster, TsGaugeConfig, isGauge, isIndicator, isFlatDash
 import TsGauge from '../../gauges/TsGauge';
 import LiveTsIndicator from './LiveTsIndicator';
 import { buildDefaultGauge } from '../utils/defaultGauge';
+import { resolveGaugeValue } from '../utils/resolveGaugeValue';
 import { useEnabledCondition } from '../hooks/useEnabledCondition';
 
 interface ChannelInfo {
@@ -33,6 +34,7 @@ interface Props {
   sweepValues: Record<string, number>;
   gaugeDemoActive: boolean;
   demoValues: Record<string, number>;
+  isConnected: boolean;
   wrapperRef: React.RefObject<HTMLDivElement>;
   onContextMenu: (e: React.MouseEvent, gaugeId: string | null) => void;
 }
@@ -60,6 +62,7 @@ export default function DashboardCanvas({
   sweepValues,
   gaugeDemoActive,
   demoValues,
+  isConnected,
   wrapperRef,
   onContextMenu,
 }: Props) {
@@ -154,11 +157,7 @@ export default function DashboardCanvas({
         {cluster.components.map((component, index) => {
           if (isGauge(component)) {
             const gauge = component.Gauge;
-            const value = sweepActive
-              ? (sweepValues[gauge.output_channel] ?? gauge.min)
-              : gaugeDemoActive
-                ? (demoValues[gauge.output_channel] ?? gauge.value)
-                : gauge.value;
+            const value = resolveGaugeValue(gauge, { sweepActive, sweepValues, gaugeDemoActive, demoValues });
 
             const gaugeStyle: React.CSSProperties = {
               left: `${toPercent(gauge.relative_x)}%`,
@@ -185,6 +184,7 @@ export default function DashboardCanvas({
                     embeddedImages={embeddedImages}
                     legacyMode={legacyMode}
                     overrideStore={sweepActive || gaugeDemoActive}
+                    isConnected={isConnected}
                   />
                 </div>
               </ConditionalWrapper>
@@ -227,6 +227,7 @@ export default function DashboardCanvas({
             sweepValues={sweepValues}
             gaugeDemoActive={gaugeDemoActive}
             demoValues={demoValues}
+            isConnected={isConnected}
             onContextMenu={onContextMenu}
           />
         ))}
@@ -258,6 +259,7 @@ function ExtraClusterLayer({
   sweepValues,
   gaugeDemoActive,
   demoValues,
+  isConnected,
   onContextMenu,
 }: {
   cluster: GaugeCluster;
@@ -268,6 +270,7 @@ function ExtraClusterLayer({
   sweepValues: Record<string, number>;
   gaugeDemoActive: boolean;
   demoValues: Record<string, number>;
+  isConnected: boolean;
   onContextMenu: (e: React.MouseEvent, gaugeId: string | null) => void;
 }) {
   const visible = useEnabledCondition(cluster.enabled_condition ?? null);
@@ -278,11 +281,7 @@ function ExtraClusterLayer({
       {cluster.components.map((component, index) => {
         if (isGauge(component)) {
           const gauge = component.Gauge;
-          const value = sweepActive
-            ? (sweepValues[gauge.output_channel] ?? gauge.min)
-            : gaugeDemoActive
-              ? (demoValues[gauge.output_channel] ?? gauge.value)
-              : gauge.value;
+          const value = resolveGaugeValue(gauge, { sweepActive, sweepValues, gaugeDemoActive, demoValues });
           const style: React.CSSProperties = {
             left: `${toPercent(gauge.relative_x)}%`,
             top: `${toPercent(gauge.relative_y)}%`,
@@ -303,6 +302,7 @@ function ExtraClusterLayer({
                   embeddedImages={embeddedImages}
                   legacyMode={legacyMode}
                   overrideStore={sweepActive || gaugeDemoActive}
+                  isConnected={isConnected}
                 />
               </div>
             </ConditionalWrapper>

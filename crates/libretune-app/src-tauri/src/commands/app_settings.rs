@@ -32,6 +32,23 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) last_active_tab: Option<String>,
 
+    // --- UI layout state (restored on launch) ---
+    /// Whether the left sidebar is visible.
+    #[serde(default = "default_true")]
+    pub(crate) sidebar_visible: bool,
+    /// Whether the AI assistant side panel is visible.
+    #[serde(default)]
+    pub(crate) agent_panel_visible: bool,
+    /// Expanded sidebar folder IDs (JSON array of strings) for session restore.
+    #[serde(default)]
+    pub(crate) sidebar_expanded_ids: Option<String>,
+    /// The selected dashboard file name (e.g. "Telemetry Live.ltdash.xml").
+    #[serde(default)]
+    pub(crate) selected_dashboard: Option<String>,
+    /// Serialized open tabs (id, title, icon, type, data) for session restore.
+    #[serde(default)]
+    pub(crate) open_tabs: Option<String>,
+
     /// Render table Y axis with the origin at the bottom-left (lowest load
     /// row at the bottom) instead of the top-left.
     #[serde(default)]
@@ -118,10 +135,44 @@ pub(crate) struct Settings {
     // None = let the frontend's language detector decide (querystring/localStorage/navigator).
     #[serde(default)]
     pub(crate) language: Option<String>,
+
+    // --- AI Assistant (bring-your-own LLM) -------------------------------
+    // All gated behind `ai_assistant_enabled`, which itself requires
+    // `ai_risk_acknowledged`. The model only ever *proposes* changes; nothing
+    // burns to the ECU automatically.
+    /// Master enable for the AI assistant. Must be paired with a risk ack.
+    #[serde(default = "default_false")]
+    pub(crate) ai_assistant_enabled: bool,
+    /// User has acknowledged the "at your own risk" warning.
+    #[serde(default = "default_false")]
+    pub(crate) ai_risk_acknowledged: bool,
+    /// Provider protocol: "openai" | "anthropic" | "google".
+    #[serde(default = "default_ai_provider")]
+    pub(crate) ai_provider: String,
+    /// Base URL (empty = provider default; or local endpoint like Ollama).
+    #[serde(default)]
+    pub(crate) ai_base_url: String,
+    /// API key (plaintext v1; OS keychain hardening is a planned follow-up).
+    #[serde(default)]
+    pub(crate) ai_api_key: String,
+    /// Model identifier (e.g. "gpt-4o", "claude-3-5-sonnet-...").
+    #[serde(default)]
+    pub(crate) ai_model: String,
+    /// Capability the assistant is unlocked for: "read" | "tune" | "config".
+    #[serde(default = "default_ai_capability")]
+    pub(crate) ai_capability_tier: String,
 }
 
 pub(crate) fn default_runtime_packet_mode() -> String {
     "Auto".to_string()
+}
+
+fn default_ai_provider() -> String {
+    "openai".to_string()
+}
+
+fn default_ai_capability() -> String {
+    "read".to_string()
 }
 
 fn default_heatmap_scheme() -> String {

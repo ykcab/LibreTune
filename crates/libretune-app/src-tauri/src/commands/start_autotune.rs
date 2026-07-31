@@ -1,23 +1,12 @@
 //! start_autotune command and read_axis_bins helper (extracted from lib.rs).
 
-use crate::get_table_data_internal;
 use crate::read_raw_value;
 use crate::state::{is_maf_channel_name, AppState, AutoTuneConfig, AutoTuneLoadSource, AxisHint};
-use libretune_core::autotune::{AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneSettings};
-use libretune_core::ini::EcuDefinition;
+use libretune_core::autotune::{
+    AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneReferenceTables, AutoTuneSettings,
+};
+use libretune_core::ini::{Constant, EcuDefinition};
 use libretune_core::tune::TuneCache;
-use serde::Serialize;
-
-/// Result returned when an AutoTune session starts.
-#[derive(Debug, Clone, Serialize)]
-pub struct AutoTuneStartResult {
-    /// Non-fatal issues the UI should surface (missing AFR, no VeAnalyze, etc.)
-    pub warnings: Vec<String>,
-    /// True when an AFR/lambda target table was loaded from the INI
-    pub using_target_table: bool,
-    /// Channel hint used for live AFR/lambda (if known)
-    pub afr_channel_hint: Option<String>,
-}
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -29,38 +18,18 @@ pub async fn start_autotune(
     settings: AutoTuneSettings,
     filters: AutoTuneFilters,
     authority_limits: AutoTuneAuthorityLimits,
-) -> Result<AutoTuneStartResult, String> {
-    let mut warnings = Vec::new();
-
+    target_afr_table_name: Option<String>,
+    lambda_delay_table_name: Option<String>,
+    strict_lambda_match: Option<bool>,
+) -> Result<(), String> {
     // Get the table definition to extract bin values
     let def_guard = state.definition.lock().await;
     let def = def_guard.as_ref().ok_or("No ECU definition loaded")?;
+    let definition_signature = def.signature.clone();
     let cache_guard = state.tune_cache.lock().await;
     let cache = cache_guard.as_ref();
 
     let mut resolved_load_source = load_source.unwrap_or(AutoTuneLoadSource::Map);
-    let ve_analyze = def.ve_analyze.clone();
-    let afr_channel_hint = ve_analyze
-        .as_ref()
-        .map(|v| v.lambda_channel.clone())
-        .filter(|s| !s.is_empty());
-    let target_table_name = ve_analyze.as_ref().and_then(|v| {
-        if !v.target_table_name.is_empty() {
-            Some(v.target_table_name.clone())
-        } else {
-            v.lambda_target_tables
-                .iter()
-                .find(|n| !n.is_empty())
-                .cloned()
-        }
-    });
-
-    if ve_analyze.is_none() {
-        warnings.push(
-            "This ECU definition has no [VeAnalyze] section — using table-name heuristics and the Target AFR setting."
-                .into(),
-        );
-    }
 
     // Find the table and extract bins
     let (x_bins, y_bins) = if let Some(table) = def.get_table_by_name_or_map(&table_name) {
@@ -143,57 +112,32 @@ pub async fn start_autotune(
         (None, None)
     };
 
+    // Resolve the per-cell Target AFR and lambda-delay reference tables
+    // (bug #14). The caller may name them explicitly; otherwise we attempt
+    // best-effort auto-discovery from the INI by common table/map names. Any
+    // lookup failure falls back to an empty table, which AutoTune handles by
+    // reverting to settings.target_afr and the RPM-based delay curve.
+    let reference_tables = resolve_reference_tables(
+        def,
+        cache,
+        &table_name,
+        target_afr_table_name.as_deref(),
+        lambda_delay_table_name.as_deref(),
+    );
+    let afr_channel_hint = def
+        .ve_analyze
+        .as_ref()
+        .map(|v| v.lambda_channel.clone());
+    let using_target_table = !reference_tables.target_afr_table.is_empty();
+
     drop(cache_guard);
     drop(def_guard);
 
-    // Snapshot VE table cells (preferred beginning_value source)
-    let ve_table_values = match get_table_data_internal(&state, &table_name).await {
-        Ok(td) => Some(td.z_values),
-        Err(e) => {
-            warnings.push(format!(
-                "Could not snapshot VE table '{table_name}' ({e}); live VE channel will be used if present."
-            ));
-            None
-        }
-    };
-
-    let secondary_ve_values = if let Some(ref secondary_name) = secondary_table_name {
-        match get_table_data_internal(&state, secondary_name).await {
-            Ok(td) => Some(td.z_values),
-            Err(e) => {
-                warnings.push(format!(
-                    "Could not snapshot secondary table '{secondary_name}' ({e})."
-                ));
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // Optional AFR/lambda target table from VeAnalyze
-    let mut using_target_table = false;
-    let target_afr_values = if let Some(ref target_name) = target_table_name {
-        match get_table_data_internal(&state, target_name).await {
-            Ok(td) => {
-                using_target_table = true;
-                Some(td.z_values)
-            }
-            Err(e) => {
-                warnings.push(format!(
-                    "Could not load AFR/lambda target table '{target_name}' ({e}); using Target AFR setting ({:.1}).",
-                    settings.target_afr
-                ));
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     // Store the config for realtime stream to use
+    let strict = strict_lambda_match.unwrap_or(true);
     let config = AutoTuneConfig {
         table_name: table_name.clone(),
+        definition_signature,
         secondary_table_name: secondary_table_name.clone(),
         settings: settings.clone(),
         filters: filters.clone(),
@@ -203,61 +147,33 @@ pub async fn start_autotune(
         y_bins,
         secondary_x_bins,
         secondary_y_bins,
-        afr_channel_hint: afr_channel_hint.clone(),
+        afr_channel_hint,
         using_target_table,
         last_tps: None,
         last_timestamp_ms: None,
         saw_valid_afr: false,
         missing_afr_samples: 0,
+        reference_tables: reference_tables.clone(),
+        strict_lambda_match: strict,
     };
 
     *state.autotune_config.lock().await = Some(config);
 
     let mut guard = state.autotune_state.lock().await;
+    guard.set_reference_tables(reference_tables.clone());
+    guard.set_strict_lambda_match(strict);
     guard.start();
-    if let Some(values) = ve_table_values {
-        guard.set_ve_table(values);
-    }
-    guard.set_target_afr_table(target_afr_values.clone());
-    drop(guard);
 
     let mut secondary_guard = state.autotune_secondary_state.lock().await;
+    secondary_guard.set_reference_tables(reference_tables);
+    secondary_guard.set_strict_lambda_match(strict);
     if secondary_table_name.is_some() {
         secondary_guard.start();
-        if let Some(values) = secondary_ve_values {
-            secondary_guard.set_ve_table(values);
-        }
-        secondary_guard.set_target_afr_table(target_afr_values);
     } else {
         secondary_guard.stop();
     }
-    drop(secondary_guard);
-
-    // Warn if definition appears to lack AFR/lambda output channels
-    {
-        let def_guard = state.definition.lock().await;
-        if let Some(def) = def_guard.as_ref() {
-            let has_afr_like = def.output_channels.keys().any(|k| {
-                let l = k.to_lowercase();
-                l.contains("afr") || l.contains("lambda") || l.contains("wbo2")
-            });
-            if !has_afr_like {
-                warnings.push(
-                    "No AFR/lambda output channel found in this ECU definition. \
-                     AutoTune cannot compute corrections without wideband data."
-                        .into(),
-                );
-            }
-        }
-    }
-
-    Ok(AutoTuneStartResult {
-        warnings,
-        using_target_table,
-        afr_channel_hint,
-    })
+    Ok(())
 }
-
 /// Read axis bin values from a constant definition
 pub(crate) fn read_axis_bins(
     def: &EcuDefinition,
@@ -325,4 +241,126 @@ pub(crate) fn read_axis_bins(
 
     // Last resort: generate linear bins based on axis hint
     Ok(fallback_bins(axis_hint, size))
+}
+
+/// Resolve the per-cell Target AFR and lambda-delay reference tables for an
+/// AutoTune session (bug #14).
+///
+/// Lookup order for each table:
+/// 1. The explicit name passed by the caller (UI override).
+/// 2. Best-effort auto-discovery from the INI by common table/map names.
+///
+/// Any failure returns an empty table for that slot, which AutoTune handles by
+/// falling back to `settings.target_afr` (for AFR) or the RPM-based delay curve
+/// (for lambda delay). This never fails the whole `start_autotune` call.
+fn resolve_reference_tables(
+    def: &EcuDefinition,
+    cache: Option<&TuneCache>,
+    ve_table_name: &str,
+    target_afr_table_name: Option<&str>,
+    lambda_delay_table_name: Option<&str>,
+) -> AutoTuneReferenceTables {
+    let target_afr_table = resolve_named_table(
+        def,
+        cache,
+        target_afr_table_name,
+        &[
+            "afrTable",
+            "afr_target",
+            "afrTarget",
+            "targetAfr",
+            "afrTable1",
+            "lambdaTable",
+        ],
+    )
+    .unwrap_or_default();
+
+    // Lambda-delay tables are uncommon; only attempt when named explicitly or
+    // via the most common Speeduino/rusEFI identifier.
+    let lambda_delay_table = resolve_named_table(
+        def,
+        cache,
+        lambda_delay_table_name,
+        &["lambdaDelay", "egoDelay"],
+    )
+    .unwrap_or_default();
+
+    // Suppress unused warning for the VE table name; it's available for future
+    // INI cross-referencing (e.g. walking the VE table's own reference field).
+    let _ = ve_table_name;
+
+    AutoTuneReferenceTables {
+        lambda_delay_table,
+        target_afr_table,
+    }
+}
+
+/// Look up a 2D table by an explicit name first, then by a list of candidate
+/// names. Reads the table's Z (data) constant from the tune cache and reshapes
+/// it to row-major `[row][col]` matching the VE table layout. Returns
+/// `None` if no candidate resolves to a known table or the data cannot be read.
+fn resolve_named_table(
+    def: &EcuDefinition,
+    cache: Option<&TuneCache>,
+    explicit: Option<&str>,
+    candidates: &[&str],
+) -> Option<Vec<Vec<f64>>> {
+    // Build the ordered list of names to try. Explicit name first.
+    let mut names: Vec<&str> = Vec::new();
+    if let Some(n) = explicit {
+        names.push(n);
+    }
+    names.extend_from_slice(candidates);
+
+    for name in names {
+        if let Some(table) = def.get_table_by_name_or_map(name) {
+            if let Some(rows) =
+                read_table_z_values(def, cache, table.map.as_str(), table.x_size, table.y_size)
+            {
+                return Some(rows);
+            }
+        }
+    }
+    None
+}
+
+/// Read the Z (data) values of a table constant and reshape into row-major
+/// `[row][col]`. Returns `None` on any read failure or zero-size table.
+fn read_table_z_values(
+    def: &EcuDefinition,
+    cache: Option<&TuneCache>,
+    map_name: &str,
+    cols: usize,
+    rows: usize,
+) -> Option<Vec<Vec<f64>>> {
+    if rows == 0 || cols == 0 {
+        return None;
+    }
+    let constant: &Constant = def.constants.get(map_name)?;
+    let cache = cache?;
+    let page_data = cache.get_page(constant.page)?;
+    let elem_size = constant.data_type.size_bytes();
+    if elem_size == 0 {
+        return None;
+    }
+    let mut offset = constant.offset as usize;
+
+    let mut out = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        let mut row = Vec::with_capacity(cols);
+        for _ in 0..cols {
+            if offset + elem_size <= page_data.len() {
+                if let Ok(raw) = read_raw_value(&page_data[offset..], &constant.data_type) {
+                    row.push(constant.raw_to_display(raw));
+                } else {
+                    row.push(0.0);
+                }
+                offset += elem_size;
+            } else {
+                row.push(0.0);
+            }
+        }
+        out.push(row);
+    }
+    Some(out)
 }

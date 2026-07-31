@@ -41,6 +41,10 @@ pub(crate) use commands::util_helpers::{
 use commands::adaptive_timing::{
     disable_adaptive_timing, enable_adaptive_timing, get_adaptive_timing_stats,
 };
+use commands::agent::{
+    agent_apply_proposals, agent_delete_chat, agent_list_chats, agent_load_chat, agent_save_chat,
+    agent_send_message, agent_status, agent_stop,
+};
 use commands::annotations::{
     delete_annotation, get_all_annotations, get_annotation, get_table_annotations, set_annotation,
 };
@@ -169,6 +173,16 @@ use commands::wasm_plugin::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize tracing subscriber so RUST_LOG controls log output.
+    // Default to INFO when RUST_LOG is not set; dev builds previously spammed
+    // stderr with protocol debug eprintln! calls.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
@@ -203,6 +217,7 @@ pub fn run() {
             cached_output_channels: Mutex::new(None),
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
+            agent_task: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             get_serial_ports,
@@ -404,6 +419,15 @@ pub fn run() {
             check_internet_connectivity,
             search_online_inis,
             download_ini,
+            // AI assistant
+            agent_status,
+            agent_send_message,
+            agent_apply_proposals,
+            agent_stop,
+            agent_list_chats,
+            agent_load_chat,
+            agent_save_chat,
+            agent_delete_chat,
             // Demo mode commands
             set_demo_mode,
             get_demo_mode,

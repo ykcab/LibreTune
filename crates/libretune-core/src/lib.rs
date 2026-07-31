@@ -40,6 +40,7 @@
 #![allow(missing_docs)]
 
 pub mod action_scripting;
+pub mod agent;
 pub mod autotune;
 pub mod basemap;
 pub mod dash;
@@ -47,6 +48,7 @@ pub mod datalog;
 pub mod demo;
 pub mod ecu;
 pub mod ini;
+pub mod llm;
 pub mod lua;
 pub mod plugin_api;
 pub mod plugin_system;
@@ -62,8 +64,8 @@ pub mod unit_conversion;
 /// Re-export commonly used types
 pub mod prelude {
     pub use crate::autotune::{
-        reading_to_afr, AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneRecommendation,
-        AutoTuneSettings, AutoTuneState,
+        AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneRecommendation, AutoTuneSettings,
+        AutoTuneState,
     };
     pub use crate::dash::{DashFile, GaugeConfig, GaugePainter, IndicatorConfig};
     pub use crate::datalog::{DataLogger, LogEntry};

@@ -25,7 +25,6 @@ export interface UseReconnectHandlerDeps {
 export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
   const depsRef = useRef(deps);
   depsRef.current = deps;
-  const busyRef = useRef(false);
 
   useEffect(() => {
     const handler = async (event: Event) => {
@@ -43,17 +42,16 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
         showToast,
       } = depsRef.current;
 
-      if (busyRef.current || connecting || syncing) {
+      if (connecting || syncing) {
+        showToast('Reconnect requested but a connection is already in progress', 'info');
         return;
       }
       if (status.state === 'Connected') {
         return;
       }
-      busyRef.current = true;
 
       const source = detail.source ?? 'unknown';
       const isFirmware = source.includes('firmware');
-      const isEcuDisconnect = source.includes('ecu-disconnect');
 
       try {
         const settings = await invoke<{
@@ -77,9 +75,14 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
         console.warn('Could not read reconnect settings:', e);
       }
 
-      const delayMs = detail.delayMs ?? (isFirmware ? 8000 : isEcuDisconnect ? 600 : 2000);
-      const maxRetries = detail.retries ?? (isFirmware ? 10 : isEcuDisconnect ? 30 : 4);
-      const retryIntervalMs = isFirmware ? 2500 : isEcuDisconnect ? 1000 : 2500;
+      // Delays and retry counts default higher for firmware flashes than for
+      // controller commands: a firmware update reboots the whole ECU (serial
+      // port disappears and re-enumerates, bootloader handshake adds seconds),
+      // whereas a controller command (e.g. reset) just bounces the app and
+      // comes back quickly. The 8s/10x firmware budget vs 2s/4x command budget
+      // reflects that observed difference; callers can override per-event.
+      const delayMs = detail.delayMs ?? (isFirmware ? 8000 : 2000);
+      const maxRetries = detail.retries ?? (isFirmware ? 10 : 4);
       const targetPort =
         detail.port ?? projectPort ?? lastSerialPort ?? undefined;
 
@@ -101,14 +104,14 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
               : undefined;
 
         if (!port) {
-          await sleep(retryIntervalMs);
+          await sleep(2500);
           continue;
         }
 
         try {
           await connect({
             strictPort: !!targetPort,
-            silent: true,
+            silent: attempt > 0,
             port,
           });
           const latest = await invoke<ConnectionStatus>('get_connection_status');
@@ -122,7 +125,7 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
           console.debug('Reconnect attempt failed:', e);
         }
 
-        await sleep(retryIntervalMs);
+        await sleep(2500);
       }
 
       showToast(
@@ -131,13 +134,7 @@ export function useReconnectHandler(deps: UseReconnectHandlerDeps) {
       );
     };
 
-    const wrapped = (event: Event) => {
-      void handler(event).finally(() => {
-        busyRef.current = false;
-      });
-    };
-
-    window.addEventListener('reconnect:request', wrapped);
-    return () => window.removeEventListener('reconnect:request', wrapped);
+    window.addEventListener('reconnect:request', handler);
+    return () => window.removeEventListener('reconnect:request', handler);
   }, []);
 }

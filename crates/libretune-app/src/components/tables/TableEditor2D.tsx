@@ -209,6 +209,8 @@ export default function TableEditor2D({
   // Show the read-only lambda companion only for actual target-AFR tables
   // (not blend/bias tables whose values aren't AFR).
   const isAfrTargetTable = table_name.toLowerCase().startsWith('afrtable');
+  // VE tables only (veTableTbl / veTable1Tbl…veTable4Tbl) — not MAF, blend, or other maps.
+  const fitVeViewport = /^vetable(\d+)?tbl$/i.test(table_name);
 
   const selectedCellsCoords = useMemo(() => {
     if (!selectionRange) return [];
@@ -228,6 +230,10 @@ export default function TableEditor2D({
     return coords;
   }, [selectionRange]);
 
+  // --- Coordinate convention used throughout this file ---
+  // Selection/cell coords in the frontend are stored as [x, y] where x is the
+  // COLUMN and y is the ROW. The backend (table_ops, update_table_data) uses
+  // (row, col) order, so any payload crossing that boundary must swap:
   const selectedCellsPayload = useMemo(
     () => selectedCellsCoords.map(([x, y]) => [y, x] as [number, number]), // Backend expects (row, col)
     [selectedCellsCoords]
@@ -258,6 +264,13 @@ export default function TableEditor2D({
       .catch((err) => console.warn('[TableEditor2D] Failed to load alert settings:', err));
   }, []);
 
+  // Warn on suspiciously large single-cell changes. Two independent triggers:
+  //  - absolute delta (catches big raw swings on small values), and
+  //  - percent delta  (catches huge relative swings, e.g. 1 → 1000).
+  // Either firing raises a warning so the user notices a typo'd scale/offset.
+  // `Math.max(Math.abs(prev), 1e-6)` clamps the denominator away from zero so a
+  // prev value of 0 doesn't blow up to Infinity% (a 0→5 change would otherwise
+  // always look like an infinite increase).
   const warnIfLargeChange = useCallback(
     (prevValue: number, nextValue: number, operation: string) => {
       if (!alertLargeChangeEnabled) return;
@@ -275,6 +288,9 @@ export default function TableEditor2D({
     [alertLargeChangeEnabled, alertLargeChangeAbs, alertLargeChangePercent, showToast]
   );
 
+  // Batch version of the above: scans a region (or the whole table when
+  // coords is null) and reports the count of cells that tripped either
+  // threshold plus the worst Δ / worst %. Same divide-by-zero guard per cell.
   const warnIfLargeChangeBatch = useCallback(
     (
       previousValues: number[][],
@@ -322,6 +338,17 @@ export default function TableEditor2D({
     [alertLargeChangeEnabled, alertLargeChangeAbs, alertLargeChangePercent, showToast]
   );
 
+  // Push a new entry onto the undo stack. Three subtleties:
+  //  1. Redo truncation: any redo entries past `historyIndex` are sliced off
+  //     before the new entry is pushed (standard editor semantics — once you
+  //     edit after undoing, the redo future is discarded).
+  //  2. 50-step cap: once full, the oldest entry is shifted out. `historyIndex`
+  //     is then clamped to 49 to keep it within the (now shifted) array.
+  //  3. Stale-closure risk: this callback closes over `historyIndex`, so the
+  //     `prev.slice(0, historyIndex + 1)` and the `setHistoryIndex` use the
+  //     value from when the callback was built. The dep array includes
+  //     `historyIndex` so the callback is rebuilt each step — keep that dep if
+  //     you refactor, or the slice will lag by one change.
   const pushHistory = useCallback((newZ: number[][], newX: number[], newY: number[]) => {
     setHistory(prev => {
       // Remove any redo history if we make a new change
@@ -845,34 +872,7 @@ export default function TableEditor2D({
   };
 
   const handleCellEditApply = (value: number) => {
-    const editedX = cellEditDialog.col;
-    const editedY = cellEditDialog.row;
-    const hasSelection = selectedCellsCoords.length > 1;
-    const editedCellInSelection = selectedCellsCoords.some(([x, y]) => x === editedX && y === editedY);
-
-    if (hasSelection && editedCellInSelection) {
-      const previousValues = localZValues.map((row) => [...row]);
-      const newValues = localZValues.map((row) => [...row]);
-      let changed = false;
-
-      selectedCellsCoords.forEach(([x, y]) => {
-        if (lockedCells.has(`${x},${y}`)) return;
-        if (newValues[y][x] !== value) {
-          newValues[y][x] = value;
-          changed = true;
-        }
-      });
-
-      if (!changed) return;
-
-      setLocalZValues(newValues);
-      pushHistory(newValues, localXBins, localYBins);
-      onValuesChange?.(newValues);
-      warnIfLargeChangeBatch(previousValues, newValues, selectedCellsCoords, 'Batch cell edit');
-      return;
-    }
-
-    handleCellChange(editedX, editedY, value, { operation: 'Cell edit' });
+    handleCellChange(cellEditDialog.col, cellEditDialog.row, value, { operation: 'Cell edit' });
   };
 
   const handleCellDoubleClick = (x: number, y: number) => {
@@ -935,7 +935,10 @@ export default function TableEditor2D({
         const y = startY + r;
         if (y >= y_bins.length) return;
 
-        // Auto-detect delimiter (tab preferred, then comma)
+        // Auto-detect the delimiter: prefer tab (the clipboard format Excel
+        // and most spreadsheets use when you copy a block) and fall back to
+        // comma (loose CSV). Mixed delimiters in one paste aren't supported —
+        // the first hit wins for the whole line.
         const delimiter = line.includes('\t') ? '\t' : ',';
         const cols = line.split(delimiter);
 
@@ -945,6 +948,9 @@ export default function TableEditor2D({
 
           const val = parseFloat(valStr.trim());
           if (!isNaN(val)) {
+            // Locked cells are immune to paste — this is how a user protects a
+            // known-good region while pasting around it (e.g. copy a column
+            // from another tune without clobbering locked VE cells).
             const targetKey = `${x},${y}`;
             if (!lockedCells.has(targetKey)) {
               if (newValues[y][x] !== val) {
@@ -1096,7 +1102,9 @@ export default function TableEditor2D({
   }
 
   return (
-    <div className={`table-editor-2d ${embedded ? 'embedded' : 'standalone'}`}>
+    <div
+      className={`table-editor-2d ${embedded ? 'embedded' : 'standalone'}${fitVeViewport ? ' table-editor-2d--ve-fit' : ''}`}
+    >
       {/* Embedded mode: compact title bar with pop-out button */}
       {embedded && (
         <div className="embedded-header">
@@ -1255,6 +1263,7 @@ export default function TableEditor2D({
           heatmapScheme={heatmapSettings.valueScheme}
           compact={embedded}
           yAxisBottom={yAxisBottom}
+          fitViewport={fitVeViewport}
         />
         {isAfrTargetTable && (
           <LambdaPreviewTable

@@ -6,7 +6,8 @@
 //! lock them directly.
 
 use libretune_core::autotune::{
-    AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneSettings, AutoTuneState,
+    AutoTuneAuthorityLimits, AutoTuneFilters, AutoTuneReferenceTables, AutoTuneSettings,
+    AutoTuneState,
 };
 use libretune_core::datalog::DataLogger;
 use libretune_core::ini::{EcuDefinition, Endianness, OutputChannel, ProtocolSettings};
@@ -124,6 +125,13 @@ pub fn is_maf_channel_name(name: &str) -> bool {
 pub struct AutoTuneConfig {
     #[allow(dead_code)]
     pub table_name: String,
+    /// Signature of the ECU definition this session's bins/tables were
+    /// resolved against. If the loaded definition changes (e.g. reconnect to
+    /// a different ECU/INI) without stopping AutoTune first, recommendations
+    /// computed against the old table layout must not be applied to
+    /// whatever same-named table exists in the new one — checked at
+    /// apply/burn time in autotune_misc.rs.
+    pub definition_signature: String,
     pub secondary_table_name: Option<String>,
     pub settings: AutoTuneSettings,
     pub filters: AutoTuneFilters,
@@ -143,6 +151,18 @@ pub struct AutoTuneConfig {
     pub saw_valid_afr: bool,
     /// Count of samples skipped due to missing AFR/lambda
     pub missing_afr_samples: u64,
+    /// Per-cell Target AFR / lambda delay reference tables for the session.
+    /// Empty by default → AutoTune falls back to settings.target_afr and the
+    /// RPM-based delay curve. See bug #14.
+    ///
+    /// Retained on the config for inspection; the live copy lives on
+    /// `AutoTuneState` (set via `set_reference_tables` at start).
+    #[allow(dead_code)]
+    pub reference_tables: AutoTuneReferenceTables,
+    /// When true (default), samples with no delayed-buffer match are dropped
+    /// instead of being attributed to the current cell. See bug #2.
+    #[allow(dead_code)]
+    pub strict_lambda_match: bool,
 }
 
 pub struct AppState {
@@ -164,6 +184,7 @@ pub struct AppState {
     pub ini_repository: Mutex<Option<IniRepository>>,
     pub online_ini_repository: Mutex<OnlineIniRepository>,
     pub tune_cache: Mutex<Option<TuneCache>>,
+    /// Snapshot of project vs ECU pages while a tune-mismatch dialog is open.
     pub tune_mismatch_snapshot: Mutex<Option<TuneMismatchSnapshot>>,
     pub demo_mode: Mutex<bool>,
     pub wasm_plugin_manager: Mutex<Option<WasmPluginManager>>,
@@ -174,11 +195,15 @@ pub struct AppState {
     pub rpm_state_tracker: Mutex<RpmStateTracker>,
     pub math_channels: Mutex<Vec<UserMathChannel>>,
     pub stream_stats: Mutex<StreamStats>,
+    /// JoinHandle for the currently-running AI assistant turn (if any).
+    /// Aborted by `agent_stop` to cancel an in-flight LLM request.
+    pub agent_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct TuneMismatchSnapshot {
     pub project_pages: HashMap<u8, Vec<u8>>,
+    /// ECU page images captured at mismatch time (base for safe project merge).
     pub ecu_pages: HashMap<u8, Vec<u8>>,
     pub diff_pages: Vec<u8>,
 }

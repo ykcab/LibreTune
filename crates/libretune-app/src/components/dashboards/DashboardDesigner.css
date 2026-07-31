@@ -12,6 +12,11 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Enforce the minimum size on the whole component (toolbar + canvas) rather
+     than on the canvas alone. This prevents the canvas from stacking its own
+     minimum height on top of the toolbar and overflowing the designer area on
+     small viewports / Linux (Issue #70). */
+  min-height: 450px;
   background: var(--bg-primary);
 }
 
@@ -101,6 +106,11 @@
 .designer-content {
   display: flex;
   flex: 1;
+  /* The whole .dashboard-designer enforces the minimum height, so the content
+     row can fill the remaining space without scrollbars. This avoids a
+     WebKitGTK rendering issue where scrollTop changes in nested flex/overflow
+     structures were not repainted (Issue #70). */
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -110,7 +120,10 @@
   position: relative;
   background: var(--canvas-bg);
   overflow: hidden;
-  min-height: 400px;
+  /* Let the canvas shrink freely; the parent .dashboard-designer now owns the
+     minimum height (toolbar included). Prevents the canvas floor from being
+     added on top of the toolbar and overflowing the designer (Issue #70). */
+  min-height: 0;
 }
 
 /* Grid overlay when enabled */
@@ -455,11 +468,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Grid items default to min-width: auto, which lets content fight the
+     column's 1fr track and defeats this ellipsis. Force it to actually
+     shrink instead of overflowing the panel. */
+  min-width: 0;
 }
 .layer-row .layer-kind {
   font-size: 0.65rem;
   opacity: 0.55;
   font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 5.5em;
 }
 .layer-row button {
   background: transparent;

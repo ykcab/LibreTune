@@ -171,9 +171,11 @@ pub async fn use_project_tune(
     let _ = app.emit("tune:loaded", "project");
 
     if state.connection.lock().await.is_some() {
-        let write_result =
-            crate::commands::project_tune_sync::write_project_tune_to_ecu(app.clone(), state.clone())
-                .await;
+        let write_result = crate::commands::project_tune_sync::write_project_tune_to_ecu(
+            app.clone(),
+            state.clone(),
+        )
+        .await;
         if let Err(e) = write_result {
             let _ = crate::commands::realtime_stream::start_realtime_stream(
                 app.clone(),

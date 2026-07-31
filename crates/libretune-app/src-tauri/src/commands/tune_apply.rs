@@ -18,11 +18,7 @@ use std::collections::{HashMap, HashSet};
 pub fn pages_with_complete_page_data(def: &EcuDefinition, tune: &TuneFile) -> HashSet<u8> {
     let mut complete = HashSet::new();
     for (page_num, page_data) in &tune.pages {
-        let expected = def
-            .page_sizes
-            .get(*page_num as usize)
-            .copied()
-            .unwrap_or(0) as usize;
+        let expected = def.page_sizes.get(*page_num as usize).copied().unwrap_or(0) as usize;
         if expected > 0 && page_data.len() == expected {
             complete.insert(*page_num);
         }

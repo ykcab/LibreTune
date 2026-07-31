@@ -383,11 +383,7 @@ fn parse_bit_range_spec(spec: &str) -> Option<(u8, u8, i8)> {
         (end_part.parse().ok()?, 0)
     };
 
-    let size = if end >= start {
-        end - start + 1
-    } else {
-        1
-    };
+    let size = if end >= start { end - start + 1 } else { 1 };
     Some((start, size, display_offset))
 }
 
@@ -514,7 +510,7 @@ mod tests {
 
     #[test]
     fn test_parse_bits_with_display_offset_negative() {
-        // Test [0:3-1] notation - display offset of -1
+        // Test [0:3-1] notation - bits 0..=3 with display offset of -1
         let c = parse_constant_line(
             "someField",
             "bits, U08, 100, [0:3-1], \"Val 0\", \"Val 1\"",

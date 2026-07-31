@@ -13,6 +13,275 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-07-31 — Chat history, stop button, UI state persistence
+
+Enhancements to the AI assistant and overall workspace UX.
+
+#### Added
+- **Chat history** — assistant conversations now persist **per project** as
+  JSON files under `projectCfg/ai_chats/`. The panel header gains a **chat
+  switcher** (list button) and a **New chat** button (plus icon). The most
+  recent chat auto-opens on launch. Chats auto-save on every message.
+- **Stop button** — while the assistant is thinking, the Send button becomes
+  a red Stop button that cancels the in-flight request. Backend: the turn is
+  spawned as a tokio task whose `JoinHandle` is stored in `AppState.agent_task`;
+  the new `agent_stop` command aborts it (mirrors the realtime-stream pattern).
+  Cancellation surfaces as `_(stopped)_` in the transcript, not an error.
+- **UI state persistence** — on launch the app restores sidebar visibility,
+  sidebar folder expansion, AI panel visibility, and the selected dashboard.
+  New settings fields (`sidebar_visible`, `agent_panel_visible`,
+  `selected_dashboard`, `open_tabs`, `sidebar_expanded_ids`) with `update_setting`
+  arms. Persistence is gated on a restore flag so the initial default values
+  don't overwrite saved ones before the async restore completes.
+
+#### Fixed
+- **Assistant transcript reset to blank** — a stale-closure bug in
+  `ChatPanel.send()` caused the transcript to reset after the first reply.
+  The function now snapshots the transcript at the start of the turn and
+  builds the updated transcript from that snapshot.
+- **Assistant showed "disabled" while status loaded** — the panel flashed the
+  "disabled" message before the status poll completed. Now shows "Loading…"
+  until the status is fetched, and a specific message when enabled-but-
+  unconfigured (missing risk ack or model).
+
+### 2026-07-31 — AI Assistant (bring-your-own-LLM) + UX fixes
+
+Adds a bring-your-own-LLM assistant that acts as a co-pilot for tuning and ECU
+configuration. The model only ever *proposes* changes; every proposal is
+validated against the INI, clamped to authority limits, and staged in a review
+queue for explicit user approval. Nothing burns to the ECU automatically.
+
+#### Added — AI Assistant
+- **Core library** (`crates/libretune-core/src/`):
+  - `agent/` module: `orchestrator` (multi-turn read→respond loop via a
+    `ReadToolExecutor` trait), `tools` (tool catalogue), `context`,
+    `summarize` (coverage + AFR error + anomalies aggregation), `safety`
+    (authority clamping), `tiers` (constant safety tiering:
+    Safe / Caution / Dangerous).
+  - `llm/` module: `Provider` trait + native OpenAI / Anthropic / Google
+    implementations over the existing `reqwest` client (no vendor SDK crates).
+  - `TableRole` enum + `EcuDefinition::infer_table_roles()` — machine-readable
+    table roles (Ve / Ignition / AfrTarget / WarmupEnrichment / Other) derived
+    from the INI's `[VeAnalyze]` / `[WueAnalyze]` config, so the assistant knows
+    what a table *does* without guessing from its name.
+  - Extended `ActionPlayer::validate_action_set` beyond existence checks: now
+    validates `Constant.min/max` bounds, `DataType` raw storage range, table
+    cell-index bounds (`x_size`/`y_size`), and bits-type enum values.
+- **Tauri app** (`crates/libretune-app/src-tauri/src/`):
+  - `commands/agent.rs`: `agent_status`, `agent_send_message` (multi-turn loop
+    with a `LiveReadExecutor` that reads tables/constants against live state),
+    `agent_apply_proposals` (re-validates; stages, never burns).
+  - AI settings wired through the 3-layer settings pattern (all keys present in
+    `update_setting` — avoids the latent `auto_commit_on_save` bug): provider,
+    base URL, API key, model, capability tier; enablement gated on a risk
+    acknowledgement that resets on provider/key change.
+- **Frontend** (`crates/libretune-app/src/components/`):
+  - `AgentSidePanel` — docked, non-modal, resizable right-hand panel (header
+    with pop-out + collapse buttons, collapsible review queue). Pop-out to its
+    own window via the existing `WebviewWindow` hash-routing system (`agent`
+    type in `PopOutWindow.tsx`; `agent:dock` event to restore).
+  - `ChatPanel` + `ProposalQueue` — conversational transcript + per-item review
+    surface with safety-tier badges and clamp notices.
+  - `common/RiskAcknowledgement` — reusable risk-ack primitive (lifted from the
+    firmware-update pattern).
+  - Tools → AI Assistant menu entry (a toggle reflecting panel visibility).
+
+#### Changed
+- **Settings dialog Apply/OK buttons** — split the old single "Apply"
+  (which saved *and* closed) into Windows-convention **Apply** (save, stay
+  open, show per-setting status) and **OK** (save and close). Each setting now
+  saves independently so one failure no longer silently aborts the rest — this
+  was the root cause of AI provider info not persisting.
+- **Default dashboard** is now **Telemetry Live** (was Basic), with Basic as
+  the fallback if Telemetry Live is absent.
+
+#### Docs
+- New feature guide `docs/src/features/ai-assistant.md` (usage, providers,
+  safety model, troubleshooting, privacy).
+- New technical reference `docs/src/technical/ai-assistant.md` (module layout,
+  agent-loop diagram, Provider/ReadToolExecutor traits, tool catalogue).
+- Added AI Assistant section to the settings guide.
+- Added AI Assistant entries to the technical README and SUMMARY.md.
+- Added two AI FAQ entries ("Can it tune my car for me?", "Do I need
+  OpenAI?").
+- Synced all of the above to the in-app manual (`public/manual/` + `toc.json`).
+- Added section 12 to `AGENTS.md` documenting the feature for future agents.
+
+#### Verification
+- `cargo test -p libretune-core`: all tests pass (lib + integration).
+- `cargo clippy -p libretune-core --lib`: clean.
+- `npm run typecheck`: clean.
+
+### 2026-07-29 — Fix VE table scrollbar-twitch oscillation
+
+The VE table (the only table rendered in "fit viewport" mode, where cell
+sizes are computed to fill the available panel space) visibly jittered a few
+times per second, with scrollbars flashing on and off around it. This was a
+measure → overflow → scrollbar → re-measure feedback loop: the fit math
+targeted `clientWidth`/`clientHeight` (which exclude the scrollbar) but
+ignored the grid container's 2px border, so the fitted grid overshot the host
+by ~2px, toggling the scrollbars every animation frame.
+
+#### Fixed
+- **`TableGrid.tsx`** — the `fitViewport` `measure()` now subtracts the grid
+  container's 2px border from the available width/height before computing
+  column/row sizes, so the fit no longer produces an overflowing grid.
+- **`TableEditor2D.css`** — added `scrollbar-gutter: stable both-edges` to
+  `.table-grid-fit-host` so `clientWidth`/`clientHeight` stay constant when
+  scrollbars appear/disappear. This breaks the feedback loop as a defence in
+  depth, even if a tiny overshoot is ever reintroduced.
+
+#### Docs
+- Added a "VE Table Flickers / Twitches" entry to the Troubleshooting
+  reference (`docs/src/reference/troubleshooting.md`) describing the symptom,
+  cause, and fix.
+
+### 2026-07-29 — Comment overhaul (Rust tests + frontend logic)
+
+Overhaul of code comments across the test suite and frontend logic. **No
+behavioural changes** — every edit is a comment or doc-block except the two
+test removals noted under *Removed*. Verified by `cargo test`
+(libretune-core) and `npm run typecheck` / `npm run build` (frontend).
+
+#### Changed
+- **Rust integration tests** (`crates/libretune-core/tests/`) — replaced
+  name-restating comments with assertion rationale and documented the
+  non-obvious fixtures. For example, `tests/plugin_api.rs` now spells out the
+  `create_test_context()` invariant (a `PluginManager` with zero plugins, so
+  every permission check returns `false` — *why* every permission test expects
+  denial) and labels each denial with the specific permission that would be
+  required to succeed. Similar treatment for `tune.rs` (was 15 tests with zero
+  comments), `plugin_system.rs`, `megatune_parsing.rs`, `action_validation.rs`,
+  and `port_editor.rs`.
+- **Missing module `//!` headers** added to nine test files
+  (`action_validation`, `autotune_heatmap`, `evaluator`, `lua_scripting`,
+  `megatune_parsing`, `protocol`, `table_ops_extended`, `tune`,
+  `unit_conversion`); `lua_scripting.rs`'s `//` block was converted to `//!`.
+- **Frontend HIGH-severity logic** — documented the previously-undocumented
+  security-sensitive and algorithm-heavy paths:
+  - `utils/evaluateIndicatorExpression.ts`: the `new Function()` security
+    stance (the tokenizer restricts input to identifiers/numbers/operators,
+    and every identifier is pre-substituted with a numeric literal before
+    compilation, so no attacker-controlled identifier can become code), the
+    single-identifier fast path, and the fail-safe fallback.
+  - `components/tables/3d/SceneComponents.tsx`: the Three.js triangle winding
+    order (CCW-from-above for front-face culling) and the click-handler
+    face→cell reverse map (`faceIndex/2 → quad → (xi, yi)`), plus the
+    `vertices.push(x, z, y)` Y-up swap.
+  - `components/tables/TableEditor2D.tsx`: the `[x,y]` vs `[row,col]`
+    coordinate convention, the undo/redo history-stack semantics (redo
+    truncation, 50-step cap, stale-closure note), paste delimiter
+    auto-detection, and the dual-threshold large-change warning with its
+    divide-by-zero guard.
+  - `App.tsx`: a file header describing the connection state machine phases
+    and effect-ordering rationale.
+- **Frontend MEDIUM-severity logic** — `TableGrid.tsx` (fractional-cell live
+  cursor interpolation + the header-select heuristic),
+  `DataLogView.tsx` (the quoted-CSV state machine and the TunerStudio/LibreTune
+  timestamp-format detection), `useDesignerDragResize.ts` (the 8-handle resize
+  math), `useDesignerHistory.ts` (redo truncation + deep-clone rationale),
+  `useReconnectHandler.ts` / `useAutoConnect.ts` (the firmware-vs-command
+  retry magic numbers), and `DialogRenderer.tsx` (search-highlight timeouts).
+
+#### Removed
+- **`test_crc16_calculation_deterministic`** (`tests/protocol.rs`) — a
+  misleading test: despite its name it did not exercise any CRC (no CRC
+  implementation exists in the codebase); it was a verbatim duplicate of
+  `test_protocol_error_display`. Left an explanatory NOTE in its place.
+- **`test_repository_extraction_with_comments`** (`tests/ini_parsing.rs`) — an
+  empty placeholder with no assertions; its own body explained it could not
+  reach the private target method from this public-API test file.
+
+### 2026-07-29 — Add `RUST_LOG`-controlled backend logging
+
+#### Added
+- **`tracing` subscriber initialization** in the Tauri backend
+  (`libretune-app/src-tauri/src/lib.rs`). Reads the `RUST_LOG` environment
+  variable and defaults to `info`, so normal dev runs are no longer flooded with
+  ECU protocol debug output.
+
+#### Changed
+- **ECU protocol logs now use `tracing`** — all `eprintln!` calls in
+  `libretune-core/src/protocol/connection.rs` were converted to
+  `tracing::debug!`, `tracing::info!`, or `tracing::warn!` based on their
+  existing severity labels. Set `RUST_LOG=libretune_core::protocol=debug` to see
+  the previous byte-level traffic output, or `RUST_LOG=error` to silence it.
+
+#### Documentation
+- Updated plugin-system docs (`docs/src/technical/plugin-system.md` and the
+  bundled manual copy) to describe the new `RUST_LOG` filtering behavior and
+  show ECU protocol examples.
+- Added a "Debug Logging" section to the troubleshooting guide.
+- Added a "Verbose ECU communication logs" note to the connection guide.
+- Added a "Logging during development" section to `CONTRIBUTING.md`.
+
+### 2026-07-27 — Fix ECU communication stalls (Issue #71)
+
+#### Fixed
+- **Realtime data stalls in Auto mode** — `choose_runtime_command`
+  (`libretune-core/src/protocol/connection.rs`) no longer silently switches
+  Speeduino / MegaSquirt (MS2/MS3) from Burst (`A`, ~1 KB/s) to OCH based on
+  loose heuristics (`maxUnusedRuntimeRange`, slow-link baud/port, adaptive-timing
+  averages). On real Speeduino 202501 hardware this collapsed throughput to
+  ~13 B/s and froze the gauges. Auto mode now locks these ECUs to Burst; rusEFI /
+  FOME / epicEFI retain the original OCH heuristics. Unknown ECU types also
+  default to Burst for safety.
+- **Frontend Auto mode still forced OCH** — `App.tsx` preemptively converted
+  "Auto" to "ForceOCH" whenever the INI declared `ochBlockSize > 0`, bypassing
+  the backend's ECU-aware selection and re-creating the stall on Speeduino. Auto
+  is now passed through untouched so the backend can lock Speeduino/MS2/MS3 to
+  Burst.
+- **OCH fallback when `ochBlockSize` is unset** — `get_realtime_data` now falls
+  back to Burst instead of guessing a 256-byte block when the INI declares no
+  `ochBlockSize`, avoiding a mis-sized response that stalled the stream.
+- **Disconnect did nothing while streaming** — the realtime stream task holds the
+  connection mutex during blocking serial I/O, so `disconnect_ecu`'s
+  `lock().await` could hang. Disconnect now polls the lock with a deadline, and
+  `Connection::disconnect()` sets a cancellation flag checked by the blocking
+  read loops (`send_raw_command`, `send_packet`) so an in-flight read aborts
+  promptly. Added `ProtocolError::ConnectionClosed`.
+- **Line graph stopped scrolling on flat values** — `realtimeStore`'s history
+  buffer skipped writing duplicate values, so a constant channel froze the trace.
+  It now appends every sample. Additionally, `useGaugeRenderer` kept the rAF
+  loop idle once the animated value converged; LineGraph/Histogram/MultiChannelTrend
+  gauges now keep rendering at a throttled rate so the time-series trace keeps
+  scrolling on steady sources.
+- **Realtime stream not restarted after clear** — `useRealtimeStream`'s heartbeat
+  only restarted the backend stream when `lastUpdateTime > 0`; it now also
+  restarts when no update has been seen shortly after connect/clear.
+
+#### Added
+- `Connection::ecu_type()` / `set_ecu_type()` / `cancel_handle()` /
+  `request_cancel()` for ECU-aware runtime selection and interruptible I/O.
+- Tests: `test_speeduino_auto_stays_on_burst`,
+  `test_speeduino_force_och_override` (existing OCH-heuristic tests updated to
+  pin `EcuType::RusEFI`).
+
+### 2026-07-27 — CI: drop deprecated Node.js 20 actions
+
+#### Fixed
+- **CI failing on the Node.js 20 deprecation** — GitHub Actions deprecated the
+  Node.js 20 runtime (the runner now force-migrates Node-20 actions to Node 24
+  and emits a warning that fails the check job). Bumped the affected first-party
+  actions from `@v4` (Node 20) to `@v5` (Node 24) across `ci.yml`, `nightly.yml`,
+  and `release.yml`: `actions/checkout`, `actions/cache`, `actions/setup-node`.
+  See
+  https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+
+#### Changed
+- **Frontend build Node version aligned to 24** — the `setup-node` `node-version`
+  in all workflows is now `'24'` (current LTS), replacing `'22'`, so the runner
+  Node and the action runtime match.
+
+### 2026-07-23 — Safe project→ECU tune apply (no reconnect brick)
+
+#### Fixed
+- **Use LibreTune Settings could corrupt/brick the ECU** — project pages are now
+  materialized as ECU base + MSQ overlays (never zero-padded Load Tune pages),
+  written with chunked page writes + a single burn, and complete MSQ `<pageData>`
+  is treated as authoritative so stale named constants are not re-applied on the
+  next connect (which previously caused a fake mismatch and a destructive rewrite).
+
 ### 2026-07-21 — Bits range parse fix (Trigger visibility)
 
 #### Fixed
@@ -110,6 +379,7 @@ Cherry-picked from `main` onto `dev` with no conflicts.
 - **AutoTune algorithms are real** — Simple / Weighted Average / PID now change
   correction behavior (weighted favors bin-center + stable TPS; PID uses P+I on AFR error).
   Algorithm selector locks while a session is running.
+
 
 ### Jul 8, 2026 — Table 3D toggle & curve drag editing
 

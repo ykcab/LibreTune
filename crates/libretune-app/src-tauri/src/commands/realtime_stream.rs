@@ -284,7 +284,11 @@ pub(crate) async fn feed_autotune_data(
         .or_else(|| data.get("AFRValue"))
         .or_else(|| data.get("lambda1"))
         .copied();
-    let afr_valid = afr_raw.is_some();
+    if afr_raw.is_some() {
+        config.saw_valid_afr = true;
+    } else {
+        config.missing_afr_samples = config.missing_afr_samples.saturating_add(1);
+    }
     let afr = afr_raw
         .map(|v| if v < 2.0 { v * 14.7 } else { v }) // Convert lambda to AFR
         .unwrap_or(14.7);
@@ -343,7 +347,6 @@ pub(crate) async fn feed_autotune_data(
         maf: maf_value,
         load: load_value,
         afr,
-        afr_valid,
         ve,
         clt,
         tps,
