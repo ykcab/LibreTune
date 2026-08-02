@@ -141,7 +141,9 @@ use commands::restore_points::{
     create_restore_point, delete_restore_point, list_restore_points, load_restore_point,
 };
 use commands::save_tune::{save_tune, save_tune_as};
-use commands::settings::{get_settings, update_heatmap_custom_stops, update_setting};
+use commands::settings::{
+    get_settings, update_heatmap_custom_stops, update_setting, update_settings,
+};
 use commands::start_autotune::start_autotune;
 use commands::sync_ecu_data::{
     get_tune_mismatch_page_diff, get_tune_mismatch_page_readable_diff, sync_ecu_data,
@@ -434,6 +436,7 @@ pub fn run() {
             // Settings commands
             get_settings,
             update_setting,
+            update_settings,
             get_hotkey_bindings,
             save_hotkey_bindings,
             mark_onboarding_completed,

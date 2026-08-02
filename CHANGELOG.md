@@ -13,6 +13,148 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-08-01 — Table editing operations restored
+
+#### Fixed
+- **All table modifying operations failed silently-ish with "invalid args"** —
+  every table op in `TableEditor2D` (`set_cells_equal`, `scale_cells`,
+  `smooth_table`, `interpolate_cells`, `interpolate_linear`, `add_offset`,
+  `fill_region`, `rebin_table`) passed its `invoke` arguments in snake_case
+  (`table_name`, `selected_cells`, `scale_factor`, …). Tauri 2 expects
+  camelCase keys and converts them to the Rust `snake_case` parameters, so it
+  rejected every payload before the command body ran — e.g. *"invalid args
+  `tableName` for command `scale_cells`: command scale_cells missing required
+  key tableName"*. Scaling, smoothing, interpolation, fill and re-bin were all
+  dead. Plain cell edits/paste/undo kept working because `update_table_data`
+  was already using camelCase.
+- **`>` / `<` / `+` multiplied cell values instead of nudging them** — the
+  keyboard handler and toolbar buttons passed a raw multiplier (`1`, or `5`
+  with Ctrl) to `handleIncrease`/`handleDecrease`, which compute
+  `value * (1 ± amount)`. Pressing `>` doubled every selected cell and `+` made
+  it 11×. They now step by 1% (5% with Ctrl, 10% for `+`).
+- **Scale (`*` / toolbar) was a guaranteed no-op** — both entry points called
+  `handleScale(1.0)`. They now open a dialog prompting for the multiplier;
+  only the right-click menu previously supplied a real factor.
+- **Right-click context menu targeted the wrong cell** — `TableGrid` never
+  emitted the `data-x`/`data-y` attributes that `TableEditor2D`'s
+  `onContextMenu` handler read, so Lock/Unlock and the menu header always
+  resolved to cell `(0, 0)`. The handler also required the event target to
+  *be* the `.table-cell` element, but right-clicking the number hits the inner
+  value span, so the menu often didn't open at all. The cells now carry their
+  coordinates, the handler walks up with `closest()`, and a right-click
+  outside the current selection moves the selection to the clicked cell (the
+  menu's other actions all operate on the selection).
+
+#### Added
+- Regression tests asserting the `invoke` argument keys for each table
+  operation, so camelCase/snake_case drift can't silently break editing again.
+
+### 2026-07-31 — Dashboard validation loop + Settings save performance/reliability
+
+Fixes a runaway backend loop that starved the UI, plus several Settings-save
+correctness and performance issues that surfaced once the loop was resolved.
+
+#### Fixed
+- **Infinite `validate_dashboard` loop** — `useGaugeRangeSync`'s INI/definition
+  change effect listed `dashFile` and `syncGaugeRanges` (both derived from
+  `dashFile`) as deps alongside `syncToken`. Syncing creates a new `dashFile`
+  object → recreates `syncGaugeRanges` → retriggers the effect (syncToken stays
+  > 0 after a `definition:loaded`/`ini:changed` event) → re-sync → infinite loop.
+  The runaway `validate_dashboard` calls saturated the Tauri IPC, so Settings
+  Apply's `await invoke('update_setting')` calls never resolved, leaving
+  Apply/OK permanently disabled. Fix: the INI-change effect now depends on
+  `syncToken` ONLY, reading the latest sync fn/flags/dashFile from a ref.
+- **"Some settings failed to save" error** — the backend `update_setting` match
+  was missing arms for `auto_commit_on_save`, `commit_message_format`,
+  `fome_fast_comms_enabled`, `auto_record_enabled`, `key_on_threshold_rpm`, and
+  `key_off_timeout_sec`; each hit the `_ => Err("Unknown setting")` catch-all.
+  Added all six arms (and extracted the match into a shared `apply_setting`
+  helper used by both the single and batch commands, so this can't regress).
+- **AI assistant reported "not configured"** — `ai_provider` was saving empty.
+  Leftover from the earlier `Settings::default()` corruption bug, the stored
+  `""` made the Provider dropdown render blank (no matching option), so the user
+  never selected one. `configured` requires a non-empty provider + model, so it
+  falsely reported unconfigured. Frontend now coerces empty `ai_provider` to
+  `'openai'` on load; `agent_status` treats empty provider as `'openai'`
+  defensively.
+
+#### Changed
+- **Batched Settings save (performance)** — the Settings dialog previously made
+  ~30 sequential `update_setting` calls on Apply/OK, each doing a full disk
+  read + write cycle (~60 file operations, several seconds on Windows). Added a
+  new `update_settings` (plural) command that loads settings once, applies all
+  key/value pairs to one in-memory struct, and saves once — reducing I/O to a
+  single read + write. `saveSettings` now sends all settings in one batched
+  invoke. Save is now near-instant.
+
+### 2026-07-31 — Menu i18n fix, menu-bar grouping, settings search
+
+Closes [#72 ([BUG] Languages)](https://github.com/RallyPat/LibreTune/issues/72)
+and adds related menu/toolbar UX improvements.
+
+#### Fixed
+- **Partial menu/toolbar translation (Issue #72)** — switching language only
+  translated the menu *titles* and the Help submenu items; File/Edit/View/Tools
+  *items* and all toolbar tooltips stayed English. Root cause: `buildMenuItems.ts`
+  and `buildToolbarItems.tsx` hardcoded English label/tooltip strings instead of
+  routing them through the already-wired `t()` function, masking the fact that
+  every key already existed in all locale files. Fix routes all items through
+  `t()` and bakes the `&` access-key mnemonic and `\tCtrl+X` shortcut into each
+  locale value (required by `MenuBar.tsx`, which parses them from the label).
+  - `buildToolbarItems.tsx` now accepts a `t: TFunction` (previously took none).
+  - App.tsx gains `useTranslation('common')` for toolbar tooltips; a new
+    `toolbar` section was added to all three locale `common.json` files.
+  - `setupTests.ts` now initializes i18n (`import './i18n'`) so `t()` resolves
+    real strings under test (previously returned raw key paths, masked by the
+    old hardcoded English).
+  - Hungarian `help.title` mnemonic fixed (`&Segítség`) for consistency.
+  - New regression tests in `i18n/__tests__/i18n.test.ts`: locale key-parity
+    across `en`/`pt-BR`/`hu-HU`, per-locale menu/toolbar resolution, and
+    mnemonic/shortcut survival across locales.
+
+#### Added
+- **Menu-bar grouping with dividers** — the top menu bar is now organized into
+  three zones separated by vertical rules: `File Edit View Tools │ <ECU/INI
+  menus> │ Help`. The app-action menus (translated, stable positions) are
+  grouped left, the ECU tuning menus (INI-native, intentionally untranslated) sit
+  in the middle, and Help stays rightmost per convention. `Tools` moved left to
+  join the app menus (it was previously buried after the ECU menus). Dividers are
+  omitted entirely when there are no ECU menus (no dangling rule). Implementation:
+  `MenuBar.tsx` top-level render loop now branches on `item.separator`, and
+  ArrowRight/Left keyboard navigation computes next/prev over a focusable-filtered
+  list so focus hops over dividers without landing on them.
+- **"Show ECU menus in menu bar" setting** — a new Appearance → Layout toggle
+  (default ON) hides the INI tuning menus from the top bar for a leaner layout.
+  The menus remain reachable in the (permanent, collapsible) sidebar. New backend
+  setting field `show_ecu_menus_in_menubar` with `update_setting` arm; live
+  re-render + persistence across restarts.
+- **Settings search bar** — the Settings dialog now has a search box in its title
+  bar that filters settings **across all tabs** as you type (mirrors the sidebar
+  search UX). Matching `<h3>`-anchored sections surface in a flat view (tab bar
+  hides while searching); a "No settings found" message appears on no match.
+  Implementation uses a DOM-based scan (matches each section's full `textContent`,
+  so every label/option/note is searchable with no curated index). Panels
+  all-render only during an active search to preserve existing test stability.
+
+#### Fixed (session follow-ups)
+- **Sidebar hidden by default / zeroed-out settings** — the `Settings` struct
+  derived `Default`, which sets every `bool` to `false` and every `String` to
+  `""`, *ignoring* the `#[serde(default = "default_true")]` attributes (those
+  only apply during deserialization). When `load_settings()` had no/invalid
+  file it fell back to `Settings::default()`, so every `default_true` field
+  (sidebar visibility, auto-sync gauge ranges, heatmap schemes, auto-reconnect,
+  FOME fast comms, alert rules, etc.) silently became false/blank and got
+  persisted to disk. Replaced with an explicit `default_settings()` that uses
+  the same default fns as the serde attributes, and repaired existing corrupt
+  settings files on load.
+- **Settings Apply/OK buttons stuck disabled** — `saveSettings()` set
+  `saveStatus = 'saving'` (disabling both buttons) but the final status
+  transition was only reached on the happy path; any unexpected throw left the
+  dialog stuck at `'saving'` so the user had to close it via the window's X.
+  Wrapped the save body in `try/catch/finally` so `saveStatus` is guaranteed
+  to resolve to `'saved'`/`'error'`. Restores Windows convention: Apply saves
+  and keeps the dialog open (buttons re-enable); OK saves and closes.
+
 ### 2026-07-31 — Chat history, stop button, UI state persistence
 
 Enhancements to the AI assistant and overall workspace UX.

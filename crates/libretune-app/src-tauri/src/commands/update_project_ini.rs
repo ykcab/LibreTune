@@ -66,6 +66,8 @@ pub async fn update_project_ini(
     let def_clone = new_def.clone();
     *def_guard = Some(new_def);
     drop(def_guard);
+    crate::commands::data_logging::stop_recording_on_definition_change(&state).await;
+    crate::commands::realtime_stream::stop_streaming_on_definition_change(&state).await;
 
     // Prefer the project copy so reconnects always use the persisted INI.
     let mut settings = load_settings(&app);
