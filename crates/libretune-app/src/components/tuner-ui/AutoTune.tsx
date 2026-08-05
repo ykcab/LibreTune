@@ -34,6 +34,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { valueToHeatmapColor } from '../../utils/heatmapColors';
 import { TuneHealthCard } from './TuneHealth';
+import { useToast } from '../../contexts/ToastContext';
 import './AutoTune.css';
 
 // =============================================================================
@@ -151,6 +152,8 @@ interface AutoTuneProps {
   tableName?: string;
   /** Callback when component is closed */
   onClose?: () => void;
+  /** Whether the app currently has a live ECU connection */
+  isConnected: boolean;
 }
 
 interface VeAnalyzeConfig {
@@ -165,7 +168,9 @@ interface VeAnalyzeConfig {
 // AutoTune Component
 // =============================================================================
 
-export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTuneProps) {
+export function AutoTune({ tableName: initialTableName = '', onClose, isConnected }: AutoTuneProps) {
+  const { showToast } = useToast();
+
   // State
   const [isRunning, setIsRunning] = useState(false);
   const [sessionWarnings, setSessionWarnings] = useState<string[]>([]);
@@ -463,6 +468,10 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
   }, [tableData]);
 
   const startAutoTune = useCallback(async () => {
+    if (!isConnected) {
+      showToast('Connect to the ECU to start AutoTune — it needs live data to generate recommendations.', 'warning');
+      return;
+    }
     try {
       const result = await invoke<{
         warnings: string[];
@@ -490,7 +499,7 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
     } catch (e) {
       setError(`Failed to start AutoTune: ${e}`);
     }
-  }, [selectedTable, secondaryTableEnabled, secondaryTable, loadSource, settings, filters, authority, targetAfrTable, lambdaDelayTable, strictLambdaMatch]);
+  }, [isConnected, showToast, selectedTable, secondaryTableEnabled, secondaryTable, loadSource, settings, filters, authority, targetAfrTable, lambdaDelayTable, strictLambdaMatch]);
 
   const stopAutoTune = useCallback(async () => {
     try {
@@ -666,7 +675,10 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
       {/* Header */}
       <div className="autotune-header">
         <div className="autotune-title-row">
-          <h2>AutoTune</h2>
+          <h2>
+            AutoTune
+            {!isConnected && <span className="autotune-disconnected-badge">DISCONNECTED</span>}
+          </h2>
           <div className="autotune-table-selectors">
             <div className="autotune-table-group">
               <label>Primary:</label>
@@ -728,7 +740,12 @@ export function AutoTune({ tableName: initialTableName = '', onClose }: AutoTune
               <Square size={14} fill="currentColor" /> Stop
             </button>
           ) : (
-            <button onClick={startAutoTune} className="autotune-start">
+            <button
+              onClick={startAutoTune}
+              className="autotune-start"
+              disabled={!isConnected}
+              title={isConnected ? undefined : 'Connect to the ECU to start AutoTune'}
+            >
               <Play size={14} fill="currentColor" /> Start
             </button>
           )}

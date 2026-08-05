@@ -218,6 +218,7 @@ export function TabContentRouter(props: TabContentRouterProps) {
         <AutoTune
           tableName={(content.data as string) || ""}
           onClose={() => handleTabClose("autotune")}
+          isConnected={status.state === "Connected"}
         />
       );
     case "datalog":
