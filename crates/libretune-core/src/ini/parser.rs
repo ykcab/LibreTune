@@ -149,7 +149,7 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
         // Handle preprocessor directives (always processed regardless of condition)
         if let Some(stripped) = line.strip_prefix("#set ") {
             let symbol = stripped.trim().to_string();
-            eprintln!("[DEBUG] preprocessor: #set {}", symbol);
+            tracing::debug!("preprocessor: #set {}", symbol);
             ctx.defined_symbols.insert(symbol);
             i += 1;
             continue;
@@ -157,7 +157,7 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
 
         if let Some(stripped) = line.strip_prefix("#unset ") {
             let symbol = stripped.trim();
-            eprintln!("[DEBUG] preprocessor: #unset {}", symbol);
+            tracing::debug!("preprocessor: #unset {}", symbol);
             ctx.defined_symbols.remove(symbol);
             i += 1;
             continue;
@@ -166,7 +166,7 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
         if let Some(stripped) = line.strip_prefix("#if ") {
             let symbol = stripped.trim();
             let is_defined = ctx.defined_symbols.contains(symbol);
-            eprintln!("[DEBUG] preprocessor: #if {} -> {}", symbol, is_defined);
+            tracing::debug!("preprocessor: #if {} -> {}", symbol, is_defined);
             condition_stack.push(is_defined);
             i += 1;
             continue;
@@ -174,10 +174,7 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
 
         if line == "#else" {
             if let Some(last) = condition_stack.last_mut() {
-                eprintln!(
-                    "[DEBUG] preprocessor: #else (was {}, now {})",
-                    *last, !*last
-                );
+                tracing::debug!("preprocessor: #else (was {}, now {})", *last, !*last);
                 *last = !*last;
             }
             i += 1;
@@ -185,7 +182,7 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
         }
 
         if line == "#endif" {
-            eprintln!("[DEBUG] preprocessor: #endif");
+            tracing::debug!("preprocessor: #endif");
             condition_stack.pop();
             i += 1;
             continue;
@@ -294,9 +291,10 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
             });
 
             if !conditions.is_empty() && !conditions_pass {
-                eprintln!(
-                    "[DEBUG] ini: section [{}] suppressed by unmet condition(s): {:?}",
-                    name, conditions
+                tracing::debug!(
+                    "ini: section [{}] suppressed by unmet condition(s): {:?}",
+                    name,
+                    conditions
                 );
                 current_section = String::new();
                 i += 1;
@@ -782,7 +780,7 @@ fn parse_megatune(def: &mut EcuDefinition, key: &str, value: &str) {
             def.signature_prefix = Some(value.trim_matches('"').to_string());
         }
         "querycommand" => {
-            eprintln!("[DEBUG] parse_megatune: queryCommand = {:?}", value);
+            tracing::debug!("parse_megatune: queryCommand = {:?}", value);
             def.query_command = value.trim_matches('"').to_string();
         }
         "versioninfo" => {
@@ -792,8 +790,8 @@ fn parse_megatune(def: &mut EcuDefinition, key: &str, value: &str) {
             // Strip potential comments
             let clean_val = value.split(';').next().unwrap_or("").trim();
             def.protocol.delay_after_port_open = clean_val.parse().unwrap_or(0);
-            eprintln!(
-                "[DEBUG] parse_megatune: delayAfterPortOpen = {}",
+            tracing::debug!(
+                "parse_megatune: delayAfterPortOpen = {}",
                 def.protocol.delay_after_port_open
             );
         }
@@ -812,8 +810,8 @@ fn parse_megatune(def: &mut EcuDefinition, key: &str, value: &str) {
         "ochblocksize" => {
             let clean_val = value.split(';').next().unwrap_or("").trim();
             def.protocol.och_block_size = clean_val.parse().unwrap_or(0);
-            eprintln!(
-                "[DEBUG] parse_megatune: ochBlockSize = {}",
+            tracing::debug!(
+                "parse_megatune: ochBlockSize = {}",
                 def.protocol.och_block_size
             );
         }
@@ -827,7 +825,7 @@ fn parse_megatune(def: &mut EcuDefinition, key: &str, value: &str) {
 
 /// Parse [TunerStudio] section entries (INI section name - keep as-is)
 fn parse_tunerstudio(def: &mut EcuDefinition, key: &str, value: &str) {
-    eprintln!("[DEBUG] parse_ts: key = {:?}, value = {:?}", key, value);
+    tracing::debug!("parse_ts: key = {:?}, value = {:?}", key, value);
     match key.to_lowercase().as_str() {
         "signature" => {
             def.signature = value.trim_matches('"').to_string();
@@ -884,8 +882,8 @@ fn parse_tunerstudio(def: &mut EcuDefinition, key: &str, value: &str) {
         "delayafterportopen" => {
             let clean_val = value.split(';').next().unwrap_or("").trim();
             def.protocol.delay_after_port_open = clean_val.parse().unwrap_or(0);
-            eprintln!(
-                "[DEBUG] parse_ts: delayAfterPortOpen = {}",
+            tracing::debug!(
+                "parse_ts: delayAfterPortOpen = {}",
                 def.protocol.delay_after_port_open
             );
         }
@@ -899,34 +897,31 @@ fn parse_tunerstudio(def: &mut EcuDefinition, key: &str, value: &str) {
         }
         "messageenvelopeformat" => {
             def.protocol.message_envelope_format = Some(value.trim_matches('"').to_string());
-            eprintln!(
-                "[DEBUG] parse_ts: messageEnvelopeFormat = {:?}",
+            tracing::debug!(
+                "parse_ts: messageEnvelopeFormat = {:?}",
                 def.protocol.message_envelope_format
             );
         }
         "maxunusedruntimerange" => {
             let clean_val = value.split(';').next().unwrap_or("").trim();
             def.protocol.max_unused_runtime_range = clean_val.parse().unwrap_or(0);
-            eprintln!(
-                "[DEBUG] parse_ts: maxUnusedRuntimeRange = {}",
+            tracing::debug!(
+                "parse_ts: maxUnusedRuntimeRange = {}",
                 def.protocol.max_unused_runtime_range
             );
         }
         "ochgetcommand" => {
             let clean_val = value.split(';').next().unwrap_or("").trim();
             def.protocol.och_get_command = Some(clean_val.trim_matches('"').to_string());
-            eprintln!(
-                "[DEBUG] parse_ts: ochGetCommand = {:?}",
+            tracing::debug!(
+                "parse_ts: ochGetCommand = {:?}",
                 def.protocol.och_get_command
             );
         }
         "ochblocksize" => {
             let clean_val = value.split(';').next().unwrap_or("").trim();
             def.protocol.och_block_size = clean_val.parse().unwrap_or(0);
-            eprintln!(
-                "[DEBUG] parse_ts: ochBlockSize = {}",
-                def.protocol.och_block_size
-            );
+            tracing::debug!("parse_ts: ochBlockSize = {}", def.protocol.och_block_size);
         }
         _ => {}
     }
@@ -960,8 +955,8 @@ fn parse_constants_entry(
         }
         "maxunusedruntimerange" => {
             def.protocol.max_unused_runtime_range = value.parse().unwrap_or(0);
-            eprintln!(
-                "[DEBUG] parse_constants: maxUnusedRuntimeRange = {}",
+            tracing::debug!(
+                "parse_constants: maxUnusedRuntimeRange = {}",
                 def.protocol.max_unused_runtime_range
             );
             return;
@@ -1143,9 +1138,15 @@ fn parse_constants_entry(
     if let Some(mut constant) =
         parse_constant_line(clean_key, value, *current_page, *last_offset, help_text)
     {
-        // Update last_offset for next constant (offset + size in bytes)
-        let size = constant.data_type.size_bytes() as u16 * constant.shape.element_count() as u16;
-        *last_offset = constant.offset + size;
+        // Update last_offset for next constant (offset + size in bytes).
+        // Use Constant::size_bytes(), not a hand-rolled data_type * element_count
+        // calculation -- that duplicate used to disagree with it for two cases:
+        // bits fields are packed (0 extra bytes; the raw DataType::size_bytes()
+        // of 1 would wrongly burn a byte per bit field), and string fields need
+        // their length in bytes (the raw DataType::size_bytes() of 0 for
+        // "variable size" would wrongly advance by 0, aliasing whatever field
+        // came next onto the string's own bytes).
+        *last_offset = constant.offset + constant.size_bytes() as u16;
 
         // Resolve $references in bit_options
         if !constant.bit_options.is_empty() {
@@ -1263,16 +1264,13 @@ fn parse_burst_mode_entry(def: &mut EcuDefinition, key: &str, value: &str) {
         def.protocol.burst_get_command = Some(value.trim_matches('"').to_string());
     } else if key.eq_ignore_ascii_case("ochgetcommand") {
         let clean = value.trim_matches('"').to_string();
-        eprintln!(
-            "[DEBUG] parse_burst_mode_entry: ochGetCommand = {:?}",
-            clean
-        );
+        tracing::debug!("parse_burst_mode_entry: ochGetCommand = {:?}", clean);
         def.protocol.och_get_command = Some(clean);
     } else if key.eq_ignore_ascii_case("ochblocksize") {
         let clean = value.split(';').next().unwrap_or("").trim();
         def.protocol.och_block_size = clean.parse().unwrap_or(0);
-        eprintln!(
-            "[DEBUG] parse_burst_mode_entry: ochBlockSize = {}",
+        tracing::debug!(
+            "parse_burst_mode_entry: ochBlockSize = {}",
             def.protocol.och_block_size
         );
     }
@@ -3765,5 +3763,81 @@ constOnPage0 = scalar, U16, 0, "ms", 1, 0, 0, 100, 1
     assert_eq!(
         c.page, 0,
         "INI 'page = 0' should remain as internal page 0 (saturating_sub prevents underflow)"
+    );
+}
+
+#[test]
+fn test_last_offset_after_bits_field_does_not_advance() {
+    // Regression test: bits fields are packed (they don't take their own
+    // byte), so lastOffset on the field right after a bits field must
+    // resolve to the SAME offset as that bits field, not offset+1.
+    let content = r#"
+[MegaTune]
+signature = "test 1.0"
+queryCommand = "Q"
+
+[TunerStudio]
+nPages = 1
+pageSize = 256
+
+[Constants]
+page = 1
+flagsByte = bits, U08, 100, [0:3], "A", "B"
+afterBits = scalar, U08, lastOffset, "counts", 1.0, 0.0, 0, 255, 0
+"#;
+
+    let def = parse_ini(content).expect("Should parse successfully");
+
+    let flags = def
+        .constants
+        .get("flagsByte")
+        .expect("flagsByte should exist");
+    assert_eq!(flags.offset, 100);
+
+    let after = def
+        .constants
+        .get("afterBits")
+        .expect("afterBits should exist");
+    assert_eq!(
+        after.offset, 100,
+        "a field right after a bits field must share its offset (bits are packed), not offset+1"
+    );
+}
+
+#[test]
+fn test_last_offset_after_string_field_advances_by_its_length() {
+    // Regression test: a string field's byte footprint is its declared
+    // length, so lastOffset on the field right after it must resolve to
+    // offset + length -- not alias onto the string's own bytes.
+    let content = r#"
+[MegaTune]
+signature = "test 1.0"
+queryCommand = "Q"
+
+[TunerStudio]
+nPages = 1
+pageSize = 256
+
+[Constants]
+page = 1
+vehicleName = string, ASCII, 200, 16
+afterString = scalar, U08, lastOffset, "counts", 1.0, 0.0, 0, 255, 0
+"#;
+
+    let def = parse_ini(content).expect("Should parse successfully");
+
+    let name = def
+        .constants
+        .get("vehicleName")
+        .expect("vehicleName should exist");
+    assert_eq!(name.offset, 200);
+
+    let after = def
+        .constants
+        .get("afterString")
+        .expect("afterString should exist");
+    assert_eq!(
+        after.offset, 216,
+        "a field right after a 16-byte string must start at offset+16 (200+16), not alias the string's own bytes"
     );
 }

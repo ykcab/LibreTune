@@ -7,6 +7,7 @@ import { useChannels, useRealtimeStore } from '../../stores/realtimeStore';
 import { useGraphLogStore, exportGraphLogSetup, importGraphLogSetup } from '../../stores/graphLogStore';
 import LoggerStatsPanel from './LoggerStatsPanel';
 import GraphLog, { GraphSample } from './GraphLog';
+import { parseLogFile } from '../../utils/parseLogFile';
 import './DataLogView.css';
 
 /** Hard cap on samples kept in the frontend; the oldest are dropped beyond it. */
@@ -209,6 +210,9 @@ export const DataLogView: React.FC = () => {
   const [playbackPosition, setPlaybackPosition] = useState(0); // 0-1
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const [loadedFileName, setLoadedFileName] = useState<string | null>(null);
+  // Surfaced in the UI when a chosen log yields no rows — otherwise the Load
+  // button appears to do nothing.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(false);
   const [chartMode, setChartMode] = useState<'graphlog' | 'overlay'>('graphlog');
   const [selectedStatsChannel, setSelectedStatsChannel] = useState<string | null>(null);
@@ -468,6 +472,7 @@ export const DataLogView: React.FC = () => {
     }
   }, []);
   
+<<<<<<< HEAD
   const parseLogCsv = useCallback((content: string, _fileName: string): { 
     data: { x: number; values: Record<string, number> }[];
     channels: string[];
@@ -537,6 +542,24 @@ export const DataLogView: React.FC = () => {
     
     return { data, channels };
   }, []);
+=======
+  // Parse a CSV datalog into a plottable series. Supports TWO on-disk formats:
+  //   - TunerStudio: a `Time` column in SECONDS (with decimals).
+  //   - LibreTune:   a `timestamp_ms`/`timestamp` column in MILLISECONDS.
+  // The time column is detected by header name; TunerStudio's seconds are
+  // multiplied by 1000 so all timestamps end up in ms internally. If no time
+  // column is present, rows are spaced at 100ms each so the chart still has an
+  // x axis. NOTE: this is a minimal hand-rolled CSV reader (not a full RFC
+  // 4180 parser) — it handles quoted fields with embedded commas via the
+  // inQuotes toggle below, but does not handle escaped quotes ("") or CRLF
+  // inside quotes. Datalogs from both apps are simple enough that this suffices.
+  // Parsing lives in `utils/parseLogFile` so it can be unit-tested against
+  // real .msl and .csv fixtures without mounting this component.
+  const parseLogCsv = useCallback(
+    (content: string, _fileName: string) => parseLogFile(content),
+    []
+  );
+>>>>>>> main
   
   const handleLoadLog = useCallback(async () => {
     try {
@@ -556,9 +579,16 @@ export const DataLogView: React.FC = () => {
       const { data, channels } = parseLogCsv(content, fileName);
       
       if (data.length === 0) {
+        // Previously this only reached the console, so picking an unreadable
+        // log looked like the button had done nothing at all.
         console.error('No valid data found in log file');
+        setLoadError(
+          `Could not read any data from "${fileName}". ` +
+          `Supported formats are TunerStudio .msl and comma-separated .csv logs.`
+        );
         return;
       }
+      setLoadError(null);
       
       // Switch to playback mode
       setLogData(data);
@@ -688,6 +718,11 @@ export const DataLogView: React.FC = () => {
           {loadedFileName && (
             <span className="loaded-file" title={loadedFileName}>
               {loadedFileName.length > 25 ? '...' + loadedFileName.slice(-22) : loadedFileName}
+            </span>
+          )}
+          {loadError && (
+            <span className="load-error" role="alert" title={loadError}>
+              {loadError}
             </span>
           )}
         </div>
