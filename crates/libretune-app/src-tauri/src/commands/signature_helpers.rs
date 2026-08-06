@@ -64,7 +64,8 @@ pub(crate) fn compare_signatures_with_prefix(
     // INI signature stops before the hash. One string is a prefix of the other → Exact.
     if !ecu_normalized.is_empty()
         && !ini_normalized.is_empty()
-        && (ecu_normalized.starts_with(&ini_normalized) || ini_normalized.starts_with(&ecu_normalized))
+        && (ecu_normalized.starts_with(&ini_normalized)
+            || ini_normalized.starts_with(&ecu_normalized))
     {
         return SignatureMatchType::Exact;
     }
@@ -153,6 +154,36 @@ fn signatures_differ_only_by_trailing_build_id(a: &str, b: &str) -> bool {
     }
     let extra = long_tokens[long_tokens.len() - 1];
     extra.len() > 6 && extra.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// True when an ECU is connected and its signature fully mismatches the loaded INI.
+/// Offline (no connection) is never treated as a mismatch.
+pub(crate) async fn connected_signature_is_mismatch(state: &tauri::State<'_, AppState>) -> bool {
+    let ecu_sig = {
+        let conn_guard = state.connection.lock().await;
+        match conn_guard.as_ref().and_then(|c| c.signature()) {
+            Some(s) => s.to_string(),
+            None => return false,
+        }
+    };
+    let def_guard = state.definition.lock().await;
+    let Some(def) = def_guard.as_ref() else {
+        return false;
+    };
+    compare_signatures_with_prefix(&ecu_sig, &def.signature, def.signature_prefix.as_deref())
+        == SignatureMatchType::Mismatch
+}
+
+/// Block dangerous table-size changes when ECU/INI signatures disagree.
+pub(crate) async fn assert_resize_allowed(
+    state: &tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if connected_signature_is_mismatch(state).await {
+        return Err(
+            "Cannot resize tables while the ECU signature does not match the loaded INI".into(),
+        );
+    }
+    Ok(())
 }
 
 /// Build a shallow SignatureMismatchInfo (without resolving matching INIs) for testing

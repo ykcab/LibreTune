@@ -472,77 +472,6 @@ export const DataLogView: React.FC = () => {
     }
   }, []);
   
-<<<<<<< HEAD
-  const parseLogCsv = useCallback((content: string, _fileName: string): { 
-    data: { x: number; values: Record<string, number> }[];
-    channels: string[];
-  } => {
-    const lines = content.trim().split('\n');
-    if (lines.length < 2) return { data: [], channels: [] };
-
-    const headerLine = lines[0];
-    const headers = headerLine.split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-
-    const timeColIndex = headers.findIndex(h => 
-      h.toLowerCase() === 'time' || 
-      h.toLowerCase() === 'time (ms)' ||
-      h.toLowerCase() === 'timestamp_ms' ||
-      h.toLowerCase() === 'timestamp'
-    );
-
-    const timeIsSeconds = headers.some(h => h.toLowerCase() === 'time');
-    const channels = headers.filter((_, i) => i !== timeColIndex);
-
-    const data: { x: number; values: Record<string, number> }[] = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-
-      const values: string[] = [];
-      let current = '';
-      let inQuotes = false;
-      for (const char of line) {
-        if (char === '"') {
-          inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-          values.push(current.trim());
-          current = '';
-        } else {
-          current += char;
-        }
-      }
-      values.push(current.trim());
-
-      if (values.length < headers.length) continue;
-
-      let timestamp: number;
-      if (timeColIndex >= 0) {
-        const timeStr = values[timeColIndex];
-        timestamp = timeIsSeconds ? parseFloat(timeStr) * 1000 : parseFloat(timeStr);
-      } else {
-        timestamp = (i - 1) * 100;
-      }
-      
-      if (isNaN(timestamp)) continue;
-      
-      const entry: Record<string, number> = {};
-      let channelIdx = 0;
-      for (let j = 0; j < headers.length; j++) {
-        if (j === timeColIndex) continue;
-        const val = parseFloat(values[j]);
-        if (!isNaN(val)) {
-          entry[channels[channelIdx]] = val;
-        }
-        channelIdx++;
-      }
-      
-      data.push({ x: timestamp, values: entry });
-    }
-    
-    return { data, channels };
-  }, []);
-=======
   // Parse a CSV datalog into a plottable series. Supports TWO on-disk formats:
   //   - TunerStudio: a `Time` column in SECONDS (with decimals).
   //   - LibreTune:   a `timestamp_ms`/`timestamp` column in MILLISECONDS.
@@ -559,7 +488,6 @@ export const DataLogView: React.FC = () => {
     (content: string, _fileName: string) => parseLogFile(content),
     []
   );
->>>>>>> main
   
   const handleLoadLog = useCallback(async () => {
     try {
