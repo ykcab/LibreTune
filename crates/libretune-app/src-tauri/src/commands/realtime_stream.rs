@@ -203,11 +203,31 @@ pub(crate) fn apply_channel_aliases(data: &mut HashMap<String, f64>) {
 
 /// Feed the current realtime snapshot to the data logger when a recording is
 /// active. The logger applies its own sample-rate limiting in `record()`.
+/// Record that a realtime sample couldn't be handed to the logger because its
+/// lock was busy. Counts the drop (D10) only while a recording is actually
+/// active, so ordinary idle contention isn't counted. Returns whether it was
+/// counted — split out so the gating can be unit-tested without a full stream.
+pub(crate) fn note_dropped_log_sample() -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    if crate::state::LOGGER_RECORDING.load(Relaxed) {
+        crate::state::LOGGER_SAMPLES_DROPPED.fetch_add(1, Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
 pub(crate) async fn feed_data_logger(app_state: &AppState, data: &HashMap<String, f64>) {
     // try_lock: never stall the stream tick on logger contention
     let mut logger = match app_state.data_logger.try_lock() {
         Ok(l) => l,
-        Err(_) => return,
+        Err(_) => {
+            // The lock is held elsewhere. If a recording is active this tick's
+            // sample is lost -- count it so the loss is visible instead of
+            // silent (D10). When not recording the drop is harmless.
+            note_dropped_log_sample();
+            return;
+        }
     };
     if !logger.is_recording() {
         return;
@@ -533,6 +553,8 @@ pub async fn start_realtime_stream(
                 transfer_reason: mode_reason,
                 interval_ms: interval,
                 started_at_ms: chrono::Utc::now().timestamp_millis(),
+                samples_dropped: crate::state::LOGGER_SAMPLES_DROPPED
+                    .load(std::sync::atomic::Ordering::Relaxed),
             };
         }
 
@@ -876,6 +898,8 @@ pub async fn start_realtime_stream(
                     stats.ticks_success = local_ticks_success;
                     stats.ticks_skipped = local_ticks_skipped;
                     stats.ticks_error = local_ticks_error;
+                    stats.samples_dropped = crate::state::LOGGER_SAMPLES_DROPPED
+                        .load(std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -883,6 +907,30 @@ pub async fn start_realtime_stream(
 
     *task_guard = Some(handle);
     Ok(())
+}
+
+#[cfg(test)]
+mod dropped_sample_tests {
+    use super::note_dropped_log_sample;
+    use crate::state::LOGGER_RECORDING;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    #[test]
+    fn drop_counted_only_while_recording() {
+        // Gate on the return value (deterministic per call) rather than the
+        // process-global counter, so the test can't race another test's drops.
+        LOGGER_RECORDING.store(false, Relaxed);
+        assert!(
+            !note_dropped_log_sample(),
+            "idle logger contention is not a lost sample"
+        );
+        LOGGER_RECORDING.store(true, Relaxed);
+        assert!(
+            note_dropped_log_sample(),
+            "a drop while recording must be counted (D10)"
+        );
+        LOGGER_RECORDING.store(false, Relaxed); // leave the global clean
+    }
 }
 
 #[cfg(test)]

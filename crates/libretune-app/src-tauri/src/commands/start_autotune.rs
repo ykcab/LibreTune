@@ -22,9 +22,22 @@ pub async fn start_autotune(
     lambda_delay_table_name: Option<String>,
     strict_lambda_match: Option<bool>,
 ) -> Result<(), String> {
+    tracing::info!(
+        table = %table_name,
+        secondary = ?secondary_table_name,
+        requested_load_source = ?load_source,
+        target_afr = settings.target_afr,
+        target_afr_table = ?target_afr_table_name,
+        lambda_delay_table = ?lambda_delay_table_name,
+        "start_autotune: requested"
+    );
+
     // Get the table definition to extract bin values
     let def_guard = state.definition.lock().await;
-    let def = def_guard.as_ref().ok_or("No ECU definition loaded")?;
+    let def = def_guard.as_ref().ok_or_else(|| {
+        tracing::warn!("start_autotune: no ECU definition loaded — cannot start");
+        "No ECU definition loaded".to_string()
+    })?;
     let definition_signature = def.signature.clone();
     let cache_guard = state.tune_cache.lock().await;
     let cache = cache_guard.as_ref();
@@ -130,6 +143,18 @@ pub async fn start_autotune(
         .map(|v| v.lambda_channel.clone());
     let using_target_table = !reference_tables.target_afr_table.is_empty();
 
+    tracing::info!(
+        resolved_load_source = ?resolved_load_source,
+        x_bins = x_bins.len(),
+        y_bins = y_bins.len(),
+        table_in_ini = def.get_table_by_name_or_map(&table_name).is_some(),
+        cache_present = cache.is_some(),
+        target_afr_table_resolved = !reference_tables.target_afr_table.is_empty(),
+        lambda_delay_table_resolved = !reference_tables.lambda_delay_table.is_empty(),
+        "start_autotune: resolved session (empty AFR/delay tables fall back to \
+         settings.target_afr / RPM-based delay)"
+    );
+
     drop(cache_guard);
     drop(def_guard);
 
@@ -172,6 +197,11 @@ pub async fn start_autotune(
     } else {
         secondary_guard.stop();
     }
+    tracing::info!(
+        table = %table_name,
+        secondary_running = secondary_table_name.is_some(),
+        "start_autotune: session started"
+    );
     Ok(())
 }
 /// Read axis bin values from a constant definition

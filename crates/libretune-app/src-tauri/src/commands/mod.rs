@@ -5,6 +5,7 @@
 //! `tauri::State<crate::state::AppState>`.
 
 pub mod adaptive_timing;
+pub mod afr_delay_test;
 pub mod agent;
 pub mod annotations;
 pub mod app_settings;
@@ -78,3 +79,4 @@ pub mod update_project_ini;
 pub mod util_helpers;
 pub mod virtual_dyno;
 pub mod wasm_plugin;
+pub mod webview_log;

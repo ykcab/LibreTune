@@ -26,6 +26,7 @@ interface StreamStats {
   transferReason: string;
   intervalMs: number;
   startedAtMs: number;
+  samplesDropped?: number;
 }
 
 interface OutputChannelStatusData {
@@ -59,6 +60,7 @@ interface MetricsPayload {
     transferReason: string;
     intervalMs: number;
     startedAtMs: number;
+    samplesDropped?: number;
   };
 }
 
@@ -286,6 +288,12 @@ export function OutputChannelStatus() {
               <span className="och-live-value">{formatUptime(liveStream.startedAtMs)}</span>
               <span className="och-live-unit">uptime</span>
             </div>
+            {(liveStream.samplesDropped ?? 0) > 0 && (
+              <div className="och-live-stat">
+                <span className="och-live-value och-error">{liveStream.samplesDropped!.toLocaleString()}</span>
+                <span className="och-live-unit">log samples dropped</span>
+              </div>
+            )}
           </div>
         </div>
 

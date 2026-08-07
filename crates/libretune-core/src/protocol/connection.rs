@@ -795,6 +795,48 @@ impl Connection {
     /// Send raw bytes and get response (for initial handshake)
     /// Uses non-blocking reads with bytes_to_read() polling for reliable timeout behavior
     fn send_raw_command(&mut self, cmd: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+        self.send_raw_command_expecting(cmd, None)
+    }
+
+    /// Whether enough bytes have arrived to stop reading without waiting for
+    /// the line to fall quiet.
+    ///
+    /// Split out from the read loop so the decision can be tested directly:
+    /// the loop itself needs a live serial channel, and getting this wrong
+    /// returns a truncated message rather than an obvious error.
+    fn response_is_complete_impl(received: usize, expected: Option<usize>) -> bool {
+        match expected {
+            // A declared length of zero means "unknown", not "expect nothing" —
+            // an INI that omits ochBlockSize parses as 0, and treating that as
+            // complete would return an empty response immediately.
+            Some(want) if want > 0 => received >= want,
+            _ => false,
+        }
+    }
+
+    /// As [`send_raw_command`](Self::send_raw_command), but returns as soon as
+    /// `expected_len` bytes have arrived instead of waiting out the
+    /// inter-character timeout.
+    ///
+    /// Without a length the loop can only tell a message has ended by seeing
+    /// the line go quiet, so every response costs the full inter-character
+    /// timeout on top of its transmission time. For a repeated poll that
+    /// dominates: an INI declaring `ochBlockSize = 130` at 115200 baud takes
+    /// about 11 ms to transmit those bytes and then waits 100 ms to be sure
+    /// nothing follows, capping realtime updates near 8 Hz regardless of the
+    /// rate requested.
+    ///
+    /// `expected_len` is only supplied where the length is declared by the INI
+    /// rather than guessed. If more bytes than expected are in flight, the
+    /// remainder is discarded by the `clear_input_buffer` at the top of the
+    /// next command, so an early return cannot desync the following exchange.
+    /// When `None`, or when the peer sends fewer bytes than promised, the
+    /// inter-character timeout still terminates the read exactly as before.
+    fn send_raw_command_expecting(
+        &mut self,
+        cmd: &[u8],
+        expected_len: Option<usize>,
+    ) -> Result<Vec<u8>, ProtocolError> {
         // Get timing parameters before borrowing port
         let baud_rate = self.config.baud_rate;
         let min_wait = Some(self.get_effective_min_wait());
@@ -881,6 +923,15 @@ impl Connection {
                             response.len(),
                             &buffer[..n]
                         );
+                        // The whole message is present, so there is nothing to
+                        // gain by waiting for the line to fall quiet.
+                        if Self::response_is_complete_impl(response.len(), expected_len) {
+                            tracing::debug!(
+                                "send_raw_command: got expected {:?} bytes, returning early",
+                                expected_len
+                            );
+                            break;
+                        }
                     }
                     Err(ref e)
                         if e.kind() == std::io::ErrorKind::TimedOut
@@ -1371,7 +1422,16 @@ impl Connection {
                     Ok(strip_status_byte(payload, expected_len, "Burst"))
                 } else {
                     let cmd_byte = cmd.as_bytes().first().copied().unwrap_or(b'A');
-                    self.send_raw_command(&[cmd_byte])
+                    // This is the hot path — it repeats for every realtime
+                    // update — and the INI declares exactly how many bytes the
+                    // ECU will send, so the read need not wait out the
+                    // inter-character timeout to discover the message ended.
+                    let expected_len = self
+                        .protocol_settings
+                        .as_ref()
+                        .map(|p| p.och_block_size as usize)
+                        .filter(|n| *n > 0);
+                    self.send_raw_command_expecting(&[cmd_byte], expected_len)
                 }
             }
             RuntimeFetch::OCH(cmd) => {
@@ -2317,8 +2377,63 @@ impl Drop for Connection {
 
 #[cfg(test)]
 mod tests {
+
     #![allow(clippy::field_reassign_with_default)]
     use super::*;
+
+    /// The early-return condition is the whole safety surface of the
+    /// expected-length read: returning too soon yields a truncated message,
+    /// and never returning early gives back the 100 ms per poll this exists to
+    /// avoid. The loop needs a live serial channel, so the decision is tested
+    /// directly instead.
+    mod expected_length_reads {
+        use super::super::Connection;
+
+        #[test]
+        fn waits_for_the_line_to_quiet_when_no_length_is_declared() {
+            // Handshakes and any command whose reply length is not declared
+            // must behave exactly as before: never stop early.
+            assert!(!Connection::response_is_complete_impl(0, None));
+            assert!(!Connection::response_is_complete_impl(130, None));
+            assert!(!Connection::response_is_complete_impl(usize::MAX, None));
+        }
+
+        #[test]
+        fn a_declared_length_of_zero_means_unknown_not_empty() {
+            // An INI that omits ochBlockSize parses it as 0. Treating that as
+            // "expect nothing" would return an empty response on the first
+            // poll, breaking realtime data entirely.
+            assert!(!Connection::response_is_complete_impl(0, Some(0)));
+            assert!(!Connection::response_is_complete_impl(50, Some(0)));
+        }
+
+        #[test]
+        fn returns_once_the_declared_length_has_arrived() {
+            // ochBlockSize = 130 on a real Speeduino INI.
+            assert!(!Connection::response_is_complete_impl(0, Some(130)));
+            assert!(!Connection::response_is_complete_impl(129, Some(130)));
+            assert!(Connection::response_is_complete_impl(130, Some(130)));
+        }
+
+        #[test]
+        fn a_longer_than_declared_response_still_terminates() {
+            // If the ECU sends more than the INI promises, stop at the declared
+            // length rather than reading on: the surplus is discarded by the
+            // clear_input_buffer at the start of the next command, so it cannot
+            // desync the following exchange.
+            assert!(Connection::response_is_complete_impl(131, Some(130)));
+            assert!(Connection::response_is_complete_impl(500, Some(130)));
+        }
+
+        #[test]
+        fn a_short_response_falls_back_to_the_inter_character_timeout() {
+            // A truncated or interrupted reply never satisfies the length, so
+            // the loop keeps its original exit path and the caller still sees
+            // whatever arrived rather than hanging.
+            assert!(!Connection::response_is_complete_impl(1, Some(130)));
+            assert!(!Connection::response_is_complete_impl(64, Some(130)));
+        }
+    }
 
     #[test]
     fn test_connection_config_default() {

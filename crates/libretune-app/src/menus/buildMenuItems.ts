@@ -45,6 +45,7 @@ export interface BuildMenuItemsDeps {
   setTuneHistoryOpen: (open: boolean) => void;
   setSettingsDialogOpen: (open: boolean) => void;
   setMathChannelsDialogOpen: (open: boolean) => void;
+  setAfrDelayTestOpen: (open: boolean) => void;
   setBaseMapDialogOpen: (open: boolean) => void;
   setTableComparisonOpen: (open: boolean) => void;
   setTuneFileDiffOpen: (open: boolean) => void;
@@ -77,7 +78,7 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
     closeProject, handleCreateRestorePoint,
     setNewProjectDialogOpen, setImportProjectOpen, setSaveDialogOpen, setLoadDialogOpen,
     setBurnDialogOpen, setFirmwareUpdateDialogOpen, setRestorePointsOpen, setTuneHistoryOpen, setSettingsDialogOpen,
-    setMathChannelsDialogOpen, setBaseMapDialogOpen, setTableComparisonOpen,
+    setMathChannelsDialogOpen, setAfrDelayTestOpen, setBaseMapDialogOpen, setTableComparisonOpen,
     setTuneFileDiffOpen, setDynoOverlayOpen, setPluginPanelOpen, agentPanelVisible, setAgentPanelVisible, setConnectionDialogOpen,
     setUserManualOpen, setUserManualSection, setAboutDialogOpen, setSidebarVisible,
     setTheme, setTabs, setTabContents, setActiveTabId,
@@ -270,6 +271,9 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
   toolItems.push({ id: "tune-file-diff", label: t('tools.tuneFileDiff'), onClick: () => setTuneFileDiffOpen(true), disabled: !currentProject });
   toolItems.push({ id: "dyno-overlay", label: t('tools.dynoData'), onClick: () => setDynoOverlayOpen(true) });
   toolItems.push({ id: "math-channels", label: t('tools.mathChannels'), onClick: () => setMathChannelsDialogOpen(true), disabled: !currentProject });
+  // Requires a live ECU as well as a project; the command reports clearly
+  // if reqFuel cannot be read, so the menu only guards on the project.
+  toolItems.push({ id: "afr-delay-test", label: "AFR Delay Test…", onClick: () => setAfrDelayTestOpen(true), disabled: !currentProject });
   toolItems.push({ id: "base-map", label: t('tools.generateBaseMap'), onClick: () => setBaseMapDialogOpen(true), disabled: !currentProject });
   toolItems.push({ id: "sep4", label: "", separator: true });
   toolItems.push(

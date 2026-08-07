@@ -79,6 +79,10 @@ pub struct LoggingStatus {
     entry_count: usize,
     duration_ms: u64,
     channel_count: usize,
+    channels: Vec<String>,
+    /// Oldest samples dropped because the in-memory buffer hit its ceiling.
+    /// Nonzero means the log no longer covers the whole session (D7).
+    discarded_count: u64,
 }
 
 #[derive(Serialize)]
@@ -140,6 +144,12 @@ pub async fn start_logging(
         logger.set_sample_rate(rate);
     }
     logger.start();
+
+    // Reset the dropped-sample counter for this session and mark recording
+    // active so the stream tick counts (rather than silently swallows) any
+    // sample it can't hand to the logger while the lock is busy (D10).
+    crate::state::LOGGER_SAMPLES_DROPPED.store(0, std::sync::atomic::Ordering::Relaxed);
+    crate::state::LOGGER_RECORDING.store(true, std::sync::atomic::Ordering::Relaxed);
 
     Ok(())
 }
@@ -238,6 +248,7 @@ const PRIORITY_CHANNELS: &[&str] = &[
 pub async fn stop_logging(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut logger = state.data_logger.lock().await;
     logger.stop();
+    crate::state::LOGGER_RECORDING.store(false, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
@@ -251,6 +262,8 @@ pub async fn get_logging_status(
         entry_count: logger.entry_count(),
         duration_ms: logger.duration().as_millis() as u64,
         channel_count: logger.channels().len(),
+        channels: logger.channels().to_vec(),
+        discarded_count: logger.discarded_count(),
     })
 }
 

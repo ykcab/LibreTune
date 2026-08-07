@@ -73,6 +73,11 @@ mod tests {
 #[tauri::command]
 pub async fn stop_autotune(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut guard = state.autotune_state.lock().await;
+    tracing::info!(
+        accepted_samples = guard.total_samples(),
+        cells_with_recommendations = guard.recommendations.len(),
+        "stop_autotune: stopping (recommendations retained until cleared)"
+    );
     guard.stop();
 
     let mut secondary_guard = state.autotune_secondary_state.lock().await;
@@ -246,8 +251,14 @@ pub async fn send_autotune_recommendations(
         guard.get_recommendations()
     };
     if recs.is_empty() {
+        tracing::info!(table = %table_name, "send_autotune_recommendations: nothing to send (no recommendations accumulated)");
         return Err("No recommendations to send".to_string());
     }
+    tracing::info!(
+        table = %table_name,
+        recommendations = recs.len(),
+        "send_autotune_recommendations: applying to ECU RAM"
+    );
 
     // Snapshot what we need from the definition, then drop the lock before
     // doing any ECU I/O below — holding it across the read/write round-trip
@@ -345,6 +356,11 @@ pub async fn send_autotune_recommendations(
 
     conn.write_memory(write_params).map_err(|e| e.to_string())?;
 
+    tracing::info!(
+        table = %table_name,
+        cells_written = recs.len(),
+        "send_autotune_recommendations: written to ECU RAM (burn separately to persist)"
+    );
     Ok(())
 }
 
@@ -395,8 +411,10 @@ pub async fn burn_autotune_recommendations(
 
     let params = libretune_core::protocol::commands::BurnParams { can_id: 0, page };
 
+    tracing::info!(table = %table_name, page, "burn_autotune_recommendations: burning page to ECU flash");
     conn.burn(params).map_err(|e| e.to_string())?;
 
+    tracing::info!(table = %table_name, page, "burn_autotune_recommendations: burn complete");
     Ok(())
 }
 

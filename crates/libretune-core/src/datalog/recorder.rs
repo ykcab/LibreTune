@@ -7,8 +7,18 @@ use std::time::{Duration, Instant};
 
 use super::LogEntry;
 
-/// Maximum entries to keep in memory before flushing
-const MAX_BUFFER_SIZE: usize = 10000;
+/// Hard ceiling on entries kept in memory. Once reached, the oldest entries
+/// are discarded (and counted — see `discarded`).
+///
+/// The old ceiling was 10,000 samples. At the ~8 Hz the legacy read path
+/// managed that was ~21 minutes, and an ordinary 28-minute drive silently
+/// lost its first ~7 minutes (D7). Raising the realtime read rate (the
+/// expected-length read exit) makes this far worse: at 50 Hz, 10,000 samples
+/// is only ~3.3 minutes. This ceiling gives ~66 min at 50 Hz / ~5.5 h at
+/// 10 Hz. At ~77 f64 channels/entry that is roughly 120 MB worst case, which
+/// is acceptable for a desktop tool; streaming straight to disk removes the
+/// ceiling entirely and is the longer-term fix.
+const MAX_BUFFER_SIZE: usize = 200_000;
 
 /// Data logger state
 pub struct DataLogger {
@@ -24,6 +34,14 @@ pub struct DataLogger {
     sample_rate: f64,
     /// Next scheduled sample time (fixed cadence, avoids jitter drift)
     next_sample_due: Option<Instant>,
+    /// Oldest entries discarded because the buffer hit `max_buffer_size`.
+    /// Nonzero means the saved log is missing its earliest samples — surfaced
+    /// so the truncation is never silent (the failure mode behind D7).
+    discarded: u64,
+    /// Hard ceiling on retained entries. Defaults to `MAX_BUFFER_SIZE`; a
+    /// field (rather than the const directly) so tests can exercise the
+    /// discard path without pushing hundreds of thousands of samples.
+    max_buffer_size: usize,
 }
 
 impl DataLogger {
@@ -36,7 +54,17 @@ impl DataLogger {
             is_recording: false,
             sample_rate: 10.0, // Default 10 Hz
             next_sample_due: None,
+            discarded: 0,
+            max_buffer_size: MAX_BUFFER_SIZE,
         }
+    }
+
+    /// Override the buffer ceiling. Test-only: lets the discard/counter path
+    /// be exercised without pushing `MAX_BUFFER_SIZE` samples through the
+    /// real-time rate limiter.
+    #[cfg(test)]
+    fn set_max_buffer_size(&mut self, n: usize) {
+        self.max_buffer_size = n;
     }
 
     /// Set the target sample rate in Hz
@@ -98,9 +126,20 @@ impl DataLogger {
 
         let entry = LogEntry::new(timestamp, values);
 
-        // Manage buffer size
-        if self.buffer.len() >= MAX_BUFFER_SIZE {
+        // Manage buffer size. Discarding the oldest entry means the saved log
+        // will be missing its start; count it (and warn the first time) so the
+        // loss is visible rather than silent (D7).
+        if self.buffer.len() >= self.max_buffer_size {
             self.buffer.pop_front();
+            if self.discarded == 0 {
+                tracing::warn!(
+                    "Data log hit the {}-sample memory ceiling; oldest samples are now \
+                     being discarded. Save more often, or lower the sample rate, to keep \
+                     the whole session.",
+                    self.max_buffer_size
+                );
+            }
+            self.discarded += 1;
         }
 
         self.buffer.push_back(entry);
@@ -112,6 +151,12 @@ impl DataLogger {
             next_due += min_interval;
         }
         self.next_sample_due = Some(next_due);
+    }
+
+    /// Number of oldest samples discarded because the buffer hit its memory
+    /// ceiling. Nonzero means the log no longer covers the whole session.
+    pub fn discarded_count(&self) -> u64 {
+        self.discarded
     }
 
     /// Get the number of recorded entries
@@ -134,6 +179,7 @@ impl DataLogger {
         self.buffer.clear();
         self.start_time = None;
         self.next_sample_due = None;
+        self.discarded = 0;
     }
 
     /// Get the duration of the log
@@ -192,5 +238,27 @@ mod tests {
         logger.start();
         logger.record(vec![3000.0]);
         assert_eq!(logger.entry_count(), 1);
+    }
+
+    #[test]
+    fn discards_oldest_past_ceiling_and_counts_them() {
+        let mut logger = DataLogger::new(vec!["rpm".into()]);
+        logger.set_max_buffer_size(3);
+        logger.set_sample_rate(200.0); // 5 ms min interval
+        logger.start();
+
+        // Push 5 samples spaced past the rate-limit interval so each is kept.
+        for i in 0..5 {
+            logger.record(vec![i as f64]);
+            std::thread::sleep(Duration::from_millis(7));
+        }
+
+        // Buffer holds only the last 3; the 2 oldest were discarded and counted.
+        assert_eq!(logger.entry_count(), 3);
+        assert_eq!(logger.discarded_count(), 2);
+
+        // clear() resets the discard counter for a fresh session.
+        logger.clear();
+        assert_eq!(logger.discarded_count(), 0);
     }
 }

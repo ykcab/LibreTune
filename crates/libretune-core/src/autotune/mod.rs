@@ -13,6 +13,7 @@
 //! - Anomaly detection for identifying suspect data and tune problems
 //! - Tune health scoring with per-region quality assessment
 
+pub mod accel_enrich;
 pub mod anomaly;
 pub mod health;
 pub mod predictor;
@@ -327,6 +328,13 @@ impl AutoTuneState {
         }
     }
 
+    /// Number of samples that passed the filters this session — the
+    /// denominator behind each cell's hit percentage. Exposed for diagnostics
+    /// (e.g. logging how much data a session actually accepted).
+    pub fn total_samples(&self) -> u64 {
+        self.total_samples
+    }
+
     pub fn add_data_point(
         &mut self,
         point: VEDataPoint,
@@ -345,6 +353,25 @@ impl AutoTuneState {
         self.prune_data_buffer(point.timestamp_ms);
 
         if !self.passes_filters(&point, filters) {
+            // Throttled so a full drive doesn't flood the log, but enough to
+            // show *why* AutoTune "does nothing": compare these against the
+            // active filter thresholds (a warm-up CLT below min_clt and a
+            // tip-in TPS rate above max_tps_rate are the usual culprits).
+            static REJECTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = REJECTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 5 || n.is_multiple_of(100) {
+                tracing::debug!(
+                    rpm = point.rpm,
+                    clt = point.clt,
+                    tps_rate = point.tps_rate,
+                    min_rpm = filters.min_rpm,
+                    max_rpm = filters.max_rpm,
+                    min_clt = filters.min_clt,
+                    max_tps_rate = filters.max_tps_rate,
+                    rejected_so_far = n + 1,
+                    "AutoTune: sample rejected by filters"
+                );
+            }
             return;
         }
 
@@ -381,6 +408,21 @@ impl AutoTuneState {
             Some(hp) => hp,
             None => {
                 if self.strict_lambda_match {
+                    // Strict mode (the default) silently dropped these before,
+                    // a common reason accepted-sample counts stay near zero on
+                    // an otherwise-valid session. Throttled to stay readable.
+                    static NO_DELAY: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let n = NO_DELAY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if n < 5 || n.is_multiple_of(100) {
+                        tracing::debug!(
+                            timestamp_ms = point.timestamp_ms,
+                            delay_ms,
+                            dropped_so_far = n + 1,
+                            "AutoTune: sample dropped (strict lambda-delay: no delayed \
+                             buffer match at target delay)"
+                        );
+                    }
                     return;
                 }
                 tracing::warn!(
@@ -462,6 +504,27 @@ impl AutoTuneState {
         } else {
             0.0
         };
+
+        // Periodic proof-of-life: shows AutoTune is accepting samples and how
+        // the current cell's recommendation is evolving. Capturing these ends
+        // the `current_recs` borrow so `self` can be read for the summary.
+        let (rec_begin, rec_value, rec_hits) = (
+            current_recs.beginning_value,
+            current_recs.recommended_value,
+            current_recs.hit_count,
+        );
+        if self.total_samples.is_multiple_of(50) {
+            tracing::debug!(
+                total_accepted = self.total_samples,
+                cells_touched = self.recommendations.len(),
+                cell_x = cell_x_idx,
+                cell_y = cell_y_idx,
+                begin_ve = rec_begin,
+                recommended_ve = rec_value,
+                cell_hits = rec_hits,
+                "AutoTune: accepted sample"
+            );
+        }
     }
 
     /// Apply authority limits to clamp the recommended VE change
@@ -626,6 +689,61 @@ impl AutoTuneState {
 mod tests {
     #![allow(clippy::field_reassign_with_default)]
     use super::*;
+
+    /// Captures `tracing` event messages into a shared Vec so a test can assert
+    /// that a specific diagnostic actually fired (the whole point of D9: these
+    /// drop paths used to be silent).
+    #[derive(Clone, Default)]
+    struct LogCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogCapture {
+        fn on_event(&self, e: &tracing::Event<'_>, _c: tracing_subscriber::layer::Context<'_, S>) {
+            struct V(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+            impl tracing::field::Visit for V {
+                fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+                    if f.name() == "message" {
+                        self.0.lock().unwrap().push(format!("{v:?}"));
+                    }
+                }
+            }
+            e.record(&mut V(self.0.clone()));
+        }
+    }
+
+    #[test]
+    fn filter_rejected_sample_is_logged_not_silent() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let cap = LogCapture::default();
+        let logs = cap.0.clone();
+        let sub = tracing_subscriber::registry().with(cap);
+        tracing::subscriber::with_default(sub, || {
+            let mut st = AutoTuneState::new();
+            st.start();
+            let s = AutoTuneSettings::default();
+            let f = AutoTuneFilters::default(); // min_clt = 160
+            let a = AutoTuneAuthorityLimits::default();
+            // clt=20 is far below min_clt: the sample must be rejected AND logged
+            // (before D9 this path returned silently).
+            let p = VEDataPoint {
+                rpm: 2000.0,
+                load: 50.0,
+                afr: 14.0,
+                ve: 50.0,
+                clt: 20.0,
+                tps: 5.0,
+                tps_rate: 0.0,
+                timestamp_ms: 1000,
+                ..Default::default()
+            };
+            st.add_data_point(p, &[1000.0, 2000.0], &[40.0, 80.0], &s, &f, &a);
+        });
+        assert!(
+            logs.lock()
+                .unwrap()
+                .iter()
+                .any(|m| m.contains("rejected by filters")),
+            "a filtered-out sample must emit a diagnostic, not drop silently"
+        );
+    }
 
     #[test]
     fn custom_filter_allows_matching_point() {

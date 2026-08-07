@@ -18,6 +18,7 @@ import TableComparisonDialog from "./dialogs/TableComparisonDialog";
 import PerformanceFieldsDialog from "./dialogs/PerformanceFieldsDialog";
 import RestorePointsDialog from "./dialogs/RestorePointsDialog";
 import ImportProjectWizard from "./dialogs/ImportProjectWizard";
+import AfrDelayTestDialog from './dialogs/AfrDelayTestDialog';
 import MathChannelsDialog from "./dialogs/MathChannelsDialog";
 import MigrationReportDialog from "./dialogs/MigrationReportDialog";
 import TuneFileDiffDialog from "./dialogs/TuneFileDiffDialog";
@@ -81,6 +82,8 @@ export interface DialogOverlaysProps {
 
   // Math channels / About
   mathChannelsDialogOpen: boolean;
+  afrDelayTestOpen: boolean;
+  setAfrDelayTestOpen: (v: boolean) => void;
   setMathChannelsDialogOpen: (v: boolean) => void;
   aboutDialogOpen: boolean;
   setAboutDialogOpen: (v: boolean) => void;
@@ -202,6 +205,7 @@ export function DialogOverlays(props: DialogOverlaysProps) {
     setUnitsSystem, setAutoBurnOnClose, setStatus, setStatusBarChannels, setDefaultRuntimePacketMode,
     showEcuMenusInMenubar, setShowEcuMenusInMenubar,
     mathChannelsDialogOpen, setMathChannelsDialogOpen,
+    afrDelayTestOpen, setAfrDelayTestOpen,
     aboutDialogOpen, setAboutDialogOpen,
     connectionDialogOpen, setConnectionDialogOpen,
     ports, selectedPort, baudRate, timeoutMs, connectionType, setConnectionType,
@@ -274,6 +278,10 @@ export function DialogOverlays(props: DialogOverlaysProps) {
       {mathChannelsDialogOpen && (
         <MathChannelsDialog onClose={() => setMathChannelsDialogOpen(false)} />
       )}
+      <AfrDelayTestDialog
+        isOpen={afrDelayTestOpen}
+        onClose={() => setAfrDelayTestOpen(false)}
+      />
       <AboutDialog isOpen={aboutDialogOpen} onClose={() => setAboutDialogOpen(false)} />
       <ConnectionDialog
         isOpen={connectionDialogOpen}

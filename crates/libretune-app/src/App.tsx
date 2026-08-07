@@ -223,6 +223,7 @@ function AppContent() {
   const [newTuneDialogOpen, setNewTuneDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [mathChannelsDialogOpen, setMathChannelsDialogOpen] = useState(false);
+  const [afrDelayTestOpen, setAfrDelayTestOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -1409,7 +1410,7 @@ function AppContent() {
     closeProject, handleCreateRestorePoint,
     setNewProjectDialogOpen, setImportProjectOpen, setSaveDialogOpen, setLoadDialogOpen,
     setBurnDialogOpen, setFirmwareUpdateDialogOpen, setRestorePointsOpen, setTuneHistoryOpen, setSettingsDialogOpen,
-    setMathChannelsDialogOpen, setBaseMapDialogOpen, setTableComparisonOpen,
+    setMathChannelsDialogOpen, setAfrDelayTestOpen, setBaseMapDialogOpen, setTableComparisonOpen,
     setTuneFileDiffOpen, setDynoOverlayOpen, setPluginPanelOpen, agentPanelVisible, setAgentPanelVisible, setConnectionDialogOpen,
     setUserManualOpen, setUserManualSection, setAboutDialogOpen, setSidebarVisible,
     setTheme, setTabs, setTabContents, setActiveTabId,
@@ -1636,7 +1637,9 @@ function AppContent() {
         setStatusBarChannels={setStatusBarChannels}
         setDefaultRuntimePacketMode={setDefaultRuntimePacketMode}
         mathChannelsDialogOpen={mathChannelsDialogOpen}
+        afrDelayTestOpen={afrDelayTestOpen}
         setMathChannelsDialogOpen={setMathChannelsDialogOpen}
+        setAfrDelayTestOpen={setAfrDelayTestOpen}
         aboutDialogOpen={aboutDialogOpen}
         setAboutDialogOpen={setAboutDialogOpen}
         connectionDialogOpen={connectionDialogOpen}

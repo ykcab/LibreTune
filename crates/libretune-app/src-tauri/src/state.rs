@@ -98,7 +98,25 @@ pub struct StreamStats {
     pub transfer_reason: String,
     pub interval_ms: u64,
     pub started_at_ms: i64,
+    /// Realtime snapshots that could not be handed to the data logger because
+    /// its lock was held elsewhere while a recording was active. A nonzero
+    /// value means the saved log is missing samples (see [`LOGGER_SAMPLES_DROPPED`]).
+    pub samples_dropped: u64,
 }
+
+/// Count of realtime samples dropped because the data-logger lock was busy on a
+/// stream tick while recording (D10). The stream tick feeds the logger with
+/// `try_lock` so it never stalls; before this counter those drops were silent.
+/// Read into [`StreamStats::samples_dropped`] and reset when a recording starts.
+pub static LOGGER_SAMPLES_DROPPED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Whether a data-logging recording is currently active. Set by the start/stop
+/// logging commands so the stream tick can tell a genuinely dropped sample
+/// (lock busy *while recording*) from ordinary idle contention, without paying
+/// for the data-logger lock on the hot path.
+pub static LOGGER_RECORDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
