@@ -38,41 +38,6 @@ pub(crate) async fn stop_recording_on_definition_change(state: &AppState) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stops_an_active_recording() {
-        let mut logger = DataLogger::new(vec!["rpm".to_string()]);
-        logger.start();
-        assert!(logger.is_recording());
-
-        assert!(stop_if_recording(&mut logger));
-        assert!(!logger.is_recording());
-    }
-
-    #[test]
-    fn no_op_when_not_recording() {
-        let mut logger = DataLogger::new(vec!["rpm".to_string()]);
-        assert!(!logger.is_recording());
-
-        assert!(!stop_if_recording(&mut logger));
-        assert!(!logger.is_recording());
-    }
-
-    #[test]
-    fn preserves_already_recorded_entries() {
-        let mut logger = DataLogger::new(vec!["rpm".to_string()]);
-        logger.start();
-        logger.record(vec![1234.0]);
-        assert_eq!(logger.entry_count(), 1);
-
-        stop_if_recording(&mut logger);
-        assert_eq!(logger.entry_count(), 1);
-    }
-}
-
 #[derive(Serialize)]
 pub struct LoggingStatus {
     is_recording: bool,
@@ -199,7 +164,11 @@ fn default_log_channels(available: &HashSet<&str>) -> Vec<String> {
         push_unique_log_channel(&mut out, &mut seen_groups, name, available);
     }
     if out.is_empty() {
-        available.iter().take(16).map(|s| (*s).to_string()).collect()
+        available
+            .iter()
+            .take(16)
+            .map(|s| (*s).to_string())
+            .collect()
     } else {
         out
     }
@@ -411,6 +380,36 @@ pub async fn write_text_file(path: String, contents: String) -> Result<(), Strin
 mod tests {
     use super::*;
     use crate::commands::realtime_stream::{channel_canonical_key, resolve_log_channel_name};
+
+    #[test]
+    fn stops_an_active_recording() {
+        let mut logger = DataLogger::new(vec!["rpm".to_string()]);
+        logger.start();
+        assert!(logger.is_recording());
+
+        assert!(stop_if_recording(&mut logger));
+        assert!(!logger.is_recording());
+    }
+
+    #[test]
+    fn no_op_when_not_recording() {
+        let mut logger = DataLogger::new(vec!["rpm".to_string()]);
+        assert!(!logger.is_recording());
+
+        assert!(!stop_if_recording(&mut logger));
+        assert!(!logger.is_recording());
+    }
+
+    #[test]
+    fn preserves_already_recorded_entries() {
+        let mut logger = DataLogger::new(vec!["rpm".to_string()]);
+        logger.start();
+        logger.record(vec![1234.0]);
+        assert_eq!(logger.entry_count(), 1);
+
+        stop_if_recording(&mut logger);
+        assert_eq!(logger.entry_count(), 1);
+    }
 
     #[test]
     fn canonical_key_groups_rusefi_duplicates() {

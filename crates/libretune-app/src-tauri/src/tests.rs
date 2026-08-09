@@ -135,6 +135,8 @@ mod concurrency_tests {
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
             agent_task: Mutex::new(None),
+            app_start_epoch: AppState::process_start_epoch(),
+            inc_table_cache: AppState::new_inc_table_cache(),
         });
 
         // Simulate execute_controller_command pattern: lock def -> sleep -> lock conn
@@ -214,6 +216,8 @@ mod concurrency_tests {
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
             agent_task: Mutex::new(None),
+            app_start_epoch: AppState::process_start_epoch(),
+            inc_table_cache: AppState::new_inc_table_cache(),
         })
     }
 
@@ -454,6 +458,8 @@ signature = "Speeduino 2023-04"
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
             agent_task: Mutex::new(None),
+            app_start_epoch: AppState::process_start_epoch(),
+            inc_table_cache: AppState::new_inc_table_cache(),
         };
 
         let matches = find_matching_inis_from_state(&state, "Speeduino 2023-05").await;
@@ -523,6 +529,8 @@ signature = "Speeduino 2023-04"
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
             agent_task: Mutex::new(None),
+            app_start_epoch: AppState::process_start_epoch(),
+            inc_table_cache: AppState::new_inc_table_cache(),
         };
 
         let matches = find_matching_inis_from_state(&state, "Speeduino 2023-05").await;
@@ -595,6 +603,8 @@ signature = "Speeduino 2023-04"
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
             agent_task: Mutex::new(None),
+            app_start_epoch: AppState::process_start_epoch(),
+            inc_table_cache: AppState::new_inc_table_cache(),
         };
 
         // Partial match case
@@ -679,6 +689,8 @@ signature = "Speeduino 2023-04"
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
             agent_task: Mutex::new(None),
+            app_start_epoch: AppState::process_start_epoch(),
+            inc_table_cache: AppState::new_inc_table_cache(),
         };
 
         // Install factory returning a partial matching signature

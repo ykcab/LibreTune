@@ -567,7 +567,8 @@ export const DataLogView: React.FC = () => {
         is_recording: false,
         entry_count: data.length,
         duration_ms: duration,
-        channel_count: channels.length
+        channel_count: channels.length,
+        channels,
       });
       
     } catch (err) {

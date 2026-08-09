@@ -540,9 +540,8 @@ fn flash_with_stm32_programmer(
 
     let ext = firmware_extension(firmware_path);
     let address_arg = if ext == "bin" {
-        let address = bin_address.ok_or(
-            "Binary (.bin) files require a flash start address (DFU default: 0x08000000)",
-        )?;
+        let address = bin_address
+            .ok_or("Binary (.bin) files require a flash start address (DFU default: 0x08000000)")?;
         format!("0x{:08X}", address)
     } else {
         String::new()
@@ -585,9 +584,8 @@ fn flash_with_dfu_util(
 
     let ext = firmware_extension(firmware_path);
     let (ok, output) = if ext == "bin" {
-        let address = bin_address.ok_or(
-            "Binary (.bin) files require a flash start address (DFU default: 0x08000000)",
-        )?;
+        let address = bin_address
+            .ok_or("Binary (.bin) files require a flash start address (DFU default: 0x08000000)")?;
         let sector = format!("0x{:X}:leave", address);
         let args = ["-a", "0", "-s", sector.as_str(), "-D", firmware];
         run_command_capture(tool, &args)?

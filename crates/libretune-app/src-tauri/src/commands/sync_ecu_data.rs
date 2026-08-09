@@ -366,8 +366,7 @@ pub async fn sync_ecu_data(
         }
     };
 
-    let diff_pages =
-        pages_with_differences(&project_pages, &ecu_tune.pages, n_pages, &page_sizes);
+    let diff_pages = pages_with_differences(&project_pages, &ecu_tune.pages, n_pages, &page_sizes);
     let should_emit_mismatch = pages_failed == 0 && !diff_pages.is_empty();
 
     if should_emit_mismatch {

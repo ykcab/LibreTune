@@ -63,7 +63,15 @@ const REALTIME_CHANNEL_ALIASES: &[(&str, &[&str])] = &[
     (
         "ve",
         &[
-            "veValue", "currentVe", "VE1", "ve1", "veMain", "VEValue", "ve", "VE", "veCurr",
+            "veValue",
+            "currentVe",
+            "VE1",
+            "ve1",
+            "veMain",
+            "VEValue",
+            "ve",
+            "VE",
+            "veCurr",
         ],
     ),
     (
@@ -159,11 +167,8 @@ pub(crate) fn resolve_log_channel_name(
         return Some(preferred.to_string());
     }
     let key = channel_canonical_key(preferred);
-    if key != preferred && available.contains(key) {
+    if available.contains(key) {
         return Some(key.to_string());
-    }
-    if key == preferred {
-        return None;
     }
     for (alias, candidates) in REALTIME_CHANNEL_ALIASES {
         if *alias != key {
@@ -489,6 +494,8 @@ pub async fn start_realtime_stream(
         // For demo mode, create a simulator
         let mut demo_simulator: Option<DemoSimulator> = None;
         let start_time = std::time::Instant::now();
+        let mut string_ctx =
+            crate::commands::string_context::build_string_context(&app_state).await;
 
         // Cache output channels + endianness once before the loop.
         // These don't change during a session so there's no need to re-lock every tick.
@@ -569,6 +576,10 @@ pub async fn start_realtime_stream(
             ticker.tick().await;
             tick_count += 1;
             local_ticks_total += 1;
+            if tick_count.is_multiple_of(20) {
+                string_ctx =
+                    crate::commands::string_context::build_string_context(&app_state).await;
+            }
 
             // Trace: log which phase we're in so we can find deadlocks
             if tick_count <= 25 || tick_count.is_multiple_of(20) {
@@ -604,9 +615,11 @@ pub async fn start_realtime_stream(
                         for i in order {
                             let channel = &channels_guard[i];
                             if let Some(expr) = &channel.cached_ast {
-                                if let Ok(val) =
-                                    libretune_core::ini::expression::evaluate_simple(expr, &data)
-                                {
+                                if let Ok(val) = libretune_core::ini::expression::evaluate(
+                                    expr,
+                                    &data,
+                                    Some(&string_ctx),
+                                ) {
                                     data.insert(channel.name.clone(), val.as_f64());
                                 }
                             }
@@ -779,7 +792,12 @@ pub async fn start_realtime_stream(
 
                         // Pass 2: Evaluate computed channels using parsed values as context
                         for (name, channel) in computed_channels {
-                            if let Some(val) = channel.parse_with_context(raw, *endianness, &data) {
+                            if let Some(val) = channel.parse_with_contexts(
+                                raw,
+                                *endianness,
+                                &data,
+                                Some(&string_ctx),
+                            ) {
                                 data.insert(name, val);
                             }
                         }
@@ -798,11 +816,11 @@ pub async fn start_realtime_stream(
                             for i in order {
                                 let channel = &channels_guard[i];
                                 if let Some(expr) = &channel.cached_ast {
-                                    if let Ok(val) =
-                                        libretune_core::ini::expression::evaluate_simple(
-                                            expr, &data,
-                                        )
-                                    {
+                                    if let Ok(val) = libretune_core::ini::expression::evaluate(
+                                        expr,
+                                        &data,
+                                        Some(&string_ctx),
+                                    ) {
                                         data.insert(channel.name.clone(), val.as_f64());
                                     }
                                 }
@@ -979,6 +997,8 @@ mod stale_definition_guard_tests {
             math_channels: Mutex::new(Vec::new()),
             stream_stats: Mutex::new(StreamStats::default()),
             agent_task: Mutex::new(None),
+            app_start_epoch: AppState::process_start_epoch(),
+            inc_table_cache: AppState::new_inc_table_cache(),
         }
     }
 

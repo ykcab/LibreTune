@@ -137,10 +137,7 @@ pub async fn start_autotune(
         target_afr_table_name.as_deref(),
         lambda_delay_table_name.as_deref(),
     );
-    let afr_channel_hint = def
-        .ve_analyze
-        .as_ref()
-        .map(|v| v.lambda_channel.clone());
+    let afr_channel_hint = def.ve_analyze.as_ref().map(|v| v.lambda_channel.clone());
     let using_target_table = !reference_tables.target_afr_table.is_empty();
 
     // Flow-scaled lambda-delay table: when requested and no explicit per-cell
