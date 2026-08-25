@@ -87,6 +87,11 @@ pub struct AutotuneStatus {
     pub accepted_samples: u64,
     /// Filter rejections this session, most frequent reason first.
     pub rejections: Vec<AutotuneRejectionCount>,
+    pub saw_valid_afr: bool,
+    pub missing_afr_samples: u64,
+    pub using_target_table: bool,
+    pub afr_channel_hint: Option<String>,
+    pub recommendation_count: usize,
 }
 
 /// One row of the rejection tally exposed by [`AutotuneStatus`].
@@ -114,6 +119,9 @@ pub async fn get_autotune_status(
         })
         .collect();
     let accepted_samples = state_guard.total_samples();
+    let recommendation_count = state_guard.get_recommendations().len();
+    let running = state_guard.is_running;
+
     Ok(match config_guard.as_ref() {
         Some(config) => AutotuneStatus {
             running: true,
@@ -121,13 +129,23 @@ pub async fn get_autotune_status(
             secondary_table_name: config.secondary_table_name.clone(),
             accepted_samples,
             rejections,
+            saw_valid_afr: config.saw_valid_afr,
+            missing_afr_samples: config.missing_afr_samples,
+            using_target_table: config.using_target_table,
+            afr_channel_hint: config.afr_channel_hint.clone(),
+            recommendation_count,
         },
         None => AutotuneStatus {
-            running: false,
+            running,
             table_name: None,
             secondary_table_name: None,
             accepted_samples,
             rejections,
+            saw_valid_afr: false,
+            missing_afr_samples: 0,
+            using_target_table: false,
+            afr_channel_hint: None,
+            recommendation_count,
         },
     })
 }
@@ -148,46 +166,6 @@ pub async fn stop_autotune(state: tauri::State<'_, AppState>) -> Result<(), Stri
     // Clear the config
     *state.autotune_config.lock().await = None;
     Ok(())
-}
-
-/// Live AutoTune session health (AFR availability, etc.)
-#[derive(Serialize)]
-pub struct AutoTuneStatus {
-    pub is_running: bool,
-    pub saw_valid_afr: bool,
-    pub missing_afr_samples: u64,
-    pub using_target_table: bool,
-    pub afr_channel_hint: Option<String>,
-    pub recommendation_count: usize,
-}
-
-#[tauri::command]
-pub async fn get_autotune_status(
-    state: tauri::State<'_, AppState>,
-) -> Result<AutoTuneStatus, String> {
-    let config = state.autotune_config.lock().await;
-    let guard = state.autotune_state.lock().await;
-    let running = guard.is_running;
-    let rec_count = guard.get_recommendations().len();
-
-    Ok(match config.as_ref() {
-        Some(c) => AutoTuneStatus {
-            is_running: running,
-            saw_valid_afr: c.saw_valid_afr,
-            missing_afr_samples: c.missing_afr_samples,
-            using_target_table: c.using_target_table,
-            afr_channel_hint: c.afr_channel_hint.clone(),
-            recommendation_count: rec_count,
-        },
-        None => AutoTuneStatus {
-            is_running: false,
-            saw_valid_afr: false,
-            missing_afr_samples: 0,
-            using_target_table: false,
-            afr_channel_hint: None,
-            recommendation_count: 0,
-        },
-    })
 }
 
 #[derive(Serialize)]

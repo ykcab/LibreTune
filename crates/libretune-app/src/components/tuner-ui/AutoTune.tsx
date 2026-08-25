@@ -810,14 +810,14 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
     const tick = async () => {
       try {
         const status = await invoke<{
-          saw_valid_afr: boolean;
-          missing_afr_samples: number;
-          using_target_table: boolean;
+          sawValidAfr: boolean;
+          missingAfrSamples: number;
+          usingTargetTable: boolean;
         }>('get_autotune_status');
         if (!cancelled) {
-          setAfrHealthy(status.saw_valid_afr);
-          setUsingTargetTable(status.using_target_table);
-          if (!status.saw_valid_afr && status.missing_afr_samples > 20) {
+          setAfrHealthy(status.sawValidAfr);
+          setUsingTargetTable(status.usingTargetTable);
+          if (!status.sawValidAfr && status.missingAfrSamples > 20) {
             setSessionWarnings((prev) => {
               const msg =
                 'No valid AFR/lambda readings yet — check wideband channel / connection.';
