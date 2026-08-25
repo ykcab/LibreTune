@@ -8,7 +8,7 @@ import {
   type TableData as TunerTableData,
 } from "./tuner-ui";
 import TsDashboard from "./dashboards/TsDashboard";
-import { ToothLoggerView, CompositeLoggerView, OutputChannelStatus } from "./diagnostics";
+import { ToothLoggerView, CompositeLoggerView, OutputChannelStatus, KnockSpectrogramView } from "./diagnostics";
 import { EcuConsole } from "./console/EcuConsole";
 import { LuaConsole } from "./console/LuaConsole";
 import DialogRenderer, { type DialogDefinition as RendererDialogDef } from "./dialogs/DialogRenderer";
@@ -234,6 +234,13 @@ export function TabContentRouter(props: TabContentRouterProps) {
       return <ToothLoggerView onClose={() => handleTabClose("tooth-logger")} />;
     case "composite-logger":
       return <CompositeLoggerView onClose={() => handleTabClose("composite-logger")} />;
+    case "knock-spectrogram":
+      return (
+        <KnockSpectrogramView
+          onClose={() => handleTabClose("knock-spectrogram")}
+          isConnected={status.state === "Connected"}
+        />
+      );
     case "och-status":
       return <OutputChannelStatus />;
     case "console":

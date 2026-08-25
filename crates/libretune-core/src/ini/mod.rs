@@ -687,6 +687,7 @@ impl EcuDefinition {
             has_gamma_e: self.gamma_e.is_some(),
             supports_console: self.ecu_type.supports_console()
                 && !self.controller_commands.is_empty(),
+            has_knock_spectrogram: self.output_channels.contains_key("m_knockSpectrum1"),
             dfu_command_name: self
                 .controller_commands
                 .keys()

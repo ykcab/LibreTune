@@ -1,0 +1,125 @@
+.knock-spectrogram-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 16px;
+  gap: 12px;
+  min-height: 0;
+}
+
+.knock-spectrogram-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.knock-spectrogram-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.knock-spectrogram-title h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+.knock-spectrogram-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.knock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.knock-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.knock-btn.start {
+  background: var(--success, #2d8a4e);
+  color: #fff;
+}
+
+.knock-btn.stop {
+  background: var(--error, #b33a3a);
+  color: #fff;
+}
+
+.knock-btn.close {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.knock-spectrogram-error {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(179, 58, 58, 0.2);
+  color: #ffb4b4;
+  font-size: 13px;
+}
+
+.knock-spectrogram-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-muted, #9aa4b2);
+}
+
+.knock-spectrogram-canvas-wrap,
+.knock-magnitude-wrap {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0a0e14;
+}
+
+.knock-spectrogram-canvas-wrap {
+  flex: 1;
+  min-height: 220px;
+}
+
+.knock-spectrogram-canvas,
+.knock-magnitude-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.knock-magnitude-wrap {
+  height: 84px;
+  position: relative;
+}
+
+.knock-magnitude-label {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 1;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.knock-spectrogram-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #9aa4b2);
+  line-height: 1.4;
+}

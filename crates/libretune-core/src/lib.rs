@@ -49,6 +49,7 @@ pub mod demo;
 pub mod dynamic_table;
 pub mod ecu;
 pub mod ini;
+pub mod knock;
 pub mod llm;
 pub mod lua;
 pub mod pin_conflict;

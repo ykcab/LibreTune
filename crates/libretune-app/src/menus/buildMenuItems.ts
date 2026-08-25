@@ -230,6 +230,17 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
       { id: "composite-logger", label: t('tools.compositeLogger'), onClick: () => openTarget("composite-logger", "Composite Logger"), disabled: !currentProject }
     );
   }
+  if (caps?.has_knock_spectrogram) {
+    if (toolItems.length > 0 && !caps?.has_logger_definitions) {
+      toolItems.push({ id: "sep-knock", label: "", separator: true });
+    }
+    toolItems.push({
+      id: "knock-spectrogram",
+      label: "&Knock Spectrogram",
+      onClick: () => openTarget("knock-spectrogram", "Knock Spectrogram"),
+      disabled: !currentProject,
+    });
+  }
   if (caps?.supports_console) {
     if (toolItems.length > 0) toolItems.push({ id: "sep2", label: "", separator: true });
     toolItems.push({

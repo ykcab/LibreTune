@@ -556,6 +556,7 @@ function AppContent() {
                "autotune": { title: "AutoTune", icon: "autotune", type: "autotune" },
                "tooth-logger": { title: "Tooth Logger", icon: "scope", type: "tooth-logger" },
                "composite-logger": { title: "Composite Logger", icon: "scope", type: "composite-logger" },
+               "knock-spectrogram": { title: "Knock Spectrogram", icon: "scope", type: "knock-spectrogram" },
                "och-status": { title: "Output Channel Status", icon: "dashboard", type: "och-status" },
                "lua-console": { title: "Lua Console", icon: "terminal", type: "lua-console" },
                "settings": { title: "Settings", icon: "settings", type: "settings" },

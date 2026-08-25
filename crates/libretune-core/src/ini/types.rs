@@ -126,6 +126,8 @@ pub struct IniCapabilities {
     pub has_wue_analyze: bool,
     pub has_gamma_e: bool,
     pub supports_console: bool,
+    /// True when OCH publishes `m_knockSpectrum1` (rusEFI-family spectrogram).
+    pub has_knock_spectrogram: bool,
     /// Name of the `cmd_dfu` controller command when defined in the INI.
     pub dfu_command_name: Option<String>,
     /// Name of the `cmd_openblt` controller command when defined in the INI.

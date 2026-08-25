@@ -113,6 +113,13 @@ export async function openTargetImpl(
     return;
   }
 
+  if (name === "knock-spectrogram") {
+    setTabs([...tabs, { id: "knock-spectrogram", title: title || "Knock Spectrogram", icon: "scope" }]);
+    setTabContents({ ...tabContents, "knock-spectrogram": { type: "knock-spectrogram" } });
+    setActiveTabId("knock-spectrogram");
+    return;
+  }
+
   if (name === "datalog-viewer") {
     setTabs([...tabs, { id: "datalog-viewer", title: title || "Datalog Viewer", icon: "autotune" }]);
     setTabContents({ ...tabContents, "datalog-viewer": { type: "datalog-viewer" } });
