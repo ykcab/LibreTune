@@ -42,11 +42,15 @@ impl EcuType {
             return EcuType::FOME;
         }
 
-        // Check for epicEFI (contains "epicECU" or filename suggests it)
-        if sig_lower.contains("epicECU")
+        // epicEFI signatures look like "epicEFI dev.2026.08.25.alphax-…" and
+        // older INI filenames used "epicECU". Compare against the lowercased
+        // forms only — a prior check for "epicECU" on a lowercased string never
+        // matched, so live epicEFI boards were misclassified as Unknown.
+        if sig_lower.contains("epicefi")
+            || sig_lower.contains("epicecu")
             || filename_lower
                 .as_ref()
-                .is_some_and(|f| f.contains("epicECU"))
+                .is_some_and(|f| f.contains("epicefi") || f.contains("epicecu"))
         {
             return EcuType::EpicEFI;
         }
@@ -1180,6 +1184,33 @@ mod tests {
                 cols_const: Some("veTableCols".into()),
                 rows_const: "veTableRows".into(),
             })
+        );
+    }
+
+    #[test]
+    fn detect_epicefi_signature_prefix() {
+        // Live TunerStudio / epicEFI boards report this style of signature.
+        assert_eq!(
+            EcuType::detect("epicEFI dev.2026.08.25.alphax-8chan_f7.1137995296", None),
+            EcuType::EpicEFI
+        );
+        assert_eq!(EcuType::detect("epicECU test", None), EcuType::EpicEFI);
+        assert_eq!(
+            EcuType::detect(
+                "rusEFI master.2025.06.22",
+                Some("rusEFI2025062101.2025.06.22.epicECU.1005735475.ini")
+            ),
+            EcuType::EpicEFI
+        );
+        assert!(EcuType::EpicEFI.supports_console());
+        assert_eq!(EcuType::EpicEFI.display_name(), "epicEFI");
+    }
+
+    #[test]
+    fn detect_does_not_confuse_rusefi_with_epicefi() {
+        assert_eq!(
+            EcuType::detect("rusEFI master.2025.07.30.uaefi.3074276223", None),
+            EcuType::RusEFI
         );
     }
 }
