@@ -48,7 +48,9 @@ export default function TuneComparisonDialog({
     setLoading(true);
     setError(null);
     try {
-      await invoke("save_tune_to_project");
+      // Must use use_ecu_tune — save_tune_to_project alone would persist the
+      // project-side cache left in place while the mismatch dialog is open.
+      await invoke("use_ecu_tune");
       onUseEcuTune();
       onClose();
     } catch (e) {

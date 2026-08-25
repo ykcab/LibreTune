@@ -269,4 +269,22 @@ mod tests {
         let pages = materialize_project_pages(&def, &msq, &ecu_base);
         assert_eq!(pages.get(&0).unwrap()[0], 0x00);
     }
+
+    #[test]
+    fn wrong_length_page_data_is_not_authoritative() {
+        // Regression context for Use ECU Settings: if CurrentTune.msq keeps
+        // stale constants and pageData is not exact INI length, materialize
+        // re-applies those constants and the mismatch dialog returns forever.
+        let def = tiny_def();
+        let mut ecu_base = HashMap::new();
+        ecu_base.insert(0u8, vec![0x01, 0x00, 0x00, 0x00]);
+
+        let mut msq = TuneFile::new("test");
+        msq.pages.insert(0, vec![0x01, 0x00]); // incomplete vs page size 4
+        msq.constants
+            .insert("flagBits".into(), TuneValue::String("false".into()));
+
+        let pages = materialize_project_pages(&def, &msq, &ecu_base);
+        assert_eq!(pages.get(&0).unwrap()[0], 0x00);
+    }
 }
