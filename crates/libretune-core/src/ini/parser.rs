@@ -46,6 +46,38 @@ struct IncludeContext {
     depth: usize,
     /// Symbols defined via #set directive (shared across includes)
     pub defined_symbols: HashSet<String>,
+    /// Every symbol this INI actually tests in an `#if`, whether or not it was
+    /// defined. Lets a caller ask "does this file care about CELSIUS?" without
+    /// re-reading it - and so avoids prompting for a unit an INI never uses.
+    pub tested_symbols: HashSet<String>,
+}
+
+/// Preprocessor symbols every parse starts with, on top of anything the INI
+/// `#set`s itself.
+///
+/// TunerStudio seeds these from the project's `ecuSettings` line
+/// (`ecuSettings=AFR|CELSIUS|…`), which is how an INI's `#if CELSIUS` blocks
+/// select metric units. Nothing carried that into LibreTune, so the `#else`
+/// arm always won and every temperature came out in Fahrenheit while wearing
+/// the INI's generic "TEMP" label — a 23 °C cold start read 73 on the gauge.
+/// The host application sets this from its own units preference.
+static DEFAULT_SYMBOLS: std::sync::RwLock<Option<HashSet<String>>> = std::sync::RwLock::new(None);
+
+/// Replace the preprocessor symbols seeded into every subsequent parse.
+/// Call before loading a definition; affects parses started after it returns.
+pub fn set_default_symbols<I: IntoIterator<Item = String>>(symbols: I) {
+    let set: HashSet<String> = symbols.into_iter().collect();
+    if let Ok(mut guard) = DEFAULT_SYMBOLS.write() {
+        *guard = Some(set);
+    }
+}
+
+fn default_symbols() -> HashSet<String> {
+    DEFAULT_SYMBOLS
+        .read()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_default()
 }
 
 impl IncludeContext {
@@ -54,7 +86,8 @@ impl IncludeContext {
             base_dir: base_path.and_then(|p| p.parent().map(|d| d.to_path_buf())),
             included_files: HashSet::new(),
             depth: 0,
-            defined_symbols: HashSet::new(),
+            defined_symbols: default_symbols(),
+            tested_symbols: HashSet::new(),
         }
     }
 
@@ -76,7 +109,11 @@ impl IncludeContext {
 
 /// Parse a complete INI file into an EcuDefinition
 pub fn parse_ini(content: &str) -> Result<EcuDefinition, IniError> {
-    parse_ini_internal(content, &mut IncludeContext::new(None))
+    let mut ctx = IncludeContext::new(None);
+    let mut def = parse_ini_internal(content, &mut ctx)?;
+    def.active_symbols = ctx.defined_symbols.clone();
+    def.tested_symbols = ctx.tested_symbols.clone();
+    Ok(def)
 }
 
 /// Parse an INI file from a path, enabling #include directive support
@@ -87,7 +124,12 @@ pub fn parse_ini_from_path(path: &Path) -> Result<EcuDefinition, IniError> {
     let mut ctx = IncludeContext::new(Some(path));
     ctx.included_files.insert(canonical);
 
-    parse_ini_internal(&content, &mut ctx)
+    // The symbols travel with the definition: they record which arm of every
+    // `#if` this parse took, including any the INI `#set` itself.
+    let mut def = parse_ini_internal(&content, &mut ctx)?;
+    def.active_symbols = ctx.defined_symbols.clone();
+    def.tested_symbols = ctx.tested_symbols.clone();
+    Ok(def)
 }
 
 /// Read an INI file with encoding fallback (UTF-8 first, then Windows-1252).
@@ -107,6 +149,9 @@ fn read_ini_file(path: &Path) -> Result<String, IniError> {
 /// Internal parsing function that handles #include directives
 fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefinition, IniError> {
     let mut definition = EcuDefinition::default();
+    // Raw `[LoggerDefinition]` lines, kept so the diagnostic loggers can be
+    // parsed as blocks after the line-at-a-time pass finishes.
+    let mut logger_section_lines: Vec<String> = Vec::new();
     let mut current_section = String::new();
     let mut state = ParserState {
         current_page: 0,
@@ -166,6 +211,7 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
         if let Some(stripped) = line.strip_prefix("#if ") {
             let symbol = stripped.trim();
             let is_defined = ctx.defined_symbols.contains(symbol);
+            ctx.tested_symbols.insert(symbol.to_string());
             tracing::debug!("preprocessor: #if {} -> {}", symbol, is_defined);
             condition_stack.push(is_defined);
             i += 1;
@@ -352,7 +398,13 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
                 "settingcontexthelp" => parse_setting_context_help(&mut definition, key, value),
                 "frontpage" => parse_frontpage_entry(&mut definition, key, value),
                 "controllercommands" => parse_controller_command_entry(&mut definition, key, value),
-                "loggerdefinition" => parse_logger_definition_entry(&mut definition, key, value),
+                "loggerdefinition" => {
+                    // Keep the raw line too: diagnostic loggers are BLOCKS
+                    // (a `loggerDef` opens one, indented keys follow), which
+                    // the line-at-a-time dispatch cannot represent.
+                    logger_section_lines.push(line.to_string());
+                    parse_logger_definition_entry(&mut definition, key, value)
+                }
                 "porteditor" => parse_port_editor_entry(&mut definition, key, value),
                 "referencetables" => parse_reference_table_entry(&mut definition, key, value),
                 "ftpbrowser" => parse_ftp_browser_entry(&mut definition, key, value),
@@ -418,6 +470,36 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str()),
     );
+
+    // Roles are declared by `[VeAnalyze]`/`[WueAnalyze]`, which may sit in any
+    // file of an include tree, so they can only be resolved once everything has
+    // been merged. `depth == 0` is the outermost parse; nested calls are
+    // include files still being folded into it.
+    //
+    // Doing it here rather than in each entry point means a caller cannot
+    // forget: `infer_table_roles()` already existed and was correct, but
+    // nothing ever called it, so every table kept `TableRole::Other`.
+    if ctx.depth == 0 {
+        definition.infer_table_roles();
+    }
+    // Envelope byte order stays at the big-endian msEnvelope_1.0 default.
+    //
+    // This previously forced little-endian for Speeduino, reasoning from a
+    // comms.cpp comment ("TS comms is little-endian"). Real hardware says
+    // otherwise: a Speeduino 2025.01.4 on a Mega2560 answered the CRC
+    // handshake only after the byte order was flipped to BigEndian, and its
+    // replies frame the length big-endian (`00 01 | rc | crc32`). The comment
+    // describes the ECU's internal representation, not the wire envelope. The
+    // handshake's flip-retry still covers a firmware that genuinely differs.
+
+    // Diagnostic loggers, parsed as blocks from the raw section text. Doing it
+    // here rather than per-line is what lets a `loggerDef` own the indented
+    // keys that follow it.
+    if !logger_section_lines.is_empty() {
+        let refs: Vec<&str> = logger_section_lines.iter().map(String::as_str).collect();
+        definition.diagnostic_loggers =
+            crate::ini::diagnostic_logger::parse_logger_definitions(&refs);
+    }
 
     Ok(definition)
 }
@@ -542,6 +624,19 @@ fn merge_definitions(target: &mut EcuDefinition, source: EcuDefinition) {
 /// Note: '#' is handled at the line level for preprocessor directives
 /// Special case: Don't strip semicolons in field names before '=' (for help text syntax)
 fn strip_comment(line: &str) -> String {
+    // A line whose first non-whitespace character is ';' is a comment in its
+    // entirety, including commented-out properties like ";name = value".
+    // The help-text branch below intentionally keeps semicolons that appear
+    // before '=', but that syntax is "fieldname;+help" — it always has a field
+    // name in front. Without this guard a commented-out property survives
+    // stripping and is parsed as a real entry whose name is the empty string
+    // (extract_help_text slices [..0]). In the stock Speeduino INI that turns
+    // 148 commented-out lines into live properties, and writes a junk
+    // <entry name=""/> into every saved tune's constant manifest.
+    if line.trim_start().starts_with(';') {
+        return String::new();
+    }
+
     // First pass: Check if line contains '=' (outside quotes)
     // This allows us to distinguish between properties (key=val) and other lines (headers, directives)
     let mut has_equals = false;
@@ -999,7 +1094,19 @@ fn parse_constants_entry(
             def.protocol.block_read_timeout = clean.parse().unwrap_or(1000);
             return;
         }
-        "writeblocks" => {
+        // Speeduino's INI declares this inside [Constants], but only the
+        // [MegaTune]/[TunerStudio] parsers had an arm for it, so the value fell
+        // through to the generic constant parser and `delay_after_port_open`
+        // silently kept its 0 default. The handshake then raced the port open by
+        // ~24 ms instead of waiting the declared 1000 ms.
+        "delayafterportopen" => {
+            let clean = value.split(';').next().unwrap_or("").trim();
+            def.protocol.delay_after_port_open = clean.parse().unwrap_or(0);
+            return;
+        }
+        // Same section-scope gap, plus the key here is `tsWriteBlocks`; the
+        // existing arm only matched the bare `writeBlocks` spelling.
+        "writeblocks" | "tswriteblocks" => {
             def.protocol.write_blocks =
                 value.to_lowercase() == "on" || value == "1" || value.to_lowercase() == "true";
             return;
@@ -2287,10 +2394,20 @@ fn parse_user_defined_entry(
                     .map(|s| s.trim_matches('"').to_string())
                     .unwrap_or_else(|| name.clone());
 
+                // Format: dialog = name, "title" [, layoutHint] [, {condition}]
+                // layoutHint (e.g. "xAxis") is the first remaining part that
+                // isn't a braced condition.
+                let layout_hint = parts
+                    .iter()
+                    .skip(2)
+                    .find(|p| !p.trim().starts_with('{'))
+                    .map(|p| p.trim().to_string());
+
                 let dialog = DialogDefinition {
                     name: name.clone(),
                     title,
                     components: Vec::new(),
+                    layout_hint,
                 };
                 def.dialogs.insert(name.clone(), dialog);
                 *current_dialog = Some(name);
@@ -2299,11 +2416,18 @@ fn parse_user_defined_entry(
             }
         }
         "indicatorpanel" => {
-            // Format: indicatorPanel = name, columns [, {visibility_condition}]
+            // Format: indicatorPanel = name [, columns] [, {visibility_condition}]
+            // `columns` is optional in the wild (e.g. rusEFI's
+            // fuelClosedLoopIndicatorsPanel omits it) — requiring it dropped
+            // the whole panel silently, which also left current_dialog
+            // pointing at whatever dialog was last opened (this arm only
+            // clears it inside the block below), so the indicator lines
+            // meant for this panel got misattributed there as bare
+            // single-indicator fields instead.
             let parts = split_ini_line(value);
-            if parts.len() >= 2 {
+            if !parts.is_empty() {
                 let name = parts[0].to_string();
-                let columns = parts[1].parse::<u8>().unwrap_or(2);
+                let columns = parts.get(1).and_then(|p| p.parse::<u8>().ok()).unwrap_or(2);
 
                 // Check for visibility condition (last part in braces)
                 let visibility_condition = parts
@@ -2952,12 +3076,25 @@ fn parse_ve_analyze_entry(def: &mut EcuDefinition, key: &str, value: &str) {
     match key_lower.as_str() {
         "veanalyzemap" => {
             // veAnalyzeMap = veTableTbl, lambdaTableTbl, lambdaValue, egoCorrectionForVeAnalyze, { 1 }
-            if parts.len() >= 5 {
+            //
+            // The fifth field, activeCondition, is OPTIONAL - Speeduino writes
+            // only four:
+            //   veAnalyzeMap = veTable1Tbl, afrTable1Tbl, afr, egoCorrection
+            //
+            // Requiring five discarded the entire declaration for every
+            // Speeduino INI, silently: no VE role, no AFR-target role, and
+            // AutoTune fell back to a flat 14.7 target for every cell. On a
+            // real drive that asked to pull ~15% fuel out of the WOT region,
+            // where the target table actually calls for 12.7.
+            if parts.len() >= 4 {
                 config.ve_table_name = parts[0].trim().to_string();
                 config.target_table_name = parts[1].trim().to_string();
                 config.lambda_channel = parts[2].trim().to_string();
                 config.ego_correction_channel = parts[3].trim().to_string();
-                config.active_condition = parts[4].trim().to_string();
+                config.active_condition = parts
+                    .get(4)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
             }
         }
         "lambdatargettables" => {
@@ -3167,6 +3304,196 @@ fn parse_constants_extensions_entry(def: &mut EcuDefinition, key: &str, value: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+
+    /// An INI picks metric units with `#if CELSIUS`. TunerStudio defines that
+    /// from the project's `ecuSettings`; nothing carried it into LibreTune, so
+    /// the Fahrenheit `#else` arm always won and a 23 degC cold start read 73
+    /// on the gauge under a generic "TEMP" label.
+    ///
+    /// Serialized against [`a_definition_remembers_the_symbols_it_was_parsed_with`]:
+    /// both tests toggle the process-wide `DEFAULT_SYMBOLS` seed, and cargo
+    /// runs tests in parallel by default, so without this they can interleave
+    /// and flip each other's seed between `set_default_symbols` and `parse_ini`.
+    #[test]
+    #[serial(default_symbols)]
+    fn celsius_symbol_selects_the_metric_branch() {
+        let ini = concat!(
+            "[Constants]
+",
+            "page = 1
+",
+            "#if CELSIUS
+",
+            "tempTest = scalar, U08, 0, \"C\", 1.0, -40, -40, 102.0, 0
+",
+            "#else
+",
+            "tempTest = scalar, U08, 0, \"F\", 1.8, -22.23, -40, 215.0, 0
+",
+            "#endif
+"
+        );
+
+        set_default_symbols(Vec::<String>::new());
+        let f = parse_ini(ini).expect("parses");
+        assert_eq!(
+            f.constants.get("tempTest").map(|c| c.units.as_str()),
+            Some("F"),
+            "without the symbol the Fahrenheit branch is taken"
+        );
+
+        set_default_symbols(vec!["CELSIUS".to_string()]);
+        let c = parse_ini(ini).expect("parses");
+        assert_eq!(
+            c.constants.get("tempTest").map(|c| c.units.as_str()),
+            Some("C"),
+            "seeding CELSIUS must select the metric branch"
+        );
+        set_default_symbols(Vec::<String>::new());
+    }
+
+    /// A definition records which arm of every `#if` it took, so a later
+    /// change to the seed cannot move the answer underneath it.
+    ///
+    /// The gauge label is rendered from this ("TEMP" becomes degC or degF)
+    /// while the value comes from arithmetic baked in at parse time. When the
+    /// label was read from the process-wide seed instead, saving the units
+    /// preference mid-session relabelled every temperature to degC while it
+    /// went on computing Fahrenheit - a gauge reading 176 degC for an 80 degC
+    /// coolant, which is worse than being imperial throughout because it looks
+    /// plausible. Keeping the answer on the definition also means this holds
+    /// with other parses running concurrently.
+    #[test]
+    #[serial(default_symbols)]
+    fn a_definition_remembers_the_symbols_it_was_parsed_with() {
+        let ini = "[Constants]
+page = 1
+#if CELSIUS
+tempTest = scalar, U08, 0, \"C\", 1.0, -40, -40, 102.0, 0
+#else
+tempTest = scalar, U08, 0, \"F\", 1.8, -22.23, -40, 215.0, 0
+#endif
+";
+
+        set_default_symbols(vec!["CELSIUS".to_string()]);
+        let celsius_def = parse_ini(ini).expect("parses");
+        assert_eq!(
+            celsius_def
+                .constants
+                .get("tempTest")
+                .map(|c| c.units.as_str()),
+            Some("C")
+        );
+        assert!(celsius_def.symbol_is_active("CELSIUS"));
+
+        // Change the seed WITHOUT reparsing, exactly as saving the units
+        // setting does. The definition already loaded is still the Celsius one
+        // and must keep saying so - that is what keeps its labels honest.
+        set_default_symbols(Vec::<String>::new());
+        assert!(
+            celsius_def.symbol_is_active("CELSIUS"),
+            "a loaded definition does not change units because a setting did"
+        );
+
+        // Reparsing is what makes the new seed take effect.
+        let imperial_def = parse_ini(ini).expect("parses");
+        assert_eq!(
+            imperial_def
+                .constants
+                .get("tempTest")
+                .map(|c| c.units.as_str()),
+            Some("F")
+        );
+        assert!(!imperial_def.symbol_is_active("CELSIUS"));
+        // ...and the older definition is untouched by it.
+        assert!(celsius_def.symbol_is_active("CELSIUS"));
+    }
+
+    /// Speeduino's `veAnalyzeMap` has four fields, not five.
+    ///
+    /// The fifth (activeCondition) is optional and Speeduino omits it, but the
+    /// parser required it - so the whole declaration was dropped and every
+    /// table kept `TableRole::Other`. AutoTune then could not find the AFR
+    /// target table, fell back to a flat 14.7 for every cell, and on a real
+    /// drive recommended pulling ~15% fuel out of the WOT region where the
+    /// target table asks for 12.7. On an engine without knock detection that
+    /// is an engine-damage bug, so it is pinned with the real INI's own text.
+    #[test]
+    fn ve_analyze_map_parses_speeduinos_four_field_form() {
+        let ini = "[TableEditor]
+table = veTable1Tbl, veTable1, \"VE Table\", 2
+table = afrTable1Tbl, afrTable1, \"AFR Table\", 2
+[VeAnalyze]
+veAnalyzeMap = veTable1Tbl, afrTable1Tbl, afr, egoCorrection
+";
+        let def = parse_ini(ini).expect("parses");
+        let cfg = def.ve_analyze.as_ref().expect("VeAnalyze config present");
+        assert_eq!(cfg.ve_table_name, "veTable1Tbl");
+        assert_eq!(cfg.target_table_name, "afrTable1Tbl");
+        assert_eq!(cfg.lambda_channel, "afr");
+        assert_eq!(cfg.ego_correction_channel, "egoCorrection");
+        assert_eq!(
+            cfg.active_condition, "",
+            "absent optional field stays empty"
+        );
+    }
+
+    /// Roles must be inferred by the time a caller sees the definition.
+    ///
+    /// `infer_table_roles()` was correct but called from nowhere, so every
+    /// table stayed `Other` and the AFR-target lookup could never succeed for
+    /// any INI. The fallback it dropped into guesses by name from a list
+    /// containing both `afrTable` and `lambdaTable` - which on a lambda INI
+    /// compares a ~0.88 target against a ~13 measured AFR.
+    #[test]
+    fn parsing_assigns_table_roles() {
+        let ini = "[TableEditor]
+table = veTable1Tbl, veTable1, \"VE Table\", 2
+table = afrTable1Tbl, afrTable1, \"AFR Table\", 2
+table = sparkTbl, spark, \"Spark Table\", 2
+[VeAnalyze]
+veAnalyzeMap = veTable1Tbl, afrTable1Tbl, afr, egoCorrection
+";
+        let def = parse_ini(ini).expect("parses");
+        let role = |n: &str| {
+            def.tables
+                .values()
+                .find(|t| t.name == n)
+                .map(|t| t.role)
+                .unwrap_or(crate::ini::TableRole::Other)
+        };
+        assert_eq!(role("veTable1Tbl"), crate::ini::TableRole::Ve);
+        assert_eq!(role("afrTable1Tbl"), crate::ini::TableRole::AfrTarget);
+        assert_eq!(role("sparkTbl"), crate::ini::TableRole::Ignition);
+    }
+
+    /// Speeduino declares these in `[Constants]`, where the section parser had
+    /// no arm for either — `delayAfterPortOpen` stayed 0 (handshake raced the
+    /// port open) and `tsWriteBlocks` was never matched at all because only the
+    /// bare `writeBlocks` spelling was handled.
+    #[test]
+    fn constants_section_parses_port_open_delay_and_ts_write_blocks() {
+        let mut def = EcuDefinition::default();
+        let (mut page, mut offset) = (0u8, 0u16);
+
+        assert_eq!(def.protocol.delay_after_port_open, 0, "default is 0");
+        parse_constants_entry(
+            &mut def,
+            "delayAfterPortOpen",
+            "1000 ; let the board settle",
+            &mut page,
+            &mut offset,
+        );
+        assert_eq!(def.protocol.delay_after_port_open, 1000);
+
+        def.protocol.write_blocks = false;
+        parse_constants_entry(&mut def, "tsWriteBlocks", "on", &mut page, &mut offset);
+        assert!(
+            def.protocol.write_blocks,
+            "tsWriteBlocks spelling must match"
+        );
+    }
 
     #[test]
     fn test_strip_comment() {
@@ -3250,6 +3577,77 @@ maxUnusedRuntimeRange = 42
 "#;
         let def = parse_ini(content).expect("Should parse successfully");
         assert_eq!(def.protocol.max_unused_runtime_range, 42);
+    }
+
+    #[test]
+    fn indicator_panel_without_a_columns_count_still_registers() {
+        // Verbatim shape from a real rusEFI INI: indicatorPanel omitting the
+        // `, columns` parameter (unlike its sibling panels, which all give
+        // one) used to be silently dropped entirely — `columns` was treated
+        // as required, not optional as its own doc comment claimed. Losing
+        // the panel also stranded its `indicator =` lines: with
+        // current_indicator_panel never set, they fell through to the
+        // "attach to current_dialog" fallback and landed as bare fields on
+        // whatever dialog was last opened, instead of on this panel.
+        let content = r#"
+[UserDefined]
+	dialog = someOtherDialog, "Unrelated"
+		field = "Unrelated field", someConstant
+
+	indicatorPanel = fuelClosedLoopIndicatorsPanel
+		indicator = { stftCorrectionState != 0 }, { Correction using bitStringValue(stftBinIdxList, stftCorrectionBinIdx) region }, { Not active: bitStringValue(stftStateList, stftCorrectionState) }, green, black, white, black
+		indicator = { isTuningNow }, "No tuning happening", "Tuning Detected", white, black, green, black
+"#;
+        let def = parse_ini(content).expect("Should parse successfully");
+
+        let panel = def
+            .indicator_panels
+            .get("fuelClosedLoopIndicatorsPanel")
+            .expect("panel should be registered even without an explicit columns count");
+        assert_eq!(panel.columns, 2, "missing columns should default to 2");
+        assert_eq!(panel.indicators.len(), 2);
+        assert_eq!(
+            panel.indicators[1].label_on, "Tuning Detected",
+            "indicator lines after a columns-less panel header must attach to that panel"
+        );
+
+        // The earlier dialog must not have picked up these indicators as
+        // stray fields — that was the visible symptom (they rendered as
+        // unstyled bullet rows with the raw, unevaluated expression text).
+        let other_dialog = def
+            .dialogs
+            .get("someOtherDialog")
+            .expect("dialog should exist");
+        assert_eq!(
+            other_dialog.components.len(),
+            1,
+            "only the field explicitly declared in this dialog should be on it"
+        );
+    }
+
+    #[test]
+    fn dialog_captures_its_layout_hint() {
+        // TunerStudio's "Short term fuel trim/Closed loop" dialog uses
+        // exactly this: dialog = name, "title", xAxis to lay its child
+        // panels out in a row instead of stacking them.
+        let content = r#"
+[UserDefined]
+	dialog = fuelClosedLoopDialog, "Short term fuel trim/Closed loop", xAxis
+		panel = fuelClosedLoopBank1
+
+	dialog = plainDialog, "No hint"
+		field = "Label", someConstant
+"#;
+        let def = parse_ini(content).expect("Should parse successfully");
+
+        let with_hint = def
+            .dialogs
+            .get("fuelClosedLoopDialog")
+            .expect("dialog should exist");
+        assert_eq!(with_hint.layout_hint.as_deref(), Some("xAxis"));
+
+        let without_hint = def.dialogs.get("plainDialog").expect("dialog should exist");
+        assert_eq!(without_hint.layout_hint, None);
     }
 
     #[test]
@@ -3739,6 +4137,41 @@ indicator = { (tps > tpsflood) && (rpm < crankRPM) }, "FLOOD OFF", "FLOOD CLEAR"
         assert_eq!(name, "field_name");
         assert_eq!(help, Some("Help text with spaces".to_string()));
     }
+
+    #[test]
+    fn test_commented_out_property_is_not_a_property() {
+        // A commented-out property must be stripped entirely. The stock
+        // Speeduino INI carries a disabled alternative for fuelLoadBins; before
+        // this was handled, the leading ';' was preserved (because the line
+        // contains '=') and the entry parsed with an empty name.
+        assert_eq!(
+            strip_comment(
+                "      ;fuelLoadBins = array,  U08,   272, [  16], \"kPa\", 2.0, 0.0, 0.0, 511.0, 0"
+            ),
+            ""
+        );
+
+        // Documentation/template comments in INI headers are also properties
+        // syntactically, and must stay comments.
+        assert_eq!(
+            strip_comment("   ; keyword = referenceName, DisplayName"),
+            ""
+        );
+        assert_eq!(strip_comment(";settingOption = BOOSTPSI, \"PSI\""), "");
+
+        // Help-text syntax always has a field name before the ';', so it is
+        // unaffected: the semicolon before '=' is still preserved.
+        assert_eq!(
+            strip_comment("bias_resistor;+Pull-up resistor = 4700"),
+            "bias_resistor;+Pull-up resistor = 4700"
+        );
+
+        // Trailing comments after a value are still stripped as before.
+        assert_eq!(
+            strip_comment("someField = 42 ; trailing note").trim(),
+            "someField = 42"
+        );
+    }
 }
 
 #[test]
@@ -4033,4 +4466,75 @@ ego_max_lambda = scalar, U08, lastOffset, "Lambda", 0.068, 0, 0.5, 1.7, 3
         9,
         "ego_max_lambda must overlay ego_max_afr at offset 9, not chain from the previous overlay"
     );
+}
+
+#[cfg(test)]
+mod tested_symbol_tests {
+    use super::*;
+
+    /// A definition records which symbols were *asked about*, separately from
+    /// which were active. Without that distinction the app cannot tell "this
+    /// INI has no temperature choice to make" from "the choice defaulted", and
+    /// would prompt on files that never mention units.
+    #[test]
+    fn a_definition_records_the_symbols_it_tested() {
+        set_default_symbols(Vec::<String>::new());
+        let ini = "\
+[MegaTune]
+ signature = \"test\"
+
+[OutputChannels]
+#if CELSIUS
+   coolant = { coolantRaw - 40 }
+#else
+   coolant = { (coolantRaw - 40) * 1.8 + 32 }
+#endif
+";
+        let def = parse_ini(ini).expect("parses");
+        assert!(
+            def.tests_symbol("CELSIUS"),
+            "the INI asked about CELSIUS, so there is a question to put to the user"
+        );
+        assert!(
+            !def.symbol_is_active("CELSIUS"),
+            "it was not defined, so the Fahrenheit arm was taken"
+        );
+    }
+
+    #[test]
+    fn an_ini_that_never_asks_records_nothing() {
+        set_default_symbols(Vec::<String>::new());
+        let ini = "\
+[MegaTune]
+ signature = \"test\"
+
+[OutputChannels]
+   coolant = scalar, U08, 0, \"C\", 1.0, 0.0
+";
+        let def = parse_ini(ini).expect("parses");
+        assert!(
+            !def.tests_symbol("CELSIUS"),
+            "nothing to ask about - prompting here would be noise"
+        );
+    }
+
+    /// The arm taken must not change what was recorded as tested: the question
+    /// was asked either way.
+    #[test]
+    fn the_symbol_is_recorded_even_when_defined() {
+        set_default_symbols(vec!["CELSIUS".to_string()]);
+        let ini = "\
+[MegaTune]
+ signature = \"test\"
+
+[OutputChannels]
+#if CELSIUS
+   coolant = { coolantRaw - 40 }
+#endif
+";
+        let def = parse_ini(ini).expect("parses");
+        set_default_symbols(Vec::<String>::new());
+        assert!(def.tests_symbol("CELSIUS"));
+        assert!(def.symbol_is_active("CELSIUS"));
+    }
 }

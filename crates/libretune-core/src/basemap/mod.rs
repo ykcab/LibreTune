@@ -7,5 +7,7 @@
 mod engine_spec;
 pub mod generator;
 
-pub use engine_spec::{Aspiration, EngineSpec, FuelType, IgnitionMode, InjectionMode, StrokeType};
+pub use engine_spec::{
+    Aspiration, CombustionChamber, EngineSpec, FuelType, IgnitionMode, InjectionMode, StrokeType,
+};
 pub use generator::{AccelEnrichConfig, BaseMap, IacConfig};

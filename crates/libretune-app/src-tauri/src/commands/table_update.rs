@@ -104,9 +104,43 @@ pub async fn update_table_data(
             data: raw_data.clone(),
         };
 
-        // Don't fail if ECU write fails - offline mode should still work
-        if let Err(e) = conn.write_memory(params) {
-            eprintln!("[WARN] Failed to write to ECU (offline mode?): {}", e);
+        // Read the table straight back. A legacy-protocol write is
+        // fire-and-forget, so "the write returned Ok" only ever meant "the
+        // bytes left the host" — which is how a corrupted ignition table
+        // reached a running engine on 18 Aug 2026 with both writes reported
+        // successful. Chunking stops that particular overrun; the read-back is
+        // what turns the next silent divergence into a visible error.
+        match conn.write_memory_verified(params) {
+            Ok(()) => {}
+            // The ECU is holding something other than what was sent. This is
+            // not a connectivity problem and must not be swallowed: the tune
+            // on screen no longer matches the tune the engine is running.
+            Err(e @ libretune_core::protocol::ProtocolError::WriteVerificationFailed { .. }) => {
+                return Err(format!(
+                    "ECU did not store table {table_name} as written — do not \
+                     drive on this tune until it is re-sent and verified: {e}"
+                ));
+            }
+            // The write went out but could not be read back. On a legacy ECU
+            // this is the buffer-overrun signature itself (the read command
+            // was eaten as table data), so it must fail as loudly as a
+            // mismatch — this exact case was once a WARN line while a
+            // corrupted ignition table sat in a running engine.
+            Err(
+                e @ libretune_core::protocol::ProtocolError::WriteVerificationUnavailable { .. },
+            ) => {
+                return Err(format!(
+                    "Table {table_name} was sent but the ECU's copy could not \
+                     be confirmed — re-send it before trusting or burning \
+                     this tune: {e}"
+                ));
+            }
+            // A write that never went out (not connected, port gone) keeps
+            // the existing offline-tolerant behaviour: the edit is already in
+            // the local tune cache above.
+            Err(e) => {
+                eprintln!("[WARN] Failed to write to ECU (offline mode?): {}", e);
+            }
         }
     }
 

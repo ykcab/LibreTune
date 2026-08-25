@@ -23,6 +23,14 @@ pub(crate) struct Settings {
     pub(crate) gauge_lock: bool, // Dashboard gauge lock in place
     #[serde(default = "default_true")]
     pub(crate) auto_sync_gauge_ranges: bool, // Auto-sync gauge ranges from INI
+    /// Dashboard gauge redraw cap in Hz (allowed: 10, 15, 20, 25, 30).
+    /// Lower values cut CPU/battery use on dashboards with many gauges.
+    #[serde(default = "default_dashboard_refresh_hz")]
+    pub(crate) dashboard_refresh_hz: u32,
+    /// Right-align gauge numeric value text in a fixed region so digit-count
+    /// and sign changes don't shift the layout ("jumping text" fix, issue #82).
+    #[serde(default)]
+    pub(crate) gauge_right_align_values: bool,
     #[serde(default)]
     pub(crate) indicator_column_count: String, // "auto" or number like "12"
     #[serde(default)]
@@ -199,6 +207,10 @@ fn default_trail_fade_sec() -> f64 {
     8.0
 }
 
+fn default_dashboard_refresh_hz() -> u32 {
+    30
+}
+
 fn default_true() -> bool {
     true
 }
@@ -231,7 +243,12 @@ fn default_commit_message_format() -> String {
     "Tune saved on {date} at {time}".to_string()
 }
 
-pub(crate) fn save_settings(app: &tauri::AppHandle, settings: &Settings) {
+/// Persist `settings`. Expected to be called only while holding
+/// [`SETTINGS_IO_LOCK`] via [`with_settings`], which also serializes the
+/// read half — otherwise two in-flight commands can lose each other's
+/// updates.
+fn save_settings_locked(app: &tauri::AppHandle, settings: &Settings) {
+    apply_unit_symbols(settings);
     let settings_path = get_settings_path(app);
     // Ensure parent directory exists
     if let Some(parent) = settings_path.parent() {
@@ -240,6 +257,43 @@ pub(crate) fn save_settings(app: &tauri::AppHandle, settings: &Settings) {
     if let Err(e) = write_settings_atomic(&settings_path, settings) {
         eprintln!("[WARN] Failed to save settings: {}", e);
     }
+}
+
+/// Process-wide lock serializing ALL settings read-modify-write cycles.
+///
+/// Why: Tauri commands run concurrently on the async runtime, and settings
+/// updates used to be unsynchronized `load_settings` → mutate → `save_settings`
+/// sequences. Two races resulted:
+///
+/// 1. **Corrupt/failed atomic writes.** Concurrent saves both wrote to the
+///    SAME sibling `.tmp` file; when the first save renamed it away, the
+///    second save's rename failed with "The system cannot find the file
+///    specified. (os error 2)" (seen as repeated WARN spam), and truncated
+///    interleaved writes to the shared tmp handle could corrupt the file.
+/// 2. **Lost updates.** Two concurrent `update_setting` calls each loaded
+///    their own snapshot; the second save silently reverted the first call's
+///    change.
+///
+/// `std::sync::Mutex` (not tokio's) is correct here: the critical section is
+/// pure synchronous file I/O — no `.await` — so holding it cannot deadlock
+/// the executor's async tasks.
+static SETTINGS_IO_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Run `f` against the current settings and persist the result, with the
+/// whole load → mutate → save cycle serialized against every other settings
+/// writer in the process.
+///
+/// The settings file is written even when `f` leaves the struct unchanged or
+/// returns `Err` (mirroring the previous save-always semantics of
+/// `update_settings`, which persists partially-applied batches).
+pub(crate) fn with_settings<R>(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) -> R) -> R {
+    let _guard = SETTINGS_IO_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut settings = load_settings(app);
+    let result = f(&mut settings);
+    save_settings_locked(app, &settings);
+    result
 }
 
 /// Write `settings` to `path` atomically: serialize to a sibling `.tmp` file,
@@ -287,6 +341,8 @@ fn default_settings() -> Settings {
         gauge_free_move: false,
         gauge_lock: false,
         auto_sync_gauge_ranges: default_true(),
+        dashboard_refresh_hz: default_dashboard_refresh_hz(),
+        gauge_right_align_values: false,
         indicator_column_count: String::new(),
         indicator_fill_empty: false,
         indicator_text_fit: String::new(),
@@ -336,6 +392,90 @@ fn default_settings() -> Settings {
     }
 }
 
+/// Symbols declared by the loaded project, if it declared any. These outrank
+/// any inference from the app's units preference, because they are the tune's
+/// own statement of how it was built rather than a guess about the user.
+static PROJECT_SYMBOLS: std::sync::RwLock<Option<Vec<String>>> = std::sync::RwLock::new(None);
+
+/// Read `ecuSettings` from the project.properties beside `ini_path` and seed
+/// the INI parser's conditional symbols from it.
+///
+/// TunerStudio stores, e.g.,
+/// `ecuSettings=AFR|CELSIUS|enablehardware_test_OFF|` in
+/// `projectCfg/project.properties`, the same folder as the controller INI, and
+/// those tokens are exactly the symbols its `#if` blocks test.
+///
+/// Must run before the INI is parsed: `#if CELSIUS` is resolved during parsing.
+pub(crate) fn seed_symbols_from_project(ini_path: &Path, settings: &Settings) {
+    match project_declared_symbols(ini_path) {
+        Some(symbols) => {
+            tracing::info!(?symbols, "INI symbols taken from the project's ecuSettings");
+            if let Ok(mut guard) = PROJECT_SYMBOLS.write() {
+                *guard = Some(symbols.clone());
+            }
+            libretune_core::ini::set_default_symbols(symbols);
+        }
+        None => {
+            // This project makes no declaration, so the previous one's must be
+            // dropped: PROJECT_SYMBOLS outranks the units preference, and
+            // leaving it set means opening a Celsius project and then an
+            // undeclared one silently keeps Celsius - with no setting able to
+            // override it for the rest of the session.
+            if let Ok(mut guard) = PROJECT_SYMBOLS.write() {
+                *guard = None;
+            }
+            apply_unit_symbols(settings);
+        }
+    }
+}
+
+/// The symbols a project declares in `ecuSettings`, if it declares any.
+///
+/// Split out from the seeding so the parsing rules - pipe-separated, trailing
+/// empty token discarded - can be tested without a settings fixture.
+fn project_declared_symbols(ini_path: &Path) -> Option<Vec<String>> {
+    ini_path
+        .parent()
+        .map(|dir| dir.join("project.properties"))
+        .filter(|p| p.exists())
+        .and_then(|p| libretune_core::project::Properties::load(&p).ok())
+        .and_then(|props| props.get("ecuSettings").cloned())
+        .map(|raw| {
+            raw.split('|')
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+}
+
+/// Seed the INI preprocessor's conditional symbols.
+///
+/// An INI selects metric units through `#if CELSIUS`, and TunerStudio defines
+/// that symbol from the project's `ecuSettings`. LibreTune never carried it, so
+/// the Fahrenheit `#else` arm always won: a 23 degC cold start showed 73 on the
+/// gauge, labelled with the INI's generic "TEMP".
+///
+/// A project that declares its own `ecuSettings` decides this outright. Only
+/// when there is no declaration does the units preference stand in, and then an
+/// explicit "metric" is required: the preference defaults to an empty string,
+/// so treating "not imperial" as metric would switch every existing install to
+/// Celsius whether or not it wanted that.
+pub(crate) fn apply_unit_symbols(settings: &Settings) {
+    if let Ok(guard) = PROJECT_SYMBOLS.read() {
+        if let Some(symbols) = guard.as_ref() {
+            libretune_core::ini::set_default_symbols(symbols.clone());
+            return;
+        }
+    }
+
+    let mut symbols: Vec<String> = Vec::new();
+    if settings.units_system.eq_ignore_ascii_case("metric") {
+        symbols.push("CELSIUS".to_string());
+    }
+    libretune_core::ini::set_default_symbols(symbols);
+}
+
 pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
     let settings_path = get_settings_path(app);
     if let Ok(content) = std::fs::read_to_string(&settings_path) {
@@ -343,6 +483,7 @@ pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
             if settings.runtime_packet_mode.trim().is_empty() {
                 settings.runtime_packet_mode = default_runtime_packet_mode();
             }
+            apply_unit_symbols(&settings);
             return settings;
         }
     }
@@ -351,6 +492,7 @@ pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
     if s.runtime_packet_mode.trim().is_empty() {
         s.runtime_packet_mode = default_runtime_packet_mode();
     }
+    apply_unit_symbols(&s);
     s
 }
 
@@ -447,6 +589,46 @@ mod tests {
             std::fs::read_to_string(&backup_path).unwrap(),
             r#"{"units_system":"metr"#
         );
+    }
+
+    /// The project states its own units, so nothing is inferred from a UI
+    /// preference. This is the declaration from a real NA6 Speeduino project
+    /// whose `units_system` is the empty default - the case where either
+    /// direction of guess is wrong for somebody.
+    #[test]
+    fn project_ecu_settings_decide_the_ini_symbols() {
+        let dir = TempDir::new().unwrap();
+        let cfg = dir.path().join("projectCfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::write(
+            cfg.join("project.properties"),
+            "projectName=NA6_SPEEDUINO
+             ecuSettings=AFR|CELSIUS|enablehardware_test_OFF|resetcontrol_standard|
+",
+        )
+        .unwrap();
+
+        seed_symbols_from_project(&cfg.join("mainController.ini"), &Settings::default());
+
+        let symbols = PROJECT_SYMBOLS.read().unwrap().clone().unwrap();
+        assert!(symbols.iter().any(|s| s == "CELSIUS"));
+        assert_eq!(symbols.len(), 4, "the trailing empty token is not a symbol");
+
+        // The declaration outranks the preference, so a user who never opened
+        // Settings still gets the units the tune was built in.
+        apply_unit_symbols(&Settings {
+            units_system: String::new(),
+            ..Default::default()
+        });
+        assert!(PROJECT_SYMBOLS
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|s| s == "CELSIUS"));
+
+        *PROJECT_SYMBOLS.write().unwrap() = None;
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! TableData struct and internal table helpers (extracted from lib.rs).
 
-use crate::commands::string_context::{build_string_context, numeric_context_from_tune};
+use crate::commands::string_context::{build_string_context_filtered, numeric_context_from_tune};
 use crate::state::AppState;
 use libretune_core::dynamic_table::{self, TableSizeInfo};
 use libretune_core::ini::expression::evaluate_display_string;
@@ -233,7 +233,19 @@ pub(crate) async fn get_table_data_internal(
         None
     };
 
-    let string_ctx = build_string_context(state).await;
+    // Only the two axis-label display strings are evaluated here. The
+    // unfiltered context clone (~100 ms per call on a real Speeduino INI,
+    // while holding the definition/tune/project locks) made merely opening a
+    // table feel wedged with a live stream running (issue #132). Build only
+    // the entries the labels can reference instead.
+    let label_filter = {
+        let mut names = crate::commands::string_context::referenced_identifiers(&x_label);
+        names.extend(crate::commands::string_context::referenced_identifiers(
+            &y_label,
+        ));
+        names
+    };
+    let string_ctx = build_string_context_filtered(state, Some(&label_filter)).await;
     let numeric = {
         let tune = state.current_tune.lock().await;
         numeric_context_from_tune(tune.as_ref())
@@ -373,8 +385,12 @@ pub(crate) async fn update_table_z_values_internal(
                 if end <= page_data.len() {
                     page_data[start..end].copy_from_slice(&raw_data);
                 }
-                // Keep parsed constants synchronized with page bytes so offline
-                // table reads don't revert to stale MSQ values after reload.
+                // Offline reads prefer the parsed msq constants over page
+                // data (read_const_values checks tune.constants first), so
+                // keep them in sync or every toolbar op silently reverts on
+                // the next read while a connected ECU has already taken the
+                // write. Same invariant PR #59 established for
+                // update_table_data; these internal helpers were missed.
                 tune.constants.insert(
                     constant.name.clone(),
                     libretune_core::tune::TuneValue::Array(flat_values.clone()),
@@ -500,6 +516,15 @@ pub(crate) async fn update_constant_array_internal(
                 if end <= page_data.len() {
                     page_data[start..end].copy_from_slice(&raw_data);
                 }
+
+                // Same tune.constants sync as above: without it, rebin_table's
+                // axis write "succeeds", the next get_table_data serves the old
+                // bins from tune.constants, and the new axis is lost — while
+                // the ECU already received it.
+                tune.constants.insert(
+                    constant.name.clone(),
+                    libretune_core::tune::TuneValue::Array(values.clone()),
+                );
             }
 
             *state.tune_modified.lock().await = true;

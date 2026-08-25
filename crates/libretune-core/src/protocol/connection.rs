@@ -11,11 +11,21 @@ use super::stream::{CommunicationChannel, SerialChannel, TcpChannel};
 use super::{
     commands::{BurnParams, ReadMemoryParams, WriteMemoryParams},
     serial::{clear_buffers, configure_port, list_ports, open_port, PortInfo},
-    Command, CommandBuilder, Packet, ProtocolError, DEFAULT_BAUD_RATE, DEFAULT_TIMEOUT_MS,
+    Command, CommandBuilder, EnvelopeOrder, Packet, ProtocolError, DEFAULT_BAUD_RATE,
+    DEFAULT_TIMEOUT_MS,
 };
 use crate::ini::{AdaptiveTiming, AdaptiveTimingConfig, EcuType, Endianness, ProtocolSettings};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+/// Extra quiet time added to the declared burn window, on top of
+/// `pageActivationDelay`. See [`Connection::burn`] for why the declared value
+/// on its own is not enough.
+const BURN_SETTLE_MS: u64 = 600;
+
+/// Minimum quiet time after a legacy write frame before the ECU will service
+/// anything else. See [`Connection::inter_frame_delay`].
+const LEGACY_WRITE_SETTLE_MS: u64 = 30;
 
 /// Parse a command string with escape sequences into raw bytes
 /// Handles: \xNN (hex), \n, \r, \t, \\, \0, and regular characters
@@ -344,6 +354,11 @@ pub struct Connection {
     signature: Option<String>,
     /// Use modern protocol (detected from INI or ECU response)
     use_modern_protocol: bool,
+    /// Byte order of the CRC envelope's length/CRC fields. Speeduino is
+    /// little-endian, rusEFI/msEnvelope big-endian; set from ProtocolSettings
+    /// and corrected by the handshake's flip-retry if the INI's ECU-type
+    /// detection guessed wrong.
+    envelope_order: EnvelopeOrder,
     /// Protocol settings from INI file (optional, for INI-driven communication)
     protocol_settings: Option<ProtocolSettings>,
     /// Command builder for formatting commands
@@ -360,6 +375,14 @@ pub struct Connection {
     /// Page targeted by the most recent successful write, used by the auto-burn-on-page-change
     /// safety policy (msEnvelope_1.0 spec §6.2). `None` after construction or after a burn.
     last_written_page: Option<u8>,
+    /// Every page written since it was last burned.
+    ///
+    /// `last_written_page` tracks only the most recent one, which is all the
+    /// auto-burn-on-page-change policy needs. A user-initiated burn has to know
+    /// about all of them: Speeduino burns ONE page per command (the INI gives
+    /// fifteen `burnCommand` entries, one per page, each taking the page number),
+    /// so burning "the tune" means burning each page that has changed.
+    dirty_pages: std::collections::BTreeSet<u8>,
     /// ECU type detected from the INI signature (Issue #71).
     /// Drives conservative runtime-command selection for Speeduino/MS2/MS3.
     ecu_type: EcuType,
@@ -378,6 +401,7 @@ impl Connection {
             config,
             signature: None,
             use_modern_protocol: true,
+            envelope_order: EnvelopeOrder::BigEndian,
             protocol_settings: None,
             // When no INI is loaded, default to big-endian command parameters (safe default;
             // overridden to match the INI endianness when with_protocol/set_protocol is called).
@@ -389,6 +413,7 @@ impl Connection {
             tx_packets: 0,
             rx_packets: 0,
             last_written_page: None,
+            dirty_pages: std::collections::BTreeSet::new(),
             ecu_type: EcuType::Unknown,
             cancel: Arc::new(AtomicBool::new(false)),
         }
@@ -407,12 +432,16 @@ impl Connection {
         // parameters (the INI declares `endianness = little`), while Speeduino
         // and MS2/MS3 use big-endian command parameters.
         let cmd_le = endianness == Endianness::Little;
+        // msEnvelope_1.0 default; the handshake's flip-retry adapts to a
+        // firmware that genuinely frames the other way.
+        let envelope_order = EnvelopeOrder::BigEndian;
         Self {
             channel: None,
             state: ConnectionState::Disconnected,
             config,
             signature: None,
             use_modern_protocol: use_modern,
+            envelope_order,
             protocol_settings: Some(protocol),
             command_builder: CommandBuilder::new(cmd_le),
             endianness,
@@ -422,6 +451,7 @@ impl Connection {
             tx_packets: 0,
             rx_packets: 0,
             last_written_page: None,
+            dirty_pages: std::collections::BTreeSet::new(),
             ecu_type: EcuType::Unknown,
             cancel: Arc::new(AtomicBool::new(false)),
         }
@@ -433,6 +463,7 @@ impl Connection {
         // Use LE command parameters when INI specifies little-endian (rusEFI/epicEFI/FOME).
         self.command_builder = CommandBuilder::new(endianness == Endianness::Little);
         self.endianness = endianness;
+        self.envelope_order = EnvelopeOrder::BigEndian;
         self.protocol_settings = Some(protocol);
     }
 
@@ -714,25 +745,60 @@ impl Connection {
                 let _ = channel.clear_input_buffer();
             }
 
-            let packet = Packet::new(cmd_bytes.clone());
-            if let Ok(response_packet) = self.send_packet(packet) {
-                tracing::debug!("handshake: CRC protocol succeeded");
-                self.use_modern_protocol = true;
+            // Try the dialect's declared envelope byte order first, then the
+            // flipped order. The ECU-type detection sets the right order for
+            // known dialects (Speeduino little-endian, rusEFI big-endian), but
+            // a wrong guess used to cost the entire CRC path: both sides
+            // misparse each other's length field as 256 and time out (D1).
+            let first_order = self.envelope_order;
+            let orders = [
+                first_order,
+                match first_order {
+                    EnvelopeOrder::BigEndian => EnvelopeOrder::LittleEndian,
+                    EnvelopeOrder::LittleEndian => EnvelopeOrder::BigEndian,
+                },
+            ];
+            for (attempt, order) in orders.into_iter().enumerate() {
+                self.envelope_order = order;
+                if attempt > 0 {
+                    tracing::debug!(
+                        "handshake: retrying CRC with flipped envelope order {:?}",
+                        order
+                    );
+                    // If the first frame's length was misparsed, the firmware
+                    // is still inside its ~400 ms SERIAL_TIMEOUT waiting for a
+                    // payload that will never come — bytes sent now are eaten
+                    // as that payload. Let the window expire before retrying.
+                    std::thread::sleep(Duration::from_millis(450));
+                    if let Some(channel) = self.channel.as_mut() {
+                        let _ = channel.clear_input_buffer();
+                    }
+                }
+                let packet = Packet::new(cmd_bytes.clone());
+                if let Ok(response_packet) = self.send_packet(packet) {
+                    tracing::debug!(
+                        "handshake: CRC protocol succeeded (envelope order {:?})",
+                        order
+                    );
+                    self.use_modern_protocol = true;
 
-                // Handle status byte: response may start with 0x00 (success)
-                let payload = &response_packet.payload;
-                let signature_bytes = if !payload.is_empty() && payload[0] == 0 {
-                    &payload[1..]
-                } else {
-                    payload.as_slice()
-                };
+                    // Handle status byte: response may start with 0x00 (success)
+                    let payload = &response_packet.payload;
+                    let signature_bytes = if !payload.is_empty() && payload[0] == 0 {
+                        &payload[1..]
+                    } else {
+                        payload.as_slice()
+                    };
 
-                let signature = String::from_utf8_lossy(signature_bytes).trim().to_string();
-                tracing::debug!("handshake: CRC success, signature = {:?}", signature);
-                return Ok(signature);
-            } else {
-                tracing::debug!("handshake: CRC protocol failed, trying legacy");
+                    let signature = String::from_utf8_lossy(signature_bytes).trim().to_string();
+                    tracing::debug!("handshake: CRC success, signature = {:?}", signature);
+                    return Ok(signature);
+                }
             }
+            // Neither order worked — restore the declared order for any later
+            // attempts and fall through to legacy.
+            self.envelope_order = first_order;
+            tracing::debug!("handshake: CRC protocol failed in both byte orders, trying legacy");
         }
 
         // Try legacy protocol (raw ASCII command)
@@ -1007,7 +1073,7 @@ impl Connection {
     /// Send CRC packet WITHOUT waiting for response (for burn commands)
     fn send_packet_no_response(&mut self, packet: Packet) -> Result<(), ProtocolError> {
         let channel = self.channel.as_mut().ok_or(ProtocolError::NotConnected)?;
-        let bytes = packet.to_bytes();
+        let bytes = packet.to_bytes_ordered(self.envelope_order);
 
         tracing::debug!("send_packet_no_response: sending {} bytes", bytes.len());
 
@@ -1108,7 +1174,7 @@ impl Connection {
         let send_start = Instant::now();
 
         // Send packet and wait for transmission
-        let bytes = packet.to_bytes();
+        let bytes = packet.to_bytes_ordered(self.envelope_order);
         // Use write_and_wait which avoids the blocking tcdrain issue
         self.tx_bytes = self.tx_bytes.saturating_add(bytes.len() as u64);
         self.tx_packets = self.tx_packets.saturating_add(1);
@@ -1191,7 +1257,10 @@ impl Connection {
         }
 
         // Parse length
-        let length = u16::from_be_bytes(header) as usize;
+        // Length field byte order follows the ECU dialect: Speeduino frames
+        // little-endian, rusEFI/msEnvelope big-endian. Misreading it turns a
+        // 1-byte response into a 256-byte wait (D1).
+        let length = self.envelope_order.read_u16(&header) as usize;
         if length > super::MAX_PACKET_SIZE {
             tracing::warn!(
                 "send_packet: response length {} exceeds MAX_PACKET_SIZE",
@@ -1237,7 +1306,11 @@ impl Connection {
         // If CRC parsing fails, the full packet was already consumed from the TCP
         // stream (exact bytes read = 2 + length + 4), so the stream IS aligned.
         // No drain needed on CRC mismatch — just return the error.
-        Packet::from_bytes_with_mode(&full_packet, self.config.permissive_crc)
+        Packet::from_bytes_ordered(
+            &full_packet,
+            self.envelope_order,
+            self.config.permissive_crc,
+        )
     }
 
     /// Decide which runtime fetch command to use (Burst vs OCH)
@@ -1266,6 +1339,18 @@ impl Connection {
             .and_then(|p| p.och_get_command.clone());
 
         if forced == RuntimePacketMode::ForceBurst {
+            // A Speeduino in new-comms mode ignores a framed 'A' entirely
+            // (zero bytes back), so honouring this override verbatim yields a
+            // permanently empty stream with no error. Prefer OCH there and
+            // say so; the override still means Burst everywhere it works.
+            if self.use_modern_protocol {
+                if let Some(och) = och_cmd_opt.clone() {
+                    return (
+                        RuntimeFetch::OCH(och),
+                        "force: ForceBurst (burst is a no-op in new-comms; using OCH)".to_string(),
+                    );
+                }
+            }
             return (
                 RuntimeFetch::Burst(burst_cmd),
                 "force: ForceBurst".to_string(),
@@ -1299,6 +1384,24 @@ impl Connection {
             self.ecu_type,
             EcuType::Speeduino | EcuType::MS2 | EcuType::MS3 | EcuType::Unknown
         );
+
+        // ...but only while talking legacy. Once the CRC handshake succeeds the
+        // ECU is in new-comms mode, where Burst's bare 'A' is not a command at
+        // all: a Speeduino 2025.01.4 answered an unframed 'A' with a framed
+        // error (`00 01 | 80 | crc32`) and ignored a *framed* 'A' entirely
+        // (zero bytes back). New-comms fetches runtime data with the INI's
+        // ochGetCommand — `r $tsCanId 0x30 %2o %2c` — so use OCH there.
+        // Scoped to the burst lineage: rusEFI-family ECUs keep their
+        // existing heuristic chain below (they are always modern-protocol,
+        // and their burst path is framed and answered).
+        if self.use_modern_protocol && burst_ecu {
+            if let Some(och) = och_cmd_opt.clone() {
+                return (
+                    RuntimeFetch::OCH(och),
+                    "auto: OCH (modern protocol negotiated)".to_string(),
+                );
+            }
+        }
 
         // Unknown ECU type: also default to Burst to be safe. Only rusEFI-lineage
         // ECUs (detected from the INI signature) are allowed to auto-select OCH.
@@ -1400,16 +1503,21 @@ impl Connection {
 
         match choice {
             RuntimeFetch::Burst(cmd) => {
-                // Issue #71 follow-up: Speeduino / MS2 / MS3 / Unknown must use the
-                // legacy raw-ASCII Burst path even if the handshake or INI somehow
-                // left use_modern_protocol enabled. These ECUs do not accept a
-                // CRC-framed Burst request. rusEFI/FOME/epicEFI keep CRC framing
-                // when modern protocol is active.
-                let force_raw_burst = matches!(
-                    self.ecu_type,
-                    EcuType::Speeduino | EcuType::MS2 | EcuType::MS3 | EcuType::Unknown
-                );
-                if self.use_modern_protocol && !force_raw_burst {
+                // Frame the request whenever the handshake actually negotiated
+                // CRC. `use_modern_protocol` is authoritative here: the
+                // handshake clears it on legacy fallback, so a true value means
+                // the ECU answered a framed command and is now in new-comms
+                // mode — where a bare command byte is rejected.
+                //
+                // This used to force the raw byte for Speeduino/MS2/MS3/Unknown
+                // on the belief that they "do not accept a CRC-framed Burst
+                // request". That belief formed while CRC never negotiated on
+                // those ECUs. Once it did (Speeduino 2025.01.4, big-endian
+                // envelope), the override became the bug: the ECU sat in
+                // new-comms answering every bare 'A' with a framed error
+                // (`00 01 | 80 | crc32`), so realtime data froze at ~14 B/s and
+                // every value went stale while the UI still showed Connected.
+                if self.use_modern_protocol {
                     let expected_len = self
                         .protocol_settings
                         .as_ref()
@@ -1575,8 +1683,12 @@ impl Connection {
 
             Ok(payload[1..].to_vec())
         } else {
-            // Legacy protocol: send raw command
-            self.send_raw_command(&cmd)
+            // Legacy protocol: the reply length is exactly the requested
+            // count, so let the read return as soon as it has arrived instead
+            // of waiting out the inter-character timeout — the read-back
+            // verify does one of these per written chunk, under the
+            // connection lock, while the realtime poll waits.
+            self.send_raw_command_expecting(&cmd, Some(params.length as usize))
         }
     }
 
@@ -1635,19 +1747,85 @@ impl Connection {
         }
     }
 
-    /// Write a full page to ECU, respecting blocking factor (same chunking as `read_page`).
-    pub fn write_page(&mut self, page: u8, data: &[u8]) -> Result<(), ProtocolError> {
+    /// The largest payload one write frame may carry.
+    ///
+    /// `blockingFactor` is the ECU's serial buffer less the envelope — Speeduino
+    /// spells this out in its own INI ("257-6=251"). The command header (byte,
+    /// identifier, offset, count) is carried *inside* that payload, so it comes
+    /// off the top as well.
+    ///
+    /// Both `write_memory` and `write_page` chunk, so they must agree: when
+    /// `write_page` split at the full blocking factor it handed `write_memory`
+    /// chunks 8 bytes too large, which then re-split every one of them into a
+    /// full frame plus an 8-byte runt — an extra round-trip and an extra pacing
+    /// delay per chunk on every bulk page write.
+    fn effective_write_chunk(&self) -> usize {
         let blocking_factor = self
             .protocol_settings
             .as_ref()
             .map(|p| p.blocking_factor)
             .unwrap_or(256)
-            .max(1);
-        let inter_chunk_ms = self.get_effective_min_wait().max(5);
+            .max(1) as usize;
+        blocking_factor.saturating_sub(8).max(1)
+    }
+
+    /// How long to leave the link idle after handing the ECU a write frame of
+    /// `frame_len` bytes, before sending it anything else.
+    ///
+    /// A legacy write is answered by silence, so the host has no signal that
+    /// the ECU has finished with a frame and must simply wait long enough. Two
+    /// things set how long. The frame's own wire time is a floor — on a real
+    /// UART a 250-byte frame occupies a 115200 link for about 22 ms, and USB
+    /// CDC, which every modern Speeduino is reached through, delivers it at USB
+    /// speed instead and removes that natural spacing. On top of that the
+    /// firmware needs a service window to apply the bytes it just received;
+    /// until it has, the next command on the wire is consumed as table data.
+    ///
+    /// The window was measured directly against the bench simulator on
+    /// 19 Aug 2026, replaying the frames with no app in the loop and sweeping
+    /// the gap: at 10 ms the following page read was swallowed as table data
+    /// and the read returned nothing; 20 ms was the first clean value; 30 ms
+    /// and above were clean, which is what the raw-protocol reference writer
+    /// has always used and why it has never reproduced the corruption. Note
+    /// that this is not the same as the chunking bug — LibreTune's frames were
+    /// correctly sized and 22.8 ms apart, and the *last* frame's 10.5 ms tail
+    /// gap alone was enough to corrupt the table.
+    ///
+    /// A modern CRC ECU acknowledges the write, and that acknowledgement is
+    /// proof it is done with the frame, so there is nothing to guess at there.
+    fn inter_frame_delay(&self, frame_len: usize) -> Duration {
+        let baud = self.config.baud_rate.max(1) as u64;
+        // 10 bits per byte on the wire: 8 data, start, stop.
+        let wire_ms = (frame_len as u64 * 10 * 1000).div_ceil(baud);
+        let ini_ms = self.get_effective_min_wait();
+        let floor = if self.use_modern_protocol {
+            5
+        } else {
+            LEGACY_WRITE_SETTLE_MS
+        };
+        let settle = ini_ms.max(floor);
+        // On unix, write_and_wait has already slept out the transmit time, so
+        // the ECU-side quiet window is simply `settle`. Elsewhere the write
+        // returns as soon as the OS takes the bytes: over USB CDC the wire
+        // time is negligible, but through a real UART bridge (FTDI, BT-SPP)
+        // the frame is still draining — taking max() there would leave only
+        // settle-minus-wire-time of true quiet, inside the measured
+        // corruption zone. Summing is cheap insurance: at worst it doubles a
+        // ~22 ms allowance per 250-byte frame.
+        if cfg!(unix) {
+            Duration::from_millis(wire_ms.max(settle))
+        } else {
+            Duration::from_millis(wire_ms + settle)
+        }
+    }
+
+    /// Write a full page to ECU, respecting blocking factor (same chunking as `read_page`).
+    pub fn write_page(&mut self, page: u8, data: &[u8]) -> Result<(), ProtocolError> {
+        let chunk_size = self.effective_write_chunk();
 
         let mut offset = 0usize;
         while offset < data.len() {
-            let end = (offset + blocking_factor as usize).min(data.len());
+            let end = (offset + chunk_size).min(data.len());
             let chunk = &data[offset..end];
             let params = WriteMemoryParams {
                 page,
@@ -1690,16 +1868,46 @@ impl Connection {
             }
 
             offset = end;
-            if offset < data.len() {
-                std::thread::sleep(Duration::from_millis(inter_chunk_ms));
-            }
+            // write_memory paces each frame it sends; a second delay here
+            // would only double the cost of every bulk page write.
         }
 
         Ok(())
     }
 
-    /// Write memory to ECU using INI-defined command format
+    /// Write memory to ECU using INI-defined command format.
+    ///
+    /// Payloads larger than the INI's `blockingFactor` are split into
+    /// sequential writes here rather than trusting callers to pre-chunk. The
+    /// ECU's serial RX buffer is exactly what `blockingFactor` declares (257
+    /// bytes minus protocol overhead on a Mega2560); a longer frame gets its
+    /// tail silently dropped by the ECU, which then consumes the next bytes on
+    /// the wire as if they were table data — observed on a running engine as a
+    /// partially-applied, corrupted VE table (drove visibly jerkily) when a
+    /// 263-byte full-table write went out unchunked. Six command paths call
+    /// this directly with unbounded payloads, so the guard belongs here, not
+    /// in each caller.
     pub fn write_memory(&mut self, params: WriteMemoryParams) -> Result<(), ProtocolError> {
+        let max_data = self.effective_write_chunk();
+        if params.data.len() > max_data {
+            let mut offset = params.offset as usize;
+            let mut remaining = params.data.as_slice();
+            while !remaining.is_empty() {
+                let take = remaining.len().min(max_data);
+                let (head, tail) = remaining.split_at(take);
+                self.write_memory(WriteMemoryParams {
+                    can_id: params.can_id,
+                    page: params.page,
+                    offset: offset as u16,
+                    data: head.to_vec(),
+                })?;
+                offset += take;
+                remaining = tail;
+                // Pacing is handled once, after the frame actually goes out.
+            }
+            return Ok(());
+        }
+
         // Auto-burn safety policy (spec §6.2): if the previous write targeted a different
         // page, burn it to flash before writing to the new page. Prevents partial-flash
         // corruption on power loss.
@@ -1745,6 +1953,7 @@ impl Connection {
             params.offset,
             &params.data,
         )?;
+        let cmd_len = cmd.len();
 
         let result = if self.use_modern_protocol {
             // Modern protocol: wrap in CRC packet
@@ -1752,15 +1961,100 @@ impl Connection {
             let response = self.send_packet(packet)?;
             check_write_response_status(&response)
         } else {
-            // Legacy protocol: send raw command
-            self.send_raw_command(&cmd)?;
+            // Legacy protocol: value writes (Speeduino 'M', MS 'w') define no
+            // response, exactly like legacy burn above. Waiting for one stalls
+            // every write for the full serial timeout (~2 s), and the timeout
+            // is then misreported as a write failure — single edits appear to
+            // fail (they actually landed), and write_page's retry loop treats
+            // the phantom failure as fatal and aborts bulk writes partway.
+            self.send_raw_command_no_response(&cmd)?;
             Ok(())
         };
 
         if result.is_ok() {
             self.last_written_page = Some(params.page);
+            self.dirty_pages.insert(params.page);
+            // Leave the link idle long enough for the ECU to drain this frame
+            // before anything else — the next chunk, a burn, a read-back, or a
+            // realtime poll — is put on the wire. Nothing downstream can tell
+            // that the buffer is still full, because a legacy write is
+            // answered by silence either way.
+            std::thread::sleep(self.inter_frame_delay(cmd_len));
         }
         result
+    }
+
+    /// As [`write_memory`](Self::write_memory), but read the region straight
+    /// back and fail if the ECU is not holding what was sent.
+    ///
+    /// A legacy-protocol write is fire-and-forget: the ECU sends no status, so
+    /// `write_memory` returning `Ok` means only "the bytes left the host". That
+    /// is not the same as "the ECU stored them", and the difference has already
+    /// bitten this project — an oversized frame had its tail dropped and the
+    /// following write consumed as data, leaving a corrupted ignition table in
+    /// RAM while both writes reported success. Chunking closes that particular
+    /// hole; reading back is what catches the next one.
+    pub fn write_memory_verified(
+        &mut self,
+        params: WriteMemoryParams,
+    ) -> Result<(), ProtocolError> {
+        let page = params.page;
+        let offset = params.offset;
+        let expected = params.data.clone();
+        self.write_memory(params)?;
+
+        // A modern-protocol write is acknowledged frame by frame
+        // (`check_write_response_status`), so the ECU has already confirmed
+        // storage; reading back would double the traffic for no added signal.
+        // Legacy is answered by silence, which is what the read-back is for.
+        if self.use_modern_protocol || expected.is_empty() {
+            return Ok(());
+        }
+
+        // Read back in the same frame sizes the write used, so a mismatch
+        // points at a real ECU-side difference rather than an oversized read.
+        // From here on a failure is not "offline": the write already went out,
+        // and an ECU that ate the read command as table data answers exactly
+        // like a dead link — silence. Report it as unverified, never as a
+        // routine connection warning.
+        let chunk = self.effective_write_chunk();
+        let mut actual = Vec::with_capacity(expected.len());
+        let mut at = offset as usize;
+        while actual.len() < expected.len() {
+            let take = chunk.min(expected.len() - actual.len());
+            let part = self
+                .read_memory(ReadMemoryParams {
+                    page,
+                    offset: at as u16,
+                    length: take as u16,
+                    can_id: 0,
+                })
+                .map_err(|e| ProtocolError::WriteVerificationUnavailable {
+                    page,
+                    offset: at as u16,
+                    reason: e.to_string(),
+                })?;
+            if part.len() < take {
+                return Err(ProtocolError::WriteVerificationUnavailable {
+                    page,
+                    offset: at as u16,
+                    reason: format!("read-back returned {} of {take} bytes", part.len()),
+                });
+            }
+            actual.extend_from_slice(&part[..take]);
+            at += take;
+        }
+
+        if let Some(i) = (0..expected.len()).find(|&i| expected[i] != actual[i]) {
+            return Err(ProtocolError::WriteVerificationFailed {
+                page,
+                offset: offset.saturating_add(i as u16),
+                expected: expected[i],
+                actual: actual[i],
+            });
+        }
+
+        Ok(())
     }
 
     /// Burn current page to flash using INI-defined command format
@@ -1810,20 +2104,39 @@ impl Connection {
         // Wait for flash write to complete
         // Flash writes typically take 1-3 seconds depending on ECU
         // Use page_activation_delay as minimum, but ensure at least 2 seconds for safety
-        let delay = self
+        let declared = self
             .protocol_settings
             .as_ref()
             .map(|p| p.page_activation_delay.max(2000))
-            .unwrap_or(2000);
-
-        tracing::debug!("burn: waiting {}ms for flash write to complete", delay);
-        std::thread::sleep(Duration::from_millis(delay as u64));
+            .unwrap_or(2000) as u64;
+        // The ECU starts its busy window when it *processes* the burn, not when
+        // we put the command on the wire, so waiting exactly the declared
+        // window can return while the ECU is still deaf. During that window it
+        // is not servicing serial at all: bytes pile into the 257-byte receive
+        // buffer unread. Measured on the bench 18 Aug 2026 — a 2000 ms wait
+        // against a 2000 ms window let the next table write's first frame land
+        // inside the window, where it sat unserviced until the second frame
+        // overflowed the buffer, losing 13 bytes and leaving the ECU consuming
+        // following commands as table data. The raw-protocol reference writer
+        // has always waited 2.6 s here and has never reproduced it.
+        let settle = BURN_SETTLE_MS;
+        tracing::debug!(
+            "burn: waiting {}ms ({}ms declared + {}ms settle) for flash write to complete",
+            declared + settle,
+            declared,
+            settle
+        );
+        std::thread::sleep(Duration::from_millis(declared + settle));
+        // Anything that arrived while the ECU was deaf is noise to us and, more
+        // importantly, may be a partial frame to it.
+        self.clear_rx_buffer();
 
         tracing::debug!("burn: flash write complete for page {}", page);
         // Successful burn clears the auto-burn-on-page-change tracker.
         if self.last_written_page == Some(params.page) {
             self.last_written_page = None;
         }
+        self.dirty_pages.remove(&params.page);
         Ok(())
     }
 
@@ -1842,10 +2155,43 @@ impl Connection {
     }
 
     /// Convenience method to burn all pages to flash
+    /// Burn every page that has been written since it was last burned.
+    ///
+    /// This used to send a single burn for page 0, on the assumption that "most
+    /// ECUs burn all RAM to flash with a single command". Speeduino does not,
+    /// and says so in its own INI: fifteen `burnCommand` entries, one per page,
+    /// each formatted `b%2i` with the page number. So the Burn button committed
+    /// page 0 and nothing else - the VE table (page 2) and the ignition table
+    /// (page 3) were never reachable by it at all.
+    ///
+    /// The failure was invisible in the worst way: the burn reported success,
+    /// the tables read back correctly from RAM, and the values only disappeared
+    /// on the next power cycle. On one car the ignition table reached flash
+    /// solely because an unrelated auto-burn-on-page-change happened to catch
+    /// it, while the VE table written seconds later did not.
+    ///
+    /// With nothing dirty this burns page 0 alone, preserving the old behaviour
+    /// for a caller that just wants to poke the ECU.
     pub fn send_burn_command(&mut self) -> Result<(), ProtocolError> {
-        // Burn page 0 (main configuration page)
-        // Most ECUs burn all RAM to flash with a single command
-        self.burn(BurnParams { can_id: 0, page: 0 })
+        let pages: Vec<u8> = if self.dirty_pages.is_empty() {
+            vec![0]
+        } else {
+            self.dirty_pages.iter().copied().collect()
+        };
+        tracing::info!(
+            ?pages,
+            "burn: committing every page written since the last burn"
+        );
+        for page in pages {
+            self.burn(BurnParams { can_id: 0, page })?;
+        }
+        Ok(())
+    }
+
+    /// Pages written since they were last burned. Empty means nothing is
+    /// waiting in RAM that a power cycle would discard.
+    pub fn dirty_pages(&self) -> Vec<u8> {
+        self.dirty_pages.iter().copied().collect()
     }
 
     /// Send raw bytes to ECU (for controller commands)
@@ -2380,6 +2726,8 @@ mod tests {
 
     #![allow(clippy::field_reassign_with_default)]
     use super::*;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::Mutex;
 
     /// The early-return condition is the whole safety surface of the
     /// expected-length read: returning too soon yields a truncated message,
@@ -2530,6 +2878,444 @@ mod tests {
         assert_eq!(parse_command_string("Q"), vec![b'Q']);
         assert_eq!(parse_command_string("S"), vec![b'S']);
         assert_eq!(parse_command_string("Hello"), b"Hello".to_vec());
+    }
+
+    /// `write_page` and `write_memory` both chunk, so they must use the same
+    /// budget. Speeduino declares `blockingFactor = 251` and pages up to 384
+    /// bytes: splitting at the full 251 handed `write_memory` a chunk 8 bytes
+    /// over its own limit, which re-split it into 243 + an 8-byte runt frame.
+    #[test]
+    fn page_and_memory_writes_chunk_to_the_same_size() {
+        let core = Arc::new(Mutex::new(MegaCore::new()));
+        let mut conn = speeduino_conn(&core);
+        assert_eq!(
+            conn.effective_write_chunk(),
+            243,
+            "251 less the 7-byte command header, plus one byte of margin"
+        );
+
+        // A 288-byte page must reach the wire as exactly two frames — 243+7
+        // and 45+7 header bytes — with no runt. Asserting on the simulated
+        // ECU's actual bursts is what catches `write_page` splitting at the
+        // raw blocking factor again: that put a 258-byte frame on the wire
+        // (over the 257-byte ring) followed by an 8-byte runt.
+        let data: Vec<u8> = (0..288u32).map(|i| i as u8).collect();
+        conn.write_page(3, &data).expect("write_page");
+
+        let c = core.lock().unwrap();
+        assert_eq!(c.bursts, vec![250, 52], "wire frames (data + 7B header)");
+        assert_eq!(c.dropped, 0, "no frame may overrun the Mega RX ring");
+        assert_eq!(&c.page(3)[..288], &data[..], "page must arrive intact");
+    }
+
+    // ---------------------------------------------------------------------
+    // Mega2560 RX-limit regression (bench simulator acceptance behavior 5)
+    // ---------------------------------------------------------------------
+
+    /// Speeduino's own INI: "Serial buffer is 257 bytes and there are 6 bytes
+    /// of overhead ... payload is therefore 257-6=251".
+    const MEGA_RX_CAPACITY: usize = 257;
+    const SPEEDUINO_BLOCKING_FACTOR: u32 = 251;
+
+    /// What the `M` handler is in the middle of when the next byte arrives.
+    enum MegaState {
+        Idle,
+        /// Bytes gathered after the `M`: page, offset, count, big-endian pairs.
+        Header(Vec<u8>),
+        /// The same six fields after an `r`, which answers with page bytes.
+        ReadHeader(Vec<u8>),
+        Data {
+            page: u16,
+            at: usize,
+            left: usize,
+        },
+    }
+
+    /// The Mega2560's serial front end as the bench simulator models it
+    /// (`LibreTune-test/sim-ecu`, `MEGA_RX_CAPACITY 257`, acceptance behavior 5).
+    ///
+    /// Two properties matter and neither is obvious from the protocol spec.
+    /// The RX ring holds 257 bytes and drops the rest of an over-long burst
+    /// without complaint, and the `M` handler is a state machine that keeps
+    /// taking whatever bytes arrive next as table data when a frame promised
+    /// more than turned up. One oversized write therefore corrupts the page it
+    /// was aimed at *and* eats the command behind it, with nothing on the wire
+    /// to say so.
+    struct MegaCore {
+        pages: HashMap<u16, Vec<u8>>,
+        state: MegaState,
+        /// Length of each burst the host handed to the port.
+        bursts: Vec<usize>,
+        /// Bytes lost to the ring, summed over all bursts.
+        dropped: usize,
+        /// Idle time on the link before each burst — how long this ECU was
+        /// given to drain the previous frame.
+        gaps: Vec<Duration>,
+        last_burst: Option<Instant>,
+        /// Bytes waiting to go back to the host.
+        out: VecDeque<u8>,
+        /// Store the complement of whatever is written to this (page, offset),
+        /// standing in for any reason the ECU might not hold what was sent.
+        corrupt_at: Option<(u16, usize)>,
+    }
+
+    impl MegaCore {
+        fn new() -> Self {
+            Self {
+                pages: HashMap::new(),
+                state: MegaState::Idle,
+                bursts: Vec::new(),
+                dropped: 0,
+                gaps: Vec::new(),
+                last_burst: None,
+                out: VecDeque::new(),
+                corrupt_at: None,
+            }
+        }
+
+        fn page(&self, page: u16) -> &[u8] {
+            self.pages.get(&page).map(|p| p.as_slice()).unwrap_or(&[])
+        }
+
+        /// One burst from the host: fill the ring, drop the overflow, then let
+        /// the command handler drain what survived.
+        fn burst(&mut self, bytes: &[u8]) {
+            let now = Instant::now();
+            self.gaps
+                .push(self.last_burst.map_or(Duration::ZERO, |t| now - t));
+            self.last_burst = Some(now);
+            self.bursts.push(bytes.len());
+            let kept = bytes.len().min(MEGA_RX_CAPACITY);
+            self.dropped += bytes.len() - kept;
+            for &b in &bytes[..kept] {
+                self.step(b);
+            }
+            // Legacy writes are fire-and-forget, but the line is never truly
+            // silent; the host reads *something* back and calls the write good.
+            if self.out.is_empty() {
+                self.out.push_back(0x00);
+            }
+        }
+
+        fn step(&mut self, b: u8) {
+            self.state = match std::mem::replace(&mut self.state, MegaState::Idle) {
+                MegaState::Idle if b == b'M' => MegaState::Header(Vec::with_capacity(6)),
+                MegaState::Idle if b == b'r' => MegaState::ReadHeader(Vec::with_capacity(6)),
+                MegaState::Idle => MegaState::Idle,
+                MegaState::Header(mut h) => {
+                    h.push(b);
+                    if h.len() < 6 {
+                        MegaState::Header(h)
+                    } else {
+                        MegaState::Data {
+                            page: u16::from_be_bytes([h[0], h[1]]),
+                            at: u16::from_be_bytes([h[2], h[3]]) as usize,
+                            left: u16::from_be_bytes([h[4], h[5]]) as usize,
+                        }
+                    }
+                }
+                MegaState::ReadHeader(mut h) => {
+                    h.push(b);
+                    if h.len() < 6 {
+                        MegaState::ReadHeader(h)
+                    } else {
+                        let page = u16::from_be_bytes([h[0], h[1]]);
+                        let at = u16::from_be_bytes([h[2], h[3]]) as usize;
+                        let count = u16::from_be_bytes([h[4], h[5]]) as usize;
+                        let img = self.pages.entry(page).or_insert_with(|| vec![0u8; 1024]);
+                        let end = (at + count).min(img.len());
+                        let slice = img[at.min(end)..end].to_vec();
+                        self.out.extend(slice);
+                        MegaState::Idle
+                    }
+                }
+                MegaState::Data { page, at, left } => {
+                    let flip = self.corrupt_at == Some((page, at));
+                    let img = self.pages.entry(page).or_insert_with(|| vec![0u8; 1024]);
+                    if at < img.len() {
+                        img[at] = if flip { !b } else { b };
+                    }
+                    if left > 1 {
+                        MegaState::Data {
+                            page,
+                            at: at + 1,
+                            left: left - 1,
+                        }
+                    } else {
+                        MegaState::Idle
+                    }
+                }
+            };
+        }
+    }
+
+    struct MegaChannel(Arc<Mutex<MegaCore>>);
+
+    impl Write for MegaChannel {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().burst(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Read for MegaChannel {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let mut core = self.0.lock().unwrap();
+            let n = core.out.len().min(buf.len());
+            for slot in buf.iter_mut().take(n) {
+                *slot = core.out.pop_front().unwrap();
+            }
+            Ok(n)
+        }
+    }
+
+    impl CommunicationChannel for MegaChannel {
+        fn set_timeout(&mut self, _timeout: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn clear_input_buffer(&mut self) -> std::io::Result<()> {
+            // A real port drops whatever is still sitting in RX, and the
+            // command path relies on that: a fire-and-forget write leaves its
+            // unread ack behind, which would otherwise arrive as the first
+            // byte of the next read's payload.
+            self.0.lock().unwrap().out.clear();
+            Ok(())
+        }
+        fn clear_output_buffer(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn try_clone(&self) -> std::io::Result<Box<dyn CommunicationChannel>> {
+            Ok(Box::new(MegaChannel(Arc::clone(&self.0))))
+        }
+        fn bytes_to_read(&mut self) -> std::io::Result<u32> {
+            Ok(self.0.lock().unwrap().out.len() as u32)
+        }
+    }
+
+    /// One `M` frame carrying a whole 16x16 table, exactly as the pre-fix code
+    /// built it: 7 header bytes plus 256 data bytes.
+    fn oversized_table_frame(page: u16, table: &[u8]) -> Vec<u8> {
+        let mut f = vec![b'M'];
+        f.extend_from_slice(&page.to_be_bytes());
+        f.extend_from_slice(&0u16.to_be_bytes());
+        f.extend_from_slice(&(table.len() as u16).to_be_bytes());
+        f.extend_from_slice(table);
+        f
+    }
+
+    fn speeduino_conn(core: &Arc<Mutex<MegaCore>>) -> Connection {
+        let mut conn = Connection::new(ConnectionConfig::default());
+        conn.channel = Some(Box::new(MegaChannel(Arc::clone(core))));
+        conn.config.auto_burn_on_page_change = false;
+
+        let mut proto = ProtocolSettings::default();
+        proto.blocking_factor = SPEEDUINO_BLOCKING_FACTOR;
+        proto.inter_write_delay = 0;
+        proto.block_read_timeout = 100;
+        proto.page_chunk_write_commands = vec!["M%2i%2o%2c%v".to_string(); 8];
+        proto.page_read_commands = vec!["r%2i%2o%2c".to_string(); 8];
+        // Speeduino's legacy framing puts these fields on the wire big-endian;
+        // the observed corruption bytes (4D 00 02 ...) only decode that way.
+        conn.set_protocol(proto, Endianness::Big);
+        conn.use_modern_protocol = false;
+        conn
+    }
+
+    /// Characterisation test of the HARNESS, not of production code: it drives
+    /// the simulated Mega directly with the frame the pre-fix code used to
+    /// send, bypassing `Connection` entirely. It exists so the regression
+    /// tests below mean something — a harness that cannot see the bug proves
+    /// nothing. It cannot fail from reverting the fix; the tests that can are
+    /// `table_writes_survive_the_mega_rx_limit` and its siblings.
+    /// Expected signature is what the bench recorded on 18 Aug 2026: six
+    /// bytes dropped, the next command's header written into the ignition
+    /// table's top row, and the write behind it lost entirely.
+    #[test]
+    fn mega_rx_limit_eats_the_frame_tail_and_the_next_command() {
+        let core = Arc::new(Mutex::new(MegaCore::new()));
+
+        let ignition: Vec<u8> = (0..256u32).map(|i| 40 + (i % 30) as u8).collect();
+        let ve: Vec<u8> = (0..256u32).map(|i| 60 + (i % 40) as u8).collect();
+
+        {
+            let mut c = core.lock().unwrap();
+            c.burst(&oversized_table_frame(1, &ignition)); // 263 bytes
+            c.burst(&oversized_table_frame(2, &ve)); // 263 bytes
+        }
+
+        let c = core.lock().unwrap();
+        assert_eq!(c.bursts, vec![263, 263]);
+        assert_eq!(c.dropped, 12, "6 bytes lost off the tail of each frame");
+
+        // The last six cells of the ignition table hold the next command's
+        // header instead of spark advance: 'M', page 2 big-endian, offset 0,
+        // and the high byte of the 256-byte count. Raw 0x4D, 0x00 and 0x02 are
+        // 37, -40 and -38 degrees once the table's +40 offset comes off — a
+        // detonation-relevant edit nobody asked for, in the 100 kPa row.
+        assert_eq!(&c.page(1)[250..256], &[0x4D, 0x00, 0x02, 0x00, 0x00, 0x01]);
+        assert_ne!(&c.page(1)[250..256], &ignition[250..256]);
+
+        // ...and the VE write never happened at all.
+        assert!(
+            c.page(2).is_empty() || c.page(2)[..256].iter().all(|&b| b == 0),
+            "the following write should have been consumed as table data"
+        );
+    }
+
+    /// The fix: no matter how large a payload a caller hands `write_memory`,
+    /// nothing longer than the Mega can hold reaches the wire, so both tables
+    /// land byte-exact. Reintroducing the bug (dropping the chunking branch in
+    /// `write_memory`) turns this into the corruption pinned above.
+    #[test]
+    fn table_writes_survive_the_mega_rx_limit() {
+        let core = Arc::new(Mutex::new(MegaCore::new()));
+        let mut conn = speeduino_conn(&core);
+
+        let ignition: Vec<u8> = (0..256u32).map(|i| 40 + (i % 30) as u8).collect();
+        let ve: Vec<u8> = (0..256u32).map(|i| 60 + (i % 40) as u8).collect();
+
+        for (page, table) in [(1u8, &ignition), (2u8, &ve)] {
+            conn.write_memory(WriteMemoryParams {
+                can_id: 0,
+                page,
+                offset: 0,
+                data: table.clone(),
+            })
+            .expect("write_memory should succeed");
+        }
+
+        let c = core.lock().unwrap();
+        assert!(
+            c.bursts.iter().all(|&n| n <= MEGA_RX_CAPACITY),
+            "a frame overran the Mega's {MEGA_RX_CAPACITY}-byte buffer: {:?}",
+            c.bursts
+        );
+        assert_eq!(c.dropped, 0, "no byte may be dropped by the ECU ring");
+        assert_eq!(&c.page(1)[..256], &ignition[..], "ignition table corrupted");
+        assert_eq!(&c.page(2)[..256], &ve[..], "VE table lost or corrupted");
+
+        // Correctly sized frames are not enough on their own: the bench sweep
+        // showed a following command sent 10.5 ms after a write frame gets
+        // eaten as table data. Every frame here must be followed by at least
+        // the ECU's measured service window.
+        let settle = Duration::from_millis(LEGACY_WRITE_SETTLE_MS);
+        for (i, gap) in c.gaps.iter().enumerate().skip(1) {
+            let prev = c.bursts[i - 1];
+            assert!(
+                *gap >= settle,
+                "frame {i} followed a {prev}-byte frame after only {gap:?}, \
+                 inside the ECU's {settle:?} service window"
+            );
+        }
+    }
+
+    /// The pacing rule. The bench sweep put the ECU's service window at 20 ms
+    /// (10 ms corrupts, 20 ms is the first clean value), so a small trailing
+    /// frame must not be allowed to scale the delay down — that 20-byte second
+    /// chunk followed by a read 10.5 ms later is exactly what corrupted the
+    /// ignition table with correctly sized frames.
+    #[test]
+    fn legacy_write_frames_are_paced_for_the_ecus_service_window() {
+        let core = Arc::new(Mutex::new(MegaCore::new()));
+        let mut conn = speeduino_conn(&core);
+
+        assert_eq!(conn.config.baud_rate, 115_200, "test assumes a 115200 link");
+        let settle = Duration::from_millis(LEGACY_WRITE_SETTLE_MS);
+        assert!(
+            settle >= Duration::from_millis(20),
+            "below the measured floor"
+        );
+        assert!(conn.inter_frame_delay(250) >= settle);
+        assert!(
+            conn.inter_frame_delay(20) >= settle,
+            "a short trailing frame still needs the full service window"
+        );
+
+        // A slow link needs proportionally more: wire time takes over.
+        conn.config.baud_rate = 9_600;
+        assert!(conn.inter_frame_delay(250) >= Duration::from_millis(260));
+
+        // The INI's own inter-write delay still wins when it is the larger.
+        conn.config.baud_rate = 115_200;
+        let mut proto = ProtocolSettings::default();
+        proto.blocking_factor = SPEEDUINO_BLOCKING_FACTOR;
+        proto.inter_write_delay = 100;
+        conn.set_protocol(proto, Endianness::Big);
+        conn.use_modern_protocol = false;
+        // On unix the wire time is already slept out by write_and_wait, so the
+        // delay is exactly the INI value; elsewhere the frame's ~1 ms wire
+        // time is added on top. Either way the INI value must dominate an
+        // 8-byte frame's wire time — and not be doubled or dropped.
+        let d = conn.inter_frame_delay(8);
+        assert!(
+            d >= Duration::from_millis(100) && d <= Duration::from_millis(105),
+            "INI inter-write delay must win for a short frame, got {d:?}"
+        );
+
+        // A CRC ECU acknowledges the write, so it needs no blind wait.
+        conn.use_modern_protocol = true;
+        let mut proto = ProtocolSettings::default();
+        proto.blocking_factor = SPEEDUINO_BLOCKING_FACTOR;
+        conn.set_protocol(proto, Endianness::Big);
+        conn.use_modern_protocol = true;
+        assert!(conn.inter_frame_delay(20) < settle);
+    }
+
+    /// Chunking closes the overrun we know about. The read-back is what makes
+    /// the next silent divergence visible, so it has to actually catch one:
+    /// a single byte the ECU did not store as sent must fail the write rather
+    /// than return Ok, and it must name the cell.
+    #[test]
+    fn verified_write_catches_a_byte_the_ecu_did_not_store() {
+        let core = Arc::new(Mutex::new(MegaCore::new()));
+        core.lock().unwrap().corrupt_at = Some((1, 100));
+        let mut conn = speeduino_conn(&core);
+
+        let table: Vec<u8> = (0..256u32).map(|i| 40 + (i % 30) as u8).collect();
+        let err = conn
+            .write_memory_verified(WriteMemoryParams {
+                can_id: 0,
+                page: 1,
+                offset: 0,
+                data: table.clone(),
+            })
+            .expect_err("a byte the ECU did not store must fail the write");
+
+        match err {
+            ProtocolError::WriteVerificationFailed {
+                page,
+                offset,
+                expected,
+                actual,
+            } => {
+                assert_eq!((page, offset), (1, 100));
+                assert_eq!(expected, table[100]);
+                assert_eq!(actual, !table[100]);
+            }
+            other => panic!("expected a verification failure, got {other:?}"),
+        }
+    }
+
+    /// The same write, with nothing wrong at the ECU, must pass silently —
+    /// otherwise the check would be unusable in the table editor.
+    #[test]
+    fn verified_write_passes_when_the_ecu_agrees() {
+        let core = Arc::new(Mutex::new(MegaCore::new()));
+        let mut conn = speeduino_conn(&core);
+
+        let table: Vec<u8> = (0..256u32).map(|i| 40 + (i % 30) as u8).collect();
+        conn.write_memory_verified(WriteMemoryParams {
+            can_id: 0,
+            page: 1,
+            offset: 0,
+            data: table.clone(),
+        })
+        .expect("an honest ECU must verify clean");
+
+        assert_eq!(&core.lock().unwrap().page(1)[..256], &table[..]);
     }
 
     #[test]
@@ -2728,5 +3514,60 @@ mod tests {
         let raw = "emu`RPM=1200`emu`shape update for ch0`";
         let result = Connection::parse_rusefi_text_output(raw);
         assert_eq!(result, "RPM=1200\nshape update for ch0");
+    }
+}
+
+#[cfg(test)]
+mod burn_page_tests {
+    use super::*;
+
+    /// Speeduino's INI declares one `burnCommand` per page, each taking the page
+    /// number. A burn that only ever sends page 0 therefore commits the main
+    /// config page and leaves every table in RAM - where it reads back correctly
+    /// until the next power cycle throws it away.
+    #[test]
+    fn dirty_pages_accumulate_and_clear() {
+        let mut dirty: std::collections::BTreeSet<u8> = Default::default();
+        // two table writes, on the pages the VE and ignition tables really use
+        dirty.insert(2);
+        dirty.insert(3);
+        assert_eq!(dirty.iter().copied().collect::<Vec<_>>(), vec![2, 3]);
+
+        // burning page 3 must not clear page 2
+        dirty.remove(&3);
+        assert_eq!(
+            dirty.iter().copied().collect::<Vec<_>>(),
+            vec![2],
+            "burning one page must leave the others dirty - this is the whole bug"
+        );
+        dirty.remove(&2);
+        assert!(dirty.is_empty());
+    }
+
+    /// With nothing written, the old single-page behaviour is preserved so a
+    /// caller that just wants to poke the ECU still can.
+    #[test]
+    fn an_empty_dirty_set_still_burns_page_zero() {
+        let dirty: std::collections::BTreeSet<u8> = Default::default();
+        let pages: Vec<u8> = if dirty.is_empty() {
+            vec![0]
+        } else {
+            dirty.iter().copied().collect()
+        };
+        assert_eq!(pages, vec![0]);
+    }
+
+    /// Pages come out in order, so a burn sequence is deterministic and a failure
+    /// part-way through leaves a predictable state rather than an arbitrary one.
+    #[test]
+    fn pages_burn_in_ascending_order() {
+        let mut dirty: std::collections::BTreeSet<u8> = Default::default();
+        for p in [7u8, 2, 15, 3, 0] {
+            dirty.insert(p);
+        }
+        assert_eq!(
+            dirty.iter().copied().collect::<Vec<_>>(),
+            vec![0, 2, 3, 7, 15]
+        );
     }
 }

@@ -339,4 +339,54 @@ fn test_interpolate_cells_2d() {
         result[1][1] > 10.0 && result[1][1] < 80.0,
         "Center should be between corner values"
     );
+    // Bilinear centre of the four corners is exactly their mean here.
+    assert!((result[1][1] - 37.5).abs() < 0.01);
+}
+
+/// Regression: a single-row selection has a zero-height bounding box. The old
+/// implementation computed `0.0 / 0.0 = NaN` and poisoned the whole row; it
+/// must instead degrade to a clean horizontal linear interpolation.
+#[test]
+fn test_interpolate_cells_single_row_is_linear_not_nan() {
+    let z_values = vec![vec![10.0, 0.0, 0.0, 40.0]];
+    let selected_cells = vec![(0, 0), (0, 1), (0, 2), (0, 3)];
+
+    let result = interpolate_cells(&z_values, selected_cells);
+
+    assert!(
+        result[0].iter().all(|v| v.is_finite()),
+        "no NaN/Inf allowed"
+    );
+    assert!((result[0][0] - 10.0).abs() < 1e-9);
+    assert!((result[0][1] - 20.0).abs() < 1e-9);
+    assert!((result[0][2] - 30.0).abs() < 1e-9);
+    assert!((result[0][3] - 40.0).abs() < 1e-9);
+}
+
+/// Regression: same defect for a single-column (zero-width) selection.
+#[test]
+fn test_interpolate_cells_single_col_is_linear_not_nan() {
+    let z_values = vec![vec![10.0], vec![0.0], vec![0.0], vec![40.0]];
+    let selected_cells = vec![(0, 0), (1, 0), (2, 0), (3, 0)];
+
+    let result = interpolate_cells(&z_values, selected_cells);
+
+    let col: Vec<f64> = result.iter().map(|r| r[0]).collect();
+    assert!(col.iter().all(|v| v.is_finite()), "no NaN/Inf allowed");
+    assert!((col[0] - 10.0).abs() < 1e-9);
+    assert!((col[1] - 20.0).abs() < 1e-9);
+    assert!((col[2] - 30.0).abs() < 1e-9);
+    assert!((col[3] - 40.0).abs() < 1e-9);
+}
+
+/// A selection whose corners fall outside the current table (e.g. left over
+/// after a rebin shrank the grid) must be a no-op, never a panic or a write.
+#[test]
+fn test_interpolate_cells_out_of_bounds_selection_is_noop() {
+    let z_values = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
+    let selected_cells = vec![(0, 0), (0, 5), (9, 0), (9, 5)];
+
+    let result = interpolate_cells(&z_values, selected_cells);
+
+    assert_eq!(result, z_values, "out-of-bounds selection must not mutate");
 }

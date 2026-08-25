@@ -9,9 +9,33 @@
   background: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-subtle);
   padding: 0 var(--space-2);
-  gap: var(--space-1);
   user-select: none;
   flex-shrink: 0;
+}
+
+/* Scrollable row of buttons — lets the toolbar shrink on a narrow window
+   instead of forcing it (and everything below it) wider than the viewport.
+   The "More" button beside it is the guaranteed-reachable fallback. */
+.toolbar-items {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.toolbar-items::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar-more-wrap {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: var(--space-1);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border-subtle);
 }
 
 .toolbar-button {
@@ -77,6 +101,55 @@
   height: 20px;
   background: var(--border-default);
   margin: 0 var(--space-2);
+}
+
+/* Overflow "More" button + dropdown, shown once the icon row no longer
+   fits the available width (see Toolbar.tsx's ResizeObserver measurement). */
+.toolbar-more-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.toolbar-more-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 50;
+  min-width: 180px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg-elevated, var(--bg-toolbar));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+  padding: var(--space-2) 0;
+}
+
+.toolbar-more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.toolbar-more-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.toolbar-more-item:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.toolbar-more-item-label {
+  font-size: var(--font-size-base);
 }
 
 /* Inline content container (for connection metrics + packet mode) */

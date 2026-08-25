@@ -122,6 +122,9 @@ export interface TsGaugeConfig {
   // Identification
   id: string;
   gauge_painter: GaugePainter;
+  /** Provenance only — never applied at render (issue #129): painter
+   * selection is `gauge_painter`; TS "styles" are free-form names with no
+   * definition inside the .dash file. */
   gauge_style: string;
 
   // Data binding
@@ -201,8 +204,13 @@ export interface TsGaugeConfig {
   needle_pivot_offset_y?: number;
 
   // History/tracking
+  /** Last peak persisted by TunerStudio; seeds the peak-hold marker. */
   history_value: number;
+  /** Peak-hold hold time in ms before the marker falls back (`<= 0` holds forever). */
   history_delay: number;
+  /** Round-trip only — never applied at render (issue #129): uniformly 1
+   * across the stock corpus with undocumented semantics; the renderer
+   * already smooths the needle via a fixed lerp. */
   needle_smoothing: number;
 
   // Interaction

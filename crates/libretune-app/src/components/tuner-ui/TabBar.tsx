@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, DragEvent, MouseEvent } from 'react';
+import React, { useRef, useState, useCallback, useEffect, DragEvent, MouseEvent } from 'react';
 import { ExternalLink } from 'lucide-react';
 import './TabBar.css';
 
@@ -31,7 +31,34 @@ export function TabBar({
 }: TabBarProps) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [overflowOpen, setOverflowOpen] = useState(false);
   const tabsRef = useRef<HTMLDivElement>(null);
+  const overflowRef = useRef<HTMLDivElement>(null);
+
+  // Keep the active tab in view — without this, a tab opened while many
+  // others are already open can end up scrolled out of the visible strip
+  // with no visual feedback that it opened at all (the tab bar scrolls
+  // horizontally but never scrolls itself, and the old "▾ More tabs"
+  // button was dead — no onClick — so there was no way to reach it either).
+  useEffect(() => {
+    if (!activeTabId || !tabsRef.current) return;
+    const el = tabsRef.current.querySelector<HTMLElement>(
+      `[data-tab-id="${CSS.escape(activeTabId)}"]`,
+    );
+    el?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+  }, [activeTabId, tabs.length]);
+
+  // Close the overflow dropdown on an outside click.
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const handleClick = (e: globalThis.MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [overflowOpen]);
 
   const handleDragStart = useCallback((e: DragEvent, tabId: string) => {
     setDraggedId(tabId);
@@ -112,6 +139,7 @@ export function TabBar({
         {tabs.map((tab) => (
           <div
             key={tab.id}
+            data-tab-id={tab.id}
             className={`tab ${tab.id === activeTabId ? 'tab-active' : ''} ${
               tab.id === draggedId ? 'tab-dragging' : ''
             } ${tab.id === dropTargetId ? 'tab-drop-target' : ''}`}
@@ -156,10 +184,47 @@ export function TabBar({
         ))}
       </div>
       
-      {/* Tab overflow menu - shown when tabs don't fit */}
-      <button className="tabbar-overflow" title="More tabs">
-        ▾
-      </button>
+      {/* Tab overflow menu: lists every open tab, so one is always reachable
+          even when the strip has scrolled it out of view. */}
+      <div className="tabbar-overflow-wrap" ref={overflowRef}>
+        <button
+          className="tabbar-overflow"
+          title="More tabs"
+          onClick={() => setOverflowOpen((open) => !open)}
+        >
+          ▾
+        </button>
+        {overflowOpen && (
+          <div className="tabbar-overflow-menu" role="menu">
+            {tabs.map((tab) => (
+              <div
+                key={tab.id}
+                className={`tabbar-overflow-item ${tab.id === activeTabId ? 'tabbar-overflow-item-active' : ''}`}
+                role="menuitem"
+                onClick={() => {
+                  onTabSelect(tab.id);
+                  setOverflowOpen(false);
+                }}
+              >
+                {tab.icon && <TabIcon icon={tab.icon} />}
+                <span className="tabbar-overflow-item-title">{tab.title}</span>
+                {tab.closable !== false && (
+                  <button
+                    className="tab-close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTabClose(tab.id);
+                    }}
+                    aria-label={`Close ${tab.title}`}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

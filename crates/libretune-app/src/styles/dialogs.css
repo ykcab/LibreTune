@@ -1,0 +1,18 @@
+
+/* AFR delay-test trace overlay.
+   Individual steps are faint because none of them is readable on its own; the
+   median is what carries the measurement. Unusable steps (fuel cut, or the
+   throttle moving) are drawn dashed rather than hidden, so a run that produces
+   nothing shows why. */
+.delay-overlay svg { width: 100%; height: auto; background: var(--panel-bg, #1b1b1b); border-radius: 4px; }
+.delay-overlay-trace { fill: none; stroke: #4a90d9; stroke-width: 1; opacity: 0.18; }
+.delay-overlay-trace.unusable { stroke: #888; opacity: 0.12; stroke-dasharray: 2 3; }
+.delay-overlay-median { fill: none; stroke: #4a90d9; stroke-width: 2.5; }
+.delay-overlay-marker { stroke: #3fb950; stroke-width: 1.5; }
+.delay-overlay-label { fill: #3fb950; font-size: 12px; font-weight: 600; }
+.delay-overlay-step { stroke: #999; stroke-width: 1; stroke-dasharray: 3 3; }
+.delay-overlay-zero { stroke: #666; stroke-width: 0.75; }
+.delay-overlay-tick { fill: #999; font-size: 10px; }
+.delay-overlay-summary { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary, #bbb); }
+.delay-overlay-empty { font-size: 12px; color: var(--text-secondary, #999); margin: 4px 0; }
+.afr-delay-overlay-section h3 { font-size: 13px; margin: 12px 0 4px; }

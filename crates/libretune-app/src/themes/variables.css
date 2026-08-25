@@ -46,7 +46,7 @@
   /* Layout dimensions */
   --menubar-height: 24px;
   --toolbar-height: 32px;
-  --statusbar-height: 22px;
+  --statusbar-height: 38px;
   --sidebar-width: 240px;
   --tab-height: 28px;
   
@@ -55,6 +55,19 @@
   --transition-normal: 0.2s ease;
   --transition-slow: 0.3s ease;
 }
+
+/*
+ * Breakpoint convention (documentation only — CSS custom properties can't be
+ * referenced inside @media/@container conditions in any engine, so this is a
+ * convention to reuse literal values by, not a var()). Based on the values
+ * already established across the codebase's existing @media/@container
+ * rules before this file was touched:
+ *   600px — small dialogs/popovers stack or shrink to ~90-100% width
+ *   768px — two-pane panels stack into one column
+ *   900px — the app shell starts shedding optional side panels
+ * Reuse these three values for any new responsive rule instead of picking
+ * an arbitrary number.
+ */
 
 /* =============================================
    SEMANTIC TOKEN ALIASES

@@ -34,10 +34,11 @@ export interface BuildMenuItemsDeps {
   closeProject: () => void;
   handleCreateRestorePoint: () => void;
   // Setters
-  setNewProjectDialogOpen: (open: boolean) => void;
+  setConnectEcuWizardOpen: (open: boolean) => void;
   setImportProjectOpen: (open: boolean) => void;
   setSaveDialogOpen: (open: boolean) => void;
   setLoadDialogOpen: (open: boolean) => void;
+  setOnlineIniDialogOpen: (open: boolean) => void;
   setBurnDialogOpen: (open: boolean) => void;
   refreshTuneModified?: () => void | Promise<void>;
   setFirmwareUpdateDialogOpen: (open: boolean) => void;
@@ -76,7 +77,8 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
     t, currentProject, tuneModified, status, ecuType, iniCapabilities, backendMenus, theme,
     sidebarVisible, showEcuMenus, tabs, openTarget, handleStdTarget, openHelpTopic, showToast,
     closeProject, handleCreateRestorePoint,
-    setNewProjectDialogOpen, setImportProjectOpen, setSaveDialogOpen, setLoadDialogOpen,
+    setConnectEcuWizardOpen, setImportProjectOpen, setSaveDialogOpen, setLoadDialogOpen,
+    setOnlineIniDialogOpen,
     setBurnDialogOpen, setFirmwareUpdateDialogOpen, setRestorePointsOpen, setTuneHistoryOpen, setSettingsDialogOpen,
     setMathChannelsDialogOpen, setAfrDelayTestOpen, setBaseMapDialogOpen, setTableComparisonOpen,
     setTuneFileDiffOpen, setDynoOverlayOpen, setPluginPanelOpen, agentPanelVisible, setAgentPanelVisible, setConnectionDialogOpen,
@@ -86,8 +88,9 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
 
   const fileMenuItems: TunerMenuItem["items"] = currentProject
     ? [
-        { id: "new-project", label: t('file.newProject'), onClick: () => setNewProjectDialogOpen(true) },
+        { id: "connect-ecu-wizard", label: "Connect ECU / New Project…", onClick: () => setConnectEcuWizardOpen(true) },
         { id: "import-project", label: t('file.importProject'), onClick: () => setImportProjectOpen(true) },
+        { id: "search-ini-online", label: "Search for INI Online…", onClick: () => setOnlineIniDialogOpen(true) },
         { id: "close-project", label: t('file.closeProject'), onClick: closeProject },
         { id: "sep1", label: "", separator: true },
         { id: "save", label: t('file.saveTune'), onClick: () => setSaveDialogOpen(true) },
@@ -103,8 +106,9 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
         { id: "exit", label: t('file.exit'), onClick: quitApp },
       ]
     : [
-        { id: "new-project", label: t('file.newProject'), onClick: () => setNewProjectDialogOpen(true) },
+        { id: "connect-ecu-wizard", label: "Connect ECU / New Project…", onClick: () => setConnectEcuWizardOpen(true) },
         { id: "import-project", label: t('file.importProject'), onClick: () => setImportProjectOpen(true) },
+        { id: "search-ini-online", label: "Search for INI Online…", onClick: () => setOnlineIniDialogOpen(true) },
         { id: "sep1", label: "", separator: true },
         { id: "settings", label: t('file.settings'), onClick: () => setSettingsDialogOpen(true) },
         { id: "sep2", label: "", separator: true },
@@ -216,6 +220,7 @@ export function buildMenuItems(deps: BuildMenuItemsDeps): TunerMenuItem[] {
   if (caps?.has_datalog_entries || caps?.has_output_channels) {
     toolItems.push({ id: "datalog", label: t('tools.dataLogging'), onClick: () => openTarget("datalog", "Data Logging"), disabled: !currentProject });
     toolItems.push({ id: "virtual-dyno", label: "&Virtual Dyno", onClick: () => openTarget("virtual-dyno", "Virtual Dyno"), disabled: !currentProject });
+    toolItems.push({ id: "datalog-viewer", label: "Datalog Viewer…", onClick: () => openTarget("datalog-viewer", "Datalog Viewer"), disabled: !currentProject });
     toolItems.push({ id: "och-status", label: t('tools.outputChannelStatus'), onClick: () => openTarget("och-status", "Output Channel Status"), disabled: !currentProject });
   }
   if (caps?.has_logger_definitions) {

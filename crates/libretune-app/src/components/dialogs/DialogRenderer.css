@@ -48,6 +48,38 @@
   width: 100%;
 }
 
+/* Simple field-list dialogs (e.g. Vehicle Information) have no explicit
+   multi-column layout, so the "label fills remaining space, value pinned to
+   a fixed-width column" grid (see .settings-field below) stretches the gap
+   between label and input across the entire tab width — much wider than
+   TunerStudio's ~700px modal, where the same grid looks tight and tidy.
+   Cap those to the same comfortable form width used by .nested-panel.
+   Excluded via :has() — every other place in this file that opts a
+   sub-element into full width (multi-column split, embedded 2D table,
+   hardware-test grid, wide command-button panel) needs the container to
+   stay uncapped for that to actually reach full width. */
+.dialog-view .dialog-container:not(:has(.dialog-row-container)):not(:has(.nested-panel--multi)):not(:has(.table-editor-2d)):not(:has(.hardware-test-layout)):not(:has(.nested-panel--compact-commands)):not(:has(.curve-editor)):not(:has(.dialog-row-xaxis)) {
+  max-width: 720px;
+}
+
+/* dialog = name, "title", xAxis — top-level unpositioned panels side by
+   side (TunerStudio's own layout for e.g. Short term fuel trim/Closed
+   loop: Bank 1 | Settings | Bank 2). Wraps instead of squeezing on a
+   narrow window, same responsive approach used elsewhere in this file. */
+.dialog-view .dialog-row-xaxis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 12px;
+  width: 100%;
+  container-type: inline-size;
+}
+
+.dialog-view .dialog-row-xaxis > * {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
 /* Multi-column layout support for dialogs with East/West positioned panels.
    Default: equal split so dense settings panels (fan + water pump) share space. */
 .dialog-view .dialog-row-container {
@@ -77,6 +109,15 @@
   }
 }
 
+/* A settings panel nested inside an xAxis row (three-way split) only ever
+   gets ~1/3 of the dialog's width — nowhere near enough for the two-column
+   field grid's 220px-per-column minimum without wrapping/overlapping long
+   labels ("Detect Tuning and Suspend"). Force single column here regardless
+   of exact pixel width; TunerStudio renders these same panels as one column. */
+.dialog-view .dialog-row-xaxis .panel-content--multi {
+  grid-template-columns: 1fr;
+}
+
 .dialog-view .dialog-row-container--settings-split {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
@@ -104,6 +145,11 @@
 
 .dialog-view .dialog-row-container--table-settings .dialog-column:last-child .table-editor-2d.embedded {
   width: auto;
+  /* Flex items default to min-width: auto (their content's intrinsic
+     width), which overrides the grid column's own min-width: 0 and lets a
+     wide table (many RPM/load columns) blow out the whole row instead of
+     scrolling inside .editor-content's overflow: auto. */
+  min-width: 0;
 }
 
 /* Single column within row (for West/East positioning) */
@@ -568,13 +614,13 @@
 .dialog-view .indicator-tile {
   position: relative;
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  flex-direction: row;
+  justify-content: center;
   align-items: center;
-  min-height: 108px;
-  padding: 10px 8px;
+  min-height: 30px;
+  padding: 6px 8px;
   border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 12px;
+  border-radius: 4px;
   box-sizing: border-box;
   text-align: center;
   overflow: hidden;

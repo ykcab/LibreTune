@@ -55,7 +55,13 @@ function formatBinLabel(val: number): string {
   return val.toFixed(1);
 }
 
-/** How often to paint axis labels so they don't overlap (~36px apart). */
+/**
+ * How often to paint X-axis labels so a wide number doesn't bleed into the
+ * next column. Y-axis rows don't need this: each row label already sits in
+ * its own CSS Grid row, which never overlaps a neighboring row regardless of
+ * how short the row is — thinning it only hid real bin values for no reason
+ * (half the rows going blank on anything much past 12 bins).
+ */
 function axisLabelStep(count: number, cellPx: number): number {
   if (count <= 12) return 1;
   const maxLabels = Math.max(6, Math.floor((count * cellPx) / 36));
@@ -157,6 +163,22 @@ export default function TableGrid({
     return { x: xPos, y: yPos };
   }, [showLiveCursor, liveCursorX, liveCursorY, x_bins, y_bins]);
 
+  // Min/max of the Z grid, computed once per data change. Scanning the whole
+  // grid inside getCellColor flattened every value on each call (per cell per
+  // render) — the same render storm that froze the tab-based table editor
+  // with a live stream running (issue #132).
+  const zBounds = useMemo(() => {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const row of z_values) {
+      for (const v of row) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    return { min, max };
+  }, [z_values]);
+
   const getCellColor = useCallback((value: number, x: number, y: number) => {
     const cellKey = `${x},${y}`;
     const isLocked = lockedCells?.has(cellKey);
@@ -169,15 +191,12 @@ export default function TableGrid({
       return { background: 'var(--surface)' };
     }
 
-    const minVal = Math.min(...z_values.flat());
-    const maxVal = Math.max(...z_values.flat());
-
-    if (minVal === maxVal) return { background: 'var(--surface)' };
+    if (zBounds.min === zBounds.max) return { background: 'var(--surface)' };
 
     // Use centralized heatmap utility
-    const color = valueToHeatmapColor(value, minVal, maxVal, heatmapScheme);
+    const color = valueToHeatmapColor(value, zBounds.min, zBounds.max, heatmapScheme);
     return { background: color, color: contrastTextColor(color) };
-  }, [lockedCells, showColorShade, z_values, heatmapScheme]);
+  }, [lockedCells, showColorShade, zBounds, heatmapScheme]);
 
   const handleKeyDown = (e: KeyboardEvent, x: number, y: number) => {
     if (e.key === 'Enter' && editingCell) {
@@ -437,7 +456,6 @@ export default function TableGrid({
   const dataCol = fitPx ? `${fitPx.col}px` : compact ? '3.5rem' : '3rem';
   const colPx = fitPx?.col ?? (compact ? 56 : 48);
   const xLabelStep = axisLabelStep(x_size, colPx);
-  const yLabelStep = axisLabelStep(y_size, fitPx?.row ?? 32);
   const showCellNumbers = colPx >= 26;
   const cellDecimals = colPx < 34 ? 0 : 1;
   const gridTemplateColumns = `${axisCol} repeat(${x_size}, ${dataCol})`;
@@ -524,17 +542,13 @@ export default function TableGrid({
         ) : (
           <div
             key={`y-${y}`}
-            className={`axis-bin-label y-bin ${isYHeaderSelected ? 'selected' : ''}${
-              shouldShowAxisLabel(y, y_size, yLabelStep) ? '' : ' axis-bin-label--tick'
-            }`}
+            className={`axis-bin-label y-bin ${isYHeaderSelected ? 'selected' : ''}`}
             title={formatBinLabel(y_bins[y])}
             onMouseDown={e => handleHeaderMouseDown(e, 'y', y)}
             onMouseEnter={() => handleHeaderMouseEnter('y', y)}
             onDoubleClick={() => handleHeaderDoubleClick('y', y)}
           >
-            {shouldShowAxisLabel(y, y_size, yLabelStep)
-              ? formatBinLabel(y_bins[y])
-              : ''}
+            {formatBinLabel(y_bins[y])}
           </div>
         );
 

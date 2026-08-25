@@ -478,48 +478,101 @@ impl VePredictor {
         // Try row-wise first
         if row_known.len() >= 2 {
             row_known.sort_by_key(|(c, _)| *c);
-            if let Some((val, is_interpolation)) = self.extrapolate_1d(col, &row_known) {
-                let clamped = val.clamp(1.0, 200.0);
-                let (confidence, method) = if is_interpolation {
-                    (0.75, PredictionMethod::OneDInterpolation)
-                } else {
-                    (0.4, PredictionMethod::LinearExtrapolation)
-                };
-                return Some(PredictedCell {
-                    row,
-                    col,
-                    predicted_value: clamped,
-                    current_value: table_values[row][col],
-                    confidence,
-                    method,
-                    neighbor_count: row_known.len(),
-                });
+            if let Some(cell) =
+                self.build_extrapolated_cell(row, col, col, &row_known, table_values, 0.4)
+            {
+                return Some(cell);
             }
         }
 
         // Try column-wise
         if col_known.len() >= 2 {
             col_known.sort_by_key(|(r, _)| *r);
-            if let Some((val, is_interpolation)) = self.extrapolate_1d(row, &col_known) {
-                let clamped = val.clamp(1.0, 200.0);
-                let (confidence, method) = if is_interpolation {
-                    (0.75, PredictionMethod::OneDInterpolation)
-                } else {
-                    (0.35, PredictionMethod::LinearExtrapolation)
-                };
-                return Some(PredictedCell {
-                    row,
-                    col,
-                    predicted_value: clamped,
-                    current_value: table_values[row][col],
-                    confidence,
-                    method,
-                    neighbor_count: col_known.len(),
-                });
+            if let Some(cell) =
+                self.build_extrapolated_cell(row, col, row, &col_known, table_values, 0.35)
+            {
+                return Some(cell);
             }
         }
 
         None
+    }
+
+    /// Largest gap, in cells, that a fit is allowed to extrapolate beyond the
+    /// known range. Beyond this the two-point slope is not trustworthy and no
+    /// prediction is offered rather than a guessed one.
+    const MAX_EXTRAP_CELLS: usize = 3;
+
+    /// How far an extrapolated value may deviate from the nearest known cell,
+    /// as a fraction. A VE table changes gradually between adjacent cells, so
+    /// bounding to +/-30% of the neighbour keeps the estimate physically
+    /// plausible and — critically — stops a steep local slope from running the
+    /// value down toward the VE 1.0 floor (near-zero fuel) far from any data.
+    const MAX_EXTRAP_DEVIATION: f64 = 0.30;
+
+    /// Turn an `extrapolate_1d` result into a bounded, confidence-decayed
+    /// prediction. Interpolation (target bracketed by known points) is inherently
+    /// bounded by those points and kept as-is; genuine extrapolation is span-
+    /// capped, clamped relative to the nearest known value, and given a
+    /// confidence that decays with distance so a far fit falls below the
+    /// acceptance gate instead of being applied.
+    fn build_extrapolated_cell(
+        &self,
+        row: usize,
+        col: usize,
+        target: usize,
+        known_sorted: &[(usize, f64)],
+        table_values: &[Vec<f64>],
+        base_extrap_conf: f64,
+    ) -> Option<PredictedCell> {
+        let (val, is_interpolation) = self.extrapolate_1d(target, known_sorted)?;
+
+        let (predicted_value, confidence, method) = if is_interpolation {
+            (
+                val.clamp(1.0, 200.0),
+                0.75,
+                PredictionMethod::OneDInterpolation,
+            )
+        } else {
+            // Distance beyond the known range, and the nearest known value to
+            // anchor the relative clamp to.
+            let first = known_sorted[0].0;
+            let last = known_sorted[known_sorted.len() - 1].0;
+            let (distance, ref_val) = if target < first {
+                (first - target, known_sorted[0].1)
+            } else {
+                (target - last, known_sorted[known_sorted.len() - 1].1)
+            };
+
+            if distance == 0 || distance > Self::MAX_EXTRAP_CELLS {
+                return None;
+            }
+
+            let lo = (ref_val * (1.0 - Self::MAX_EXTRAP_DEVIATION)).max(1.0);
+            let hi = (ref_val * (1.0 + Self::MAX_EXTRAP_DEVIATION)).min(200.0);
+            let bounded = val.clamp(lo, hi);
+
+            // Linear decay: full confidence one cell out, dropping to zero at
+            // MAX_EXTRAP_CELLS+1 so a 3-cell fit lands well under a typical
+            // 0.3 acceptance gate.
+            let decay = 1.0 - (distance - 1) as f64 / (Self::MAX_EXTRAP_CELLS + 1) as f64;
+
+            (
+                bounded,
+                base_extrap_conf * decay,
+                PredictionMethod::LinearExtrapolation,
+            )
+        };
+
+        Some(PredictedCell {
+            row,
+            col,
+            predicted_value,
+            current_value: table_values[row][col],
+            confidence,
+            method,
+            neighbor_count: known_sorted.len(),
+        })
     }
 
     /// Extrapolate/interpolate from known 1D data points to target index.
@@ -740,6 +793,59 @@ mod tests {
                 window[0].confidence >= window[1].confidence,
                 "Predictions should be sorted by confidence descending"
             );
+        }
+    }
+
+    #[test]
+    fn test_extrapolation_never_recommends_near_zero_fuel_far_from_data() {
+        // Reproduces the observed failure: two known cells in one column with a
+        // steep falling slope extrapolated all the way across the table to VE
+        // 1.0 (near-zero fuel) at a passing confidence. A prediction that far
+        // out must either be refused or bounded near its neighbour — never a
+        // lean-direction runaway.
+        let config = PredictorConfig {
+            min_confidence: 0.3,
+            min_hit_count: 1,
+            ..Default::default()
+        };
+        let predictor = VePredictor::new(config);
+
+        let mut table = make_table(16, 16, 0.0);
+        let mut hits = make_hits(16, 16, 0);
+
+        // Column 5: two known cells, rows 3 and 4, slope -12 VE/row.
+        hits[3][5] = 10;
+        table[3][5] = 58.0;
+        hits[4][5] = 10;
+        table[4][5] = 46.0;
+
+        let x_bins: Vec<f64> = (0..16).map(|i| 500.0 + i as f64 * 500.0).collect();
+        let y_bins: Vec<f64> = (0..16).map(|i| 20.0 + i as f64 * 12.0).collect();
+
+        let predictions = predictor.predict_cells(&table, &hits, &x_bins, &y_bins);
+
+        // No accepted prediction anywhere may sit at or near the VE 1.0 floor.
+        for p in &predictions {
+            assert!(
+                p.predicted_value >= 30.0,
+                "prediction at ({},{}) is {} VE — near-zero fuel from a 2-point extrapolation",
+                p.row,
+                p.col,
+                p.predicted_value
+            );
+        }
+
+        // And nothing in column 5 should be predicted more than a few cells
+        // beyond the known rows (3-4): the far cells (rows 8-15) must not
+        // appear as column-wise extrapolations.
+        for p in &predictions {
+            if p.col == 5 && matches!(p.method, PredictionMethod::LinearExtrapolation) {
+                assert!(
+                    p.row <= 7,
+                    "column-5 extrapolation at row {} is beyond the span cap (known rows 3-4)",
+                    p.row
+                );
+            }
         }
     }
 

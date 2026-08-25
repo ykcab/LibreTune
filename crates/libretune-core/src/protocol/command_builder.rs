@@ -136,6 +136,43 @@ impl CommandBuilder {
                 }
             }
 
+            // Backslash escapes. INI command strings carry literal bytes this
+            // way — Speeduino's ochGetCommand is `r\$tsCanId\x30%2o%2c`, where
+            // `\x30` is the single byte 0x30 selecting the output-channel
+            // block. Without this the four characters `\`, `x`, `3`, `0` went
+            // out verbatim, making a 10-byte request where the ECU expects 7;
+            // it answered with silence and realtime data never arrived.
+            if chars[i] == '\\' && i + 1 < chars.len() {
+                // Same escape set as `parse_command_string` in connection.rs —
+                // the two decoders read the same INI syntax, and diverging on
+                // e.g. `\r` would make the same command mean different bytes
+                // depending on which path built it.
+                let simple = match chars[i + 1] {
+                    'n' => Some(b'\n'),
+                    'r' => Some(b'\r'),
+                    't' => Some(b'\t'),
+                    '0' => Some(0u8),
+                    '\\' => Some(b'\\'),
+                    _ => None,
+                };
+                if let Some(b) = simple {
+                    result.push(b);
+                    i += 2;
+                    continue;
+                }
+                match chars[i + 1] {
+                    'x' | 'X' if i + 3 < chars.len() => {
+                        let hex: String = chars[i + 2..i + 4].iter().collect();
+                        if let Ok(b) = u8::from_str_radix(&hex, 16) {
+                            result.push(b);
+                            i += 4;
+                            continue;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             // Regular character - add as byte
             result.push(chars[i] as u8);
             i += 1;
@@ -158,6 +195,40 @@ pub fn legacy_command(cmd: char) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Speeduino's ochGetCommand is `r\$tsCanId\x30%2o%2c`, where `\x30` is a
+    /// single byte selecting the output-channel block. Emitting it as the four
+    /// characters `\`, `x`, `3`, `0` made a 10-byte request where the ECU
+    /// expects 7 — it answered with silence and realtime data never arrived.
+    #[test]
+    fn hex_escapes_become_single_bytes() {
+        let builder = CommandBuilder::new(true); // Speeduino: little-endian fields
+        let cmd = builder
+            .build_och_command("r\0\\x30%2o%2c", 130)
+            .expect("builds");
+        assert_eq!(
+            cmd,
+            vec![b'r', 0x00, 0x30, 0x00, 0x00, 0x82, 0x00],
+            "r | canid | 0x30 | offset u16 LE | count u16 LE"
+        );
+    }
+
+    /// The escape decode is shared by every command family, not just OCH —
+    /// MS-lineage INIs carry `\xNN` bytes in pageReadCommand/pageValueWrite
+    /// too, and those go over LEGACY connections. A read command with an
+    /// escaped selector byte must come out one byte shorter than its text.
+    #[test]
+    fn hex_escapes_decode_in_read_commands_too() {
+        let builder = CommandBuilder::new(false);
+        let cmd = builder
+            .build_read_command("r\\x00\\x06%2o%2c", 0, 0x0204, 16)
+            .expect("builds");
+        assert_eq!(
+            cmd,
+            vec![b'r', 0x00, 0x06, 0x02, 0x04, 0x00, 0x10],
+            "r | canid 0x00 | table 0x06 | offset u16 BE | count u16 BE"
+        );
+    }
 
     #[test]
     fn test_read_command_big_endian() {

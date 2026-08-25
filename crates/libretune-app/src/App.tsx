@@ -33,6 +33,7 @@ import { useTableCurveRefresh } from "./hooks/useTableCurveRefresh";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useEcuEventListeners } from "./hooks/useEcuEventListeners";
 import { useTableAccentColorVars } from "./utils/useTableOrientation";
+import { initRenderSettings } from "./components/gauges/renderSettings";
 import { useAutoConnect, type ConnectOptions } from "./hooks/useAutoConnect";
 import { useReconnectHandler } from "./hooks/useReconnectHandler";
 import { useTuneModified } from "./hooks/useTuneModified";
@@ -103,6 +104,14 @@ import "./styles";
  * is intentionally registered once at module level (NOT in an effect) to dodge
  * a StrictMode double-invoke race — see the comment near `useRealtimeStream`.
  */
+/** Reported by `get_temperature_units_status`. */
+interface UnitsStatus {
+  needsChoice: boolean;
+  celsius: boolean;
+  source: string;
+  iniUsesCelsius: boolean;
+}
+
 function AppContent() {
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation('menu');
@@ -116,10 +125,66 @@ function AppContent() {
 
   // Project state
   const [currentProject, setCurrentProject] = useState<CurrentProject | null>(null);
+  // Temperature units: an INI picks Celsius through `#if CELSIUS`, and a
+  // project that declares nothing silently takes the Fahrenheit arm. Ask once,
+  // and only when the INI actually branches on it.
+  const [unitsPrompt, setUnitsPrompt] = useState<UnitsStatus | null>(null);
+  const [unitsBusy, setUnitsBusy] = useState(false);
+
+  // Hooked to the project rather than to each open call: there are two places a
+  // project can be opened (restore-on-launch and the picker) and adding a third
+  // should not mean remembering to ask again.
+  useEffect(() => {
+    if (!currentProject) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await invoke<UnitsStatus>('get_temperature_units_status');
+        if (!cancelled && status.needsChoice) setUnitsPrompt(status);
+      } catch {
+        // A project without a parsed definition yet is not an error worth
+        // interrupting anyone over; the question keeps until next open.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentProject]);
+
+  const chooseTemperatureUnits = useCallback(async (celsius: boolean) => {
+    setUnitsBusy(true);
+    try {
+      await invoke('set_temperature_units', { celsius });
+      setUnitsPrompt(null);
+      // Symbols are resolved during parsing, so the definition in memory still
+      // holds the old answer. Reopen to apply it rather than leaving the app
+      // showing one unit and reporting another.
+      const path = currentProject?.path;
+      if (path) {
+        const reopened = await invoke<CurrentProject>('open_project', { path });
+        setCurrentProject(reopened);
+      }
+    } catch (e) {
+      console.error('Failed to save temperature units:', e);
+    } finally {
+      setUnitsBusy(false);
+    }
+  }, [currentProject]);
   const { tuneModified, refreshTuneModified } = useTuneModified(!!currentProject);
   const [availableProjects, setAvailableProjects] = useState<ProjectInfo[]>([]);
   const [repositoryInis, setRepositoryInis] = useState<IniEntry[]>([]);
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+  const [onlineIniDialogOpen, setOnlineIniDialogOpen] = useState(false);
+  const [connectEcuWizardOpen, setConnectEcuWizardOpen] = useState(false);
+
+  // Refresh the repository INI list whenever the New Project dialog or the
+  // Connect-ECU wizard opens. Removing a definition in Settings updates only
+  // the dialog's local copy, so without this the INI pickers would still show
+  // deleted INIs.
+  useEffect(() => {
+    if (!newProjectDialogOpen && !connectEcuWizardOpen) return;
+    invoke<IniEntry[]>("list_repository_inis")
+      .then(setRepositoryInis)
+      .catch(() => {});
+  }, [newProjectDialogOpen, connectEcuWizardOpen]);
   const [baseMapDialogOpen, setBaseMapDialogOpen] = useState(false);
 
   // Connection state
@@ -486,7 +551,8 @@ function AppContent() {
              const TOOLS: Record<string, { title: string, icon: string, type: TabContent['type'] }> = {
                "console": { title: "ECU Console", icon: "terminal", type: "console" },
                "datalog": { title: "Data Logging", icon: "datalog", type: "datalog" },
-               "virtual-dyno": { title: "Virtual Dyno", icon: "gauge", type: "virtual-dyno" },
+              "virtual-dyno": { title: "Virtual Dyno", icon: "gauge", type: "virtual-dyno" },
+              "datalog-viewer": { title: "Datalog Viewer", icon: "autotune", type: "datalog-viewer" },
                "autotune": { title: "AutoTune", icon: "autotune", type: "autotune" },
                "tooth-logger": { title: "Tooth Logger", icon: "scope", type: "tooth-logger" },
                "composite-logger": { title: "Composite Logger", icon: "scope", type: "composite-logger" },
@@ -693,7 +759,7 @@ function AppContent() {
   useGlobalShortcuts({
     isConnected: status.state === "Connected",
     tuneModified,
-    setNewProjectDialogOpen,
+    setConnectEcuWizardOpen,
     setLoadDialogOpen,
     setSaveDialogOpen,
     setBurnDialogOpen,
@@ -701,6 +767,13 @@ function AppContent() {
 
   // User-configured cursor/trail colors → root CSS vars
   useTableAccentColorVars();
+
+  // Dashboard render settings (refresh-rate cap, right-aligned values) —
+  // imperative module read by the gauge rAF loop; keeps itself in sync with
+  // the `settings:changed` event (issue #82).
+  useEffect(() => {
+    void initRenderSettings();
+  }, []);
 
   // App-level event listeners: window title, active-tab persistence,
   // reconnect:request, ini:changed, demo:changed (extracted to hook).
@@ -866,12 +939,32 @@ function AppContent() {
 
   async function connect(options?: ConnectOptions) {
     const targetPort = options?.port ?? selectedPort;
+    // Explicit overrides (e.g. from the Connect ECU wizard, which already
+    // collected these on its own params step) win over the current UI
+    // selection — falling back to state avoids a stale-closure read of
+    // values set moments earlier in the same synchronous caller.
+    const effectiveBaud = options?.baudRate ?? baudRate;
+    const effectiveConnectionType = options?.connectionType ?? connectionType;
+    const effectiveTcpHost = options?.tcpHost ?? tcpHost;
+    const effectiveTcpPort = options?.tcpPort ?? tcpPort;
     setConnecting(true);
     setSyncProgress(null);
     setSyncStatus(null);
     try {
       if (options?.port && options.port !== selectedPort) {
         setSelectedPort(options.port);
+      }
+      if (options?.baudRate !== undefined && options.baudRate !== baudRate) {
+        setBaudRate(options.baudRate);
+      }
+      if (options?.connectionType && options.connectionType !== connectionType) {
+        setConnectionType(options.connectionType);
+      }
+      if (options?.tcpHost !== undefined && options.tcpHost !== tcpHost) {
+        setTcpHost(options.tcpHost);
+      }
+      if (options?.tcpPort !== undefined && options.tcpPort !== tcpPort) {
+        setTcpPort(options.tcpPort);
       }
 
       // Sanity-check selected port is still available; refresh list if necessary
@@ -910,12 +1003,12 @@ function AppContent() {
 
       const result = await invoke<ConnectResult>("connect_to_ecu", { 
         portName: portToUse, 
-        baudRate, 
+        baudRate: effectiveBaud, 
         timeoutMs, 
         runtimePacketMode: runtimeMode,
-        connectionType,
-        tcpHost,
-        tcpPort
+        connectionType: effectiveConnectionType,
+        tcpHost: effectiveTcpHost,
+        tcpPort: effectiveTcpPort
       });
       await checkStatus();
       
@@ -1110,6 +1203,31 @@ function AppContent() {
       }
       return false;
     }
+  }
+
+  /**
+   * Connect to the ECU the Connect-ECU wizard just detected, using the exact
+   * connection params it already collected. Reuses the full connect() flow
+   * (signature-mismatch handling, automatic tune sync on a match, saving the
+   * connection to the project) instead of just creating the project record —
+   * so finishing the wizard leaves the app actually connected, not just with
+   * a new project open.
+   */
+  async function connectWizardEcu(params: {
+    port: string;
+    baud: number;
+    connectionType: 'Serial' | 'Tcp';
+    tcpHost: string;
+    tcpPort: number;
+  }) {
+    await connect({
+      port: params.port,
+      baudRate: params.baud,
+      connectionType: params.connectionType,
+      tcpHost: params.tcpHost,
+      tcpPort: params.tcpPort,
+      strictPort: true,
+    });
   }
 
   // Refresh open views whenever the backend loads a tune (any entry point)
@@ -1413,7 +1531,8 @@ function AppContent() {
     t, currentProject, tuneModified, status, ecuType, iniCapabilities, backendMenus, theme,
     sidebarVisible, showEcuMenus: showEcuMenusInMenubar, tabs, openTarget, handleStdTarget, openHelpTopic, showToast,
     closeProject, handleCreateRestorePoint,
-    setNewProjectDialogOpen, setImportProjectOpen, setSaveDialogOpen, setLoadDialogOpen,
+    setConnectEcuWizardOpen, setImportProjectOpen, setSaveDialogOpen, setLoadDialogOpen,
+    setOnlineIniDialogOpen,
     setBurnDialogOpen, setFirmwareUpdateDialogOpen, setRestorePointsOpen, setTuneHistoryOpen, setSettingsDialogOpen,
     setMathChannelsDialogOpen, setAfrDelayTestOpen, setBaseMapDialogOpen, setTableComparisonOpen,
     setTuneFileDiffOpen, setDynoOverlayOpen, setPluginPanelOpen, agentPanelVisible, setAgentPanelVisible, setConnectionDialogOpen,
@@ -1555,6 +1674,35 @@ function AppContent() {
 
   return (
     <>
+      {unitsPrompt && (
+        <div className="units-backdrop" role="dialog" aria-modal="true" aria-label="Temperature units">
+          <div className="units-dialog">
+            <h2>Which temperature units does this ECU use?</h2>
+            <p>
+              This definition selects units with <code>#if CELSIUS</code>, but the project
+              does not say which to use. Until it does, temperatures are read as
+              <strong> Fahrenheit</strong> — so a 15&nbsp;°C morning shows as 59.
+            </p>
+            <p className="units-why">
+              It is not only cosmetic: AutoTune&rsquo;s minimum-coolant filter is compared
+              against this same channel, so the wrong unit silently accepts or rejects
+              whole sessions.
+            </p>
+            <div className="units-actions">
+              <button type="button" disabled={unitsBusy} onClick={() => chooseTemperatureUnits(true)}>
+                Celsius (°C)
+              </button>
+              <button type="button" disabled={unitsBusy} onClick={() => chooseTemperatureUnits(false)}>
+                Fahrenheit (°F)
+              </button>
+            </div>
+            <p className="units-note">
+              Saved to the project&rsquo;s <code>project.properties</code>, the same file and
+              key other tuning software uses, so you are asked once. The project reloads to apply it.
+            </p>
+          </div>
+        </div>
+      )}
       <TunerLayout
         menuItems={menuItems}
         toolbarItems={toolbarItems}
@@ -1595,8 +1743,7 @@ function AppContent() {
             tabContents={tabContents}
             setTabContents={setTabContents}
             openProject={openProject}
-            setNewProjectDialogOpen={setNewProjectDialogOpen}
-            setConnectionDialogOpen={setConnectionDialogOpen}
+            setConnectEcuWizardOpen={setConnectEcuWizardOpen}
             setImportProjectOpen={setImportProjectOpen}
             handleDeleteProject={handleDeleteProject}
             setBurnDialogOpen={setBurnDialogOpen}
@@ -1676,6 +1823,11 @@ function AppContent() {
         setConnectionRuntimePacketMode={setConnectionRuntimePacketMode}
         newProjectDialogOpen={newProjectDialogOpen}
         setNewProjectDialogOpen={setNewProjectDialogOpen}
+        onlineIniDialogOpen={onlineIniDialogOpen}
+        setOnlineIniDialogOpen={setOnlineIniDialogOpen}
+        connectEcuWizardOpen={connectEcuWizardOpen}
+        setConnectEcuWizardOpen={setConnectEcuWizardOpen}
+        connectWizardEcu={connectWizardEcu}
         repositoryInis={repositoryInis}
         setRepositoryInis={setRepositoryInis}
         createProject={createProject}

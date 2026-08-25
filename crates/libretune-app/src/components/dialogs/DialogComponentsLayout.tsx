@@ -23,6 +23,9 @@ export interface DialogComponentsLayoutProps {
   onOptimisticUpdate?: (name: string, value: number) => void;
   onFieldFocus?: (info: FieldInfo) => void;
   showAllHelpIcons?: boolean;
+  /** From DialogDefinition.layout_hint — "xAxis" rows unpositioned
+   * top-level panels side by side instead of stacking them. */
+  layoutHint?: string;
 }
 
 export function DialogComponentsLayout({
@@ -34,6 +37,7 @@ export function DialogComponentsLayout({
   onOptimisticUpdate,
   onFieldFocus,
   showAllHelpIcons,
+  layoutHint,
 }: DialogComponentsLayoutProps) {
   const { components: tableLaidOut, hasTableSplit: _tableSplit } = useMemo(
     () => applyTableSettingsLayout(dialogName, components),
@@ -86,6 +90,17 @@ export function DialogComponentsLayout({
 
         if (!hasPositioned) {
           const items = renderGrouped(row.unpositioned, `unpositioned-${rowIndex}`);
+          if (
+            layoutHint === 'xAxis' &&
+            row.unpositioned.length > 1 &&
+            row.unpositioned.every((comp) => comp.type === 'Panel')
+          ) {
+            return (
+              <div key={`row-${rowIndex}`} className="dialog-row-xaxis">
+                {items}
+              </div>
+            );
+          }
           if (hardwareTestLayout && items.length > 0) {
             const { compact, auxiliary } = partitionHardwareTestComponents(row.unpositioned);
             const wrapCell = (comp: DialogComponent, key: string) => {

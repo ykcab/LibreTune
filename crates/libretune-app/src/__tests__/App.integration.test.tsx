@@ -105,14 +105,28 @@ describe('App integration (toolbar connection-info)', () => {
       </LoadingProvider>
     );
 
-    // Packet mode label should show 'Auto' for connected state (wait for mount to stabilize)
-    await waitFor(() => expect(screen.getByText('Auto')).toBeInTheDocument());
+    // Packet mode label should show 'Auto' for connected state.
+    //
+    // Generous timeout on purpose: mounting App fires a chain of async invokes
+    // (repository init, project list, settings, connection status, menu tree)
+    // before the toolbar can render the packet mode. testing-library's default
+    // is 1000 ms, which this clears comfortably when the file runs alone but
+    // not when the full suite saturates the machine - the failure was
+    // "Unable to find an element with the text: Auto", i.e. the deadline, not
+    // a wrong render. It made pre-push.sh fail at random on Windows while
+    // passing in CI.
+    await waitFor(() => expect(screen.getByText('Auto')).toBeInTheDocument(), {
+      timeout: 10_000,
+    });
 
     // After our synthetic metrics event arrives (via the spy), the metrics element should show a unit like kB/s or MB/s
-    await waitFor(() => {
-      const text = container.querySelector('.conn-metrics')?.textContent || '';
-      expect(/B\/s|kB\/s|MB\/s/.test(text)).toBe(true);
-    });
+    await waitFor(
+      () => {
+        const text = container.querySelector('.conn-metrics')?.textContent || '';
+        expect(/B\/s|kB\/s|MB\/s/.test(text)).toBe(true);
+      },
+      { timeout: 10_000 },
+    );
 
     listenMock.mockRestore();
 
@@ -121,11 +135,14 @@ describe('App integration (toolbar connection-info)', () => {
     expect(metricsEl).toBeTruthy();
 
     // After our synthetic metrics event arrives, the metrics element should show a unit like kB/s or MB/s
-    await waitFor(() => {
-      const text = container.querySelector('.conn-metrics')?.textContent || '';
-      expect(/B\/s|kB\/s|MB\/s/.test(text)).toBe(true);
-    });
-  });
+    await waitFor(
+      () => {
+        const text = container.querySelector('.conn-metrics')?.textContent || '';
+        expect(/B\/s|kB\/s|MB\/s/.test(text)).toBe(true);
+      },
+      { timeout: 10_000 },
+    );
+  }, 15000);
 
   it('shows placeholder packet mode when disconnected', async () => {
     (invoke as unknown as any).mockImplementation((cmd: string) => {

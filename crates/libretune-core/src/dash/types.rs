@@ -356,6 +356,9 @@ pub struct GaugeConfig {
 
     // Gauge type
     pub gauge_painter: GaugePainter,
+    // Provenance only — intentionally never applied at render time (issue
+    // #129): painter selection is `gauge_painter`; TunerStudio "styles" are
+    // free-form names with no definition inside the .dash file.
     pub gauge_style: String, // Original style name from file
 
     // Data binding
@@ -437,6 +440,10 @@ pub struct GaugeConfig {
     // History/tracking
     pub history_value: f64,
     pub history_delay: i32,
+    // Round-trip only — intentionally never applied at render time (issue
+    // #129): the value is uniformly 1 across the stock corpus and
+    // TunerStudio's semantics for it are undocumented, so applying it would
+    // invent behaviour. The renderer already smooths via a fixed lerp.
     pub needle_smoothing: i32,
 
     // Interaction
@@ -524,7 +531,10 @@ impl Default for GaugeConfig {
             italic_font: false,
             sweep_angle: 270,
             start_angle: 135,
-            face_angle: 270,
+            // TunerStudio renders a gauge without `FaceAngle` as a full
+            // circle; the stock corpus only ever carries 360/180/182/188
+            // (issue #129), so 360 is the faithful absent-value default.
+            face_angle: 360,
             sweep_begin_degree: 135,
             counter_clockwise: false,
             major_ticks: -1.0,

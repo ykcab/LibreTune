@@ -52,6 +52,35 @@ pub enum ProtocolError {
     #[error("Protocol error: {0}")]
     ProtocolError(String),
 
+    /// A write was read straight back and the ECU did not hold what was sent.
+    /// Distinct from a failed write: the command was accepted, so nothing else
+    /// on the wire reports a problem, and the tune the tuner is looking at no
+    /// longer matches the tune the engine is running.
+    #[error(
+        "ECU did not store what was written to page {page} offset {offset}: \
+         sent {expected:02X?}, read back {actual:02X?}"
+    )]
+    WriteVerificationFailed {
+        page: u8,
+        offset: u16,
+        expected: u8,
+        actual: u8,
+    },
+
+    /// A write went out but the read-back could not complete, so the write is
+    /// unverified. On a legacy ECU this is itself the corruption signature: a
+    /// buffer-overrun ECU consumes the read command as table data and answers
+    /// with silence. Must not be treated as "offline" — the write was sent.
+    #[error(
+        "write to page {page} offset {offset} could not be verified \
+         (read-back failed: {reason}) — treat the write as unconfirmed"
+    )]
+    WriteVerificationUnavailable {
+        page: u8,
+        offset: u16,
+        reason: String,
+    },
+
     #[error("Port not found: {0}")]
     PortNotFound(String),
 

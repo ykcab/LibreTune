@@ -70,6 +70,7 @@ pub async fn download_ini(
     let source_enum = match source.to_lowercase().as_str() {
         "speeduino" => IniSource::Speeduino,
         "rusefi" => IniSource::RusEFI,
+        "fome" => IniSource::Fome,
         _ => IniSource::Custom,
     };
 

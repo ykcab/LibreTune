@@ -194,6 +194,23 @@ export default function CurveEditor({
   // SVG container ref
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  // Embedded mode's chart box is CSS-sized (width: 100%, capped 320-500px —
+  // see CurveEditor.css), not fixed — this tracks the box's actual rendered
+  // width so the SVG/axes can match it instead of assuming 500px.
+  const [measuredChartWidth, setMeasuredChartWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!embedded) return;
+    const el = chartContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) setMeasuredChartWidth(width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [embedded]);
 
   // Update local values when data changes
   useEffect(() => {
@@ -235,8 +252,11 @@ export default function CurveEditor({
     };
   }, [getCellColor]);
 
-  // Chart dimensions based on mode
-  const chartWidth = embedded ? 500 : 500;
+  // Chart dimensions based on mode. Embedded width comes from the actual
+  // rendered chart box (see the ResizeObserver above) — CSS decides the
+  // available space (100%, capped 320-500px), this just matches it; 500 is
+  // only a placeholder for the first render before the box is measured.
+  const chartWidth = embedded ? Math.round(measuredChartWidth ?? 500) : 500;
   const chartHeight = embedded ? 280 : 350;
   const padding = { top: 30, right: 20, bottom: 40, left: 50 };
 
@@ -790,11 +810,10 @@ Suggestion: {errorInfo.suggestion}
     });
 
   return (
-    <div 
+    <div
       className={`curve-editor ${embedded ? 'embedded' : 'standalone'}`}
       ref={containerRef}
       tabIndex={0} // Enable keyboard focus for undo/redo shortcuts
-      style={embedded ? ({ '--curve-embedded-width': `${chartWidth}px` } as React.CSSProperties) : undefined}
     >
       {/* Header - only for standalone mode */}
       {!embedded && (
@@ -838,7 +857,7 @@ Suggestion: {errorInfo.suggestion}
 
       <div className="curve-content">
         {/* Chart area */}
-        <div className="curve-chart-container" onContextMenu={handleContextMenu}>
+        <div className="curve-chart-container" ref={chartContainerRef} onContextMenu={handleContextMenu}>
           <svg
             ref={svgRef}
             width={chartWidth}

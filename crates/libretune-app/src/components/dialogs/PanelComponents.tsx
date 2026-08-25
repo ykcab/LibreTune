@@ -97,14 +97,10 @@ export const RecursivePanel = memo(function RecursivePanel({
     setGaugeConfig(null);
     setPortEditor(null);
 
-    const stdPlaceholder = buildStdPlaceholderDefinition(name);
-    if (stdPlaceholder) {
-      setDefinition(stdPlaceholder);
-      setPanelType('dialog');
-      return () => {
-        cancelled = true;
-      };
-    }
+    // `std_*` panels (like std_injection) are synthesized on the backend in
+    // get_dialog_definition → EcuDefinition::std_panel_definition, so they
+    // must fall through to that lookup rather than being pre-empted here.
+    // buildStdPlaceholderDefinition is used only as the final fallback below.
 
     // First try as indicatorPanel
     invoke<IndicatorPanel>('get_indicator_panel', { name })
@@ -205,7 +201,16 @@ export const RecursivePanel = memo(function RecursivePanel({
                           curve: String(err2),
                           portEditor: String(err3),
                         });
-                        setPanelType('unknown');
+                        // Last resort: a std_* panel the backend couldn't
+                        // synthesize (e.g. std_ms2gentherm) gets a friendly
+                        // placeholder instead of the bare "unknown" pane.
+                        const fallback = buildStdPlaceholderDefinition(name);
+                        if (fallback) {
+                          setDefinition(fallback);
+                          setPanelType('dialog');
+                        } else {
+                          setPanelType('unknown');
+                        }
                       });
                   });
               });
@@ -399,80 +404,58 @@ export function DialogFieldWrapper({
 }) {
   const [fieldVisible, setFieldVisible] = useState<boolean>(true);
   const [fieldEnabled, setFieldEnabled] = useState<boolean>(true);
-  
-  // Evaluate visibility condition (hides field if false)
-  useEffect(() => {
-    const visCondition =
-      comp.visibility_condition ||
-      (comp.condition && comp.enabled_condition ? comp.condition : undefined);
-    const enCondition =
-      comp.enabled_condition ||
-      (comp.condition && !comp.visibility_condition ? comp.condition : undefined);
 
-    const evaluate = (expression: string) =>
-      invoke<boolean>('evaluate_expression', {
-        expression,
-        context,
+  const evaluate = (expression: string) =>
+    invoke<boolean>('evaluate_expression', {
+      expression,
+      context,
+    });
+
+  // Evaluate visibility condition (hides field if false). Only an explicit
+  // `visibility_condition` hides a field — a lone `enabled_condition` (the
+  // common single-condition INI case, `field = "Label", name, { cond }`)
+  // must NOT hide it, only disable it below. TunerStudio keeps such fields
+  // visible-but-greyed-out, e.g. STFT's per-region settings stay visible
+  // even when the "Short term fuel trim" master switch is disabled.
+  useEffect(() => {
+    const visCondition = comp.visibility_condition;
+    if (!visCondition) {
+      setFieldVisible(true);
+      return;
+    }
+
+    evaluate(visCondition)
+      .then((result) => setFieldVisible(result))
+      .catch((err) => {
+        console.warn(
+          `[DialogFieldWrapper] Failed to evaluate visibility condition '${visCondition}' for '${comp.name}':`,
+          err,
+        );
+        setFieldVisible(true);
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comp.visibility_condition, context, comp.name]);
 
-    if (visCondition) {
-      evaluate(visCondition)
-        .then((result) => setFieldVisible(result))
-        .catch((err) => {
-          console.warn(
-            `[DialogFieldWrapper] Failed to evaluate visibility condition '${visCondition}' for '${comp.name}':`,
-            err,
-          );
-          setFieldVisible(true);
-        });
-      return;
-    }
-
-    if (enCondition) {
-      evaluate(enCondition)
-        .then((result) => setFieldVisible(result))
-        .catch((err) => {
-          console.warn(
-            `[DialogFieldWrapper] Failed to evaluate enable condition '${enCondition}' for '${comp.name}':`,
-            err,
-          );
-          setFieldVisible(true);
-        });
-      return;
-    }
-
-    setFieldVisible(true);
-  }, [comp.visibility_condition, comp.condition, comp.enabled_condition, context, comp.name]);
-
-  // Evaluate enable condition (disables field if false when a separate visibility condition exists)
+  // Evaluate enable condition (disables field if false) — independent of
+  // whether a visibility condition is also present.
   useEffect(() => {
-    if (!comp.visibility_condition) {
+    const enCondition = comp.enabled_condition || comp.condition;
+    if (!enCondition) {
       setFieldEnabled(true);
       return;
     }
 
-    const enCondition =
-      comp.enabled_condition ||
-      (comp.condition && !comp.visibility_condition ? comp.condition : undefined);
-    if (enCondition) {
-      invoke<boolean>('evaluate_expression', {
-        expression: enCondition,
-        context,
-      })
-        .then((result) => {
-          setFieldEnabled(result);
-        })
-        .catch((err) => {
-          console.warn(
-            `[DialogFieldWrapper] Failed to evaluate enable condition '${enCondition}' for '${comp.name}':`,
-            err,
-          );
-          setFieldEnabled(true);
-        });
-    } else {
-      setFieldEnabled(true);
-    }
-  }, [comp.enabled_condition, comp.condition, comp.visibility_condition, context, comp.name]);
+    evaluate(enCondition)
+      .then((result) => setFieldEnabled(result))
+      .catch((err) => {
+        console.warn(
+          `[DialogFieldWrapper] Failed to evaluate enable condition '${enCondition}' for '${comp.name}':`,
+          err,
+        );
+        setFieldEnabled(true);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comp.enabled_condition, comp.condition, context, comp.name]);
   
   // Hide field if visibility condition is false
   if (!fieldVisible || !comp.name) return null;

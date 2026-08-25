@@ -200,7 +200,16 @@ pub fn scale_cells(
     result
 }
 
-/// Interpolate selected cells between their corners
+/// Interpolate the selection's bounding box by bilinearly blending its four
+/// corners — the equivalent of TunerStudio's "Interpolate" table operation.
+///
+/// When the selection collapses to a single row or a single column the span
+/// along that axis is zero. Previously the ratio was computed as
+/// `(y - min_y) / (max_y - min_y)`, i.e. `0.0 / 0.0`, which in Rust evaluates
+/// to `NaN` (not a panic) and silently poisoned every cell in the selection —
+/// a NaN could then be written straight to the ECU. A degenerate axis is now
+/// pinned to ratio `0.0`, which reduces the bilinear blend to a clean linear
+/// interpolation along the remaining axis (matching TunerStudio).
 pub fn interpolate_cells(z_values: &[Vec<f64>], selected_cells: Vec<TableCell>) -> Vec<Vec<f64>> {
     let mut result = z_values.to_vec();
 
@@ -208,27 +217,27 @@ pub fn interpolate_cells(z_values: &[Vec<f64>], selected_cells: Vec<TableCell>) 
         return result;
     }
 
-    let mut x_indices: Vec<usize> = Vec::new();
-    let mut y_indices: Vec<usize> = Vec::new();
+    let min_x = selected_cells.iter().map(|(_, x)| *x).min().unwrap();
+    let max_x = selected_cells.iter().map(|(_, x)| *x).max().unwrap();
+    let min_y = selected_cells.iter().map(|(y, _)| *y).min().unwrap();
+    let max_y = selected_cells.iter().map(|(y, _)| *y).max().unwrap();
 
-    for (y, x) in selected_cells.iter() {
-        x_indices.push(*x);
-        y_indices.push(*y);
-    }
+    // Read the four corners with bounds checks. If any corner falls outside the
+    // table (e.g. a stale selection after rebin_table shrank the grid) bail out
+    // rather than corrupt the data.
+    let corner = |y: usize, x: usize| z_values.get(y).and_then(|row| row.get(x)).copied();
+    let (top_left, top_right, bottom_left, bottom_right) = match (
+        corner(min_y, min_x),
+        corner(min_y, max_x),
+        corner(max_y, min_x),
+        corner(max_y, max_x),
+    ) {
+        (Some(tl), Some(tr), Some(bl), Some(br)) => (tl, tr, bl, br),
+        _ => return result,
+    };
 
-    let min_x = *x_indices.iter().min().unwrap();
-    let max_x = *x_indices.iter().max().unwrap();
-    let min_y = *y_indices.iter().min().unwrap();
-    let max_y = *y_indices.iter().max().unwrap();
-
-    let mut z_values_mut = z_values.to_vec();
-
-    let corners = [
-        get_cell_value(&mut z_values_mut, min_y, min_x),
-        get_cell_value(&mut z_values_mut, min_y, max_x),
-        get_cell_value(&mut z_values_mut, max_y, min_x),
-        get_cell_value(&mut z_values_mut, max_y, max_x),
-    ];
+    let y_span = (max_y - min_y) as f64;
+    let x_span = (max_x - min_x) as f64;
 
     for (y_idx, row) in result
         .iter_mut()
@@ -236,27 +245,27 @@ pub fn interpolate_cells(z_values: &[Vec<f64>], selected_cells: Vec<TableCell>) 
         .skip(min_y)
         .take(max_y - min_y + 1)
     {
-        let y = y_idx;
+        let y_ratio = if y_span > 0.0 {
+            (y_idx - min_y) as f64 / y_span
+        } else {
+            0.0
+        };
         for (x_idx, cell) in row
             .iter_mut()
             .enumerate()
             .skip(min_x)
             .take(max_x - min_x + 1)
         {
-            let x = x_idx;
-            if corners.iter().all(|c| c.is_some()) {
-                let y_ratio = (y - min_y) as f64 / (max_y - min_y) as f64;
-                let x_ratio = (x - min_x) as f64 / (max_x - min_x) as f64;
+            let x_ratio = if x_span > 0.0 {
+                (x_idx - min_x) as f64 / x_span
+            } else {
+                0.0
+            };
 
-                let top_left = corners[0].unwrap() * (1.0f64 - y_ratio) * (1.0f64 - x_ratio);
-                let top_right = corners[1].unwrap() * (1.0f64 - y_ratio) * x_ratio;
-                let bottom_left = corners[2].unwrap() * y_ratio * (1.0f64 - x_ratio);
-                let bottom_right = corners[3].unwrap() * y_ratio * x_ratio;
-
-                let interpolated = top_left + top_right + bottom_left + bottom_right;
-
-                *cell = interpolated;
-            }
+            *cell = top_left * (1.0 - y_ratio) * (1.0 - x_ratio)
+                + top_right * (1.0 - y_ratio) * x_ratio
+                + bottom_left * y_ratio * (1.0 - x_ratio)
+                + bottom_right * y_ratio * x_ratio;
         }
     }
 

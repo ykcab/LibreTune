@@ -58,6 +58,18 @@ export default function PropertyEditor({ component, onChange }: Props) {
           </div>
         </div>
 
+        {gauge.default_min != null && gauge.default_max != null && (
+          <div className="property-group">
+            <button
+              type="button"
+              title={`Restore the range this gauge was authored with in TunerStudio (${gauge.default_min} … ${gauge.default_max})`}
+              onClick={() => updateGauge({ min: gauge.default_min!, max: gauge.default_max! })}
+            >
+              Reset range to default ({gauge.default_min} … {gauge.default_max})
+            </button>
+          </div>
+        )}
+
         <div className="property-group">
           <label>Units</label>
           <input

@@ -46,18 +46,35 @@ pub struct OnlineIniEntry {
 pub enum IniSource {
     Speeduino,
     RusEFI,
+    /// FOME — a rusEFI fork; its TunerStudio INIs live under
+    /// `FOME-Tech/fome-fw/firmware/tunerstudio`.
+    Fome,
     Custom,
 }
 
 impl IniSource {
+    /// Every source the online search fetches from, in priority order.
+    ///
+    /// `Custom` is intentionally excluded — it has no upstream URL and is only
+    /// used to tag user-imported files. Add new upstream platforms here (and
+    /// give them URLs below) to widen auto-discovery coverage.
+    pub fn online_sources() -> &'static [IniSource] {
+        &[IniSource::Speeduino, IniSource::RusEFI, IniSource::Fome]
+    }
+
     /// Get the GitHub API URL for searching this source
     pub fn github_api_url(&self) -> Option<&'static str> {
         match self {
-            IniSource::Speeduino => Some(
-                "https://api.github.com/repos/noisymime/speeduino/contents/reference/tunerstudio",
-            ),
+            // The .ini used to live under reference/tunerstudio/, which no longer
+            // exists; the single canonical definition is reference/speeduino.ini.
+            IniSource::Speeduino => {
+                Some("https://api.github.com/repos/noisymime/speeduino/contents/reference")
+            }
             IniSource::RusEFI => {
                 Some("https://api.github.com/repos/rusefi/rusefi/contents/firmware/tunerstudio")
+            }
+            IniSource::Fome => {
+                Some("https://api.github.com/repos/FOME-Tech/fome-fw/contents/firmware/tunerstudio")
             }
             IniSource::Custom => None,
         }
@@ -66,8 +83,15 @@ impl IniSource {
     /// Get the raw content URL prefix for this source
     pub fn raw_url_prefix(&self) -> Option<&'static str> {
         match self {
-            IniSource::Speeduino => Some("https://raw.githubusercontent.com/noisymime/speeduino/master/reference/tunerstudio"),
-            IniSource::RusEFI => Some("https://raw.githubusercontent.com/rusefi/rusefi/master/firmware/tunerstudio"),
+            IniSource::Speeduino => {
+                Some("https://raw.githubusercontent.com/noisymime/speeduino/master/reference")
+            }
+            IniSource::RusEFI => {
+                Some("https://raw.githubusercontent.com/rusefi/rusefi/master/firmware/tunerstudio")
+            }
+            IniSource::Fome => Some(
+                "https://raw.githubusercontent.com/FOME-Tech/fome-fw/master/firmware/tunerstudio",
+            ),
             IniSource::Custom => None,
         }
     }
@@ -76,6 +100,7 @@ impl IniSource {
         match self {
             IniSource::Speeduino => "Speeduino",
             IniSource::RusEFI => "rusEFI",
+            IniSource::Fome => "FOME",
             IniSource::Custom => "Custom",
         }
     }
@@ -103,8 +128,14 @@ pub struct OnlineIniRepository {
 impl OnlineIniRepository {
     /// Create a new online repository client
     pub fn new() -> Self {
+        // Ignore any inherited proxy configuration and pin HTTP/1.1: some
+        // GUI-process environments and CDNs reject the request otherwise
+        // (observed as a spurious 400 on rusEFI's online-INI host, while the
+        // exact same request over HTTP/1.1 with no proxy returns 200).
         let client = reqwest::Client::builder()
             .user_agent("LibreTune/0.1")
+            .no_proxy()
+            .http1_only()
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -152,8 +183,8 @@ impl OnlineIniRepository {
     async fn refresh_cache(&mut self) -> Result<(), io::Error> {
         self.cache.clear();
 
-        // Fetch from each source
-        for source in [IniSource::Speeduino, IniSource::RusEFI] {
+        // Fetch from each upstream source
+        for &source in IniSource::online_sources() {
             match self.fetch_source_inis(source).await {
                 Ok(entries) => self.cache.extend(entries),
                 Err(e) => {
@@ -220,18 +251,25 @@ impl OnlineIniRepository {
         entry: &OnlineIniEntry,
         target_dir: &Path,
     ) -> Result<std::path::PathBuf, io::Error> {
+        eprintln!("[online-ini] downloading {}", entry.download_url);
         let response = self
             .client
             .get(&entry.download_url)
+            .header(reqwest::header::ACCEPT, "*/*")
             .send()
             .await
             .map_err(|e| io::Error::other(e.to_string()))?;
 
-        if !response.status().is_success() {
-            return Err(io::Error::other(format!(
-                "Download failed: {}",
-                response.status()
-            )));
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            eprintln!(
+                "[online-ini] {} -> {} body: {}",
+                entry.download_url,
+                status,
+                body.chars().take(300).collect::<String>()
+            );
+            return Err(io::Error::other(format!("Download failed: {}", status)));
         }
 
         let content = response
@@ -285,6 +323,32 @@ mod tests {
     fn test_ini_source_urls() {
         assert!(IniSource::Speeduino.github_api_url().is_some());
         assert!(IniSource::RusEFI.github_api_url().is_some());
+        assert!(IniSource::Fome.github_api_url().is_some());
         assert!(IniSource::Custom.github_api_url().is_none());
+    }
+
+    #[test]
+    fn test_online_sources_all_have_urls() {
+        // Every source the search iterates over must have both a GitHub API URL
+        // and a raw-content prefix, and must not be the Custom (no-upstream) tag.
+        for &source in IniSource::online_sources() {
+            assert_ne!(source, IniSource::Custom);
+            assert!(
+                source.github_api_url().is_some(),
+                "{:?} has no github_api_url",
+                source
+            );
+            assert!(
+                source.raw_url_prefix().is_some(),
+                "{:?} has no raw_url_prefix",
+                source
+            );
+        }
+    }
+
+    #[test]
+    fn test_fome_is_an_online_source() {
+        assert!(IniSource::online_sources().contains(&IniSource::Fome));
+        assert_eq!(IniSource::Fome.display_name(), "FOME");
     }
 }

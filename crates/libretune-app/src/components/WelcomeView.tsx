@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, FolderPlus, Plug, Download, X } from "lucide-react";
+import { Check, FolderPlus, Download, X } from "lucide-react";
 import "./WelcomeView.css";
 
 interface ProjectInfo {
@@ -13,7 +13,6 @@ interface WelcomeViewProps {
   projects: ProjectInfo[];
   onOpenProject: (path: string) => void;
   onNewProject: () => void;
-  onConnect: () => void;
   onImportTsProject: () => void;
   onDeleteProject: (name: string) => void;
 }
@@ -22,7 +21,6 @@ export default function WelcomeView({
   projects,
   onOpenProject,
   onNewProject,
-  onConnect,
   onImportTsProject,
   onDeleteProject,
 }: WelcomeViewProps) {
@@ -48,13 +46,8 @@ export default function WelcomeView({
       <div className="welcome-actions">
         <button className="welcome-action-btn primary" onClick={onNewProject}>
           <span className="action-icon"><FolderPlus size={32} /></span>
-          <span className="action-label">New Project</span>
-          <span className="action-desc">Create a new tuning project</span>
-        </button>
-        <button className="welcome-action-btn" onClick={onConnect}>
-          <span className="action-icon"><Plug size={32} /></span>
-          <span className="action-label">Connect to ECU</span>
-          <span className="action-desc">Connect via serial port</span>
+          <span className="action-label">Connect ECU / New Project</span>
+          <span className="action-desc">Detect a connected ECU or start offline</span>
         </button>
         <button className="welcome-action-btn" onClick={onImportTsProject}>
           <span className="action-icon"><Download size={32} /></span>

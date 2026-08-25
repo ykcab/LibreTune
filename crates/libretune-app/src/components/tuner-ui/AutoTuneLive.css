@@ -315,9 +315,23 @@
 /* Settings Panel */
 .autotune-settings-panel {
   width: 280px;
+  flex-shrink: 0;
   overflow-y: auto;
   background: var(--bg-subtle);
   padding: 12px;
+}
+
+/* Same "config panel beside main content, stacks below it when narrow"
+   pattern already used by PortEditor.css's .assignments-panel. */
+@media (max-width: 768px) {
+  .autotune-content {
+    flex-direction: column;
+  }
+
+  .autotune-settings-panel {
+    width: 100%;
+    max-height: 40vh;
+  }
 }
 
 .autotune-stats {

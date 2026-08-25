@@ -335,13 +335,35 @@ impl HealthScorer {
             ));
         }
 
-        // WOT: high RPM and/or high load
-        if wot_row_start < rows && wot_col_start < cols {
+        // WOT / high load: the whole high-load band, at any RPM.
+        //
+        // This previously intersected high RPM AND high load
+        // (cols >= wot_col_start), which left the high-load / low-to-mid-RPM
+        // corner belonging to no region — never scored, never mentioned. That
+        // corner is the lugging / boost region (and the part of the table that
+        // grows under forced induction), i.e. the most knock-critical cells.
+        // High load is the axis that matters here, so WOT spans all columns.
+        if wot_row_start < rows {
             regions.push((
                 "WOT".to_string(),
                 RegionType::WOT,
                 (wot_row_start, rows - 1),
-                (wot_col_start, cols - 1),
+                (0, cols - 1),
+            ));
+        }
+
+        // Low load, off-idle RPM: the low-load band above the idle RPM column.
+        // Without this, the low-load / higher-RPM cells (overrun, trailing
+        // throttle, light cruise) belonged to no region — the second of the two
+        // unscored holes. Idle covers only the low-RPM corner of this band.
+        // Only emit the region when there are columns above the idle corner.
+        let low_load_col_start = idle_col_end + 1;
+        if idle_row_end < rows && low_load_col_start < cols {
+            regions.push((
+                "Low Load".to_string(),
+                RegionType::Transition,
+                (0, idle_row_end.min(rows - 1)),
+                (low_load_col_start, cols - 1),
             ));
         }
 
@@ -615,6 +637,56 @@ mod tests {
             report.overall_score
         );
         assert_eq!(report.data_coverage_percent, 100.0);
+    }
+
+    #[test]
+    fn test_regions_cover_every_cell() {
+        // The overall score is a cell-count-weighted average over regions, so
+        // any cell belonging to no region is silently excluded from the grade.
+        // The WOT-as-intersection and missing low-load-band bugs left ~36% of a
+        // 16x16 table unscored, including the knock-critical high-load corner.
+        // Assert a complete tiling on realistic Speeduino-shaped axes.
+        let scorer = HealthScorer::new(HealthConfig::default());
+        let rows = 16;
+        let cols = 16;
+        let x_bins: Vec<f64> = (0..cols).map(|i| 500.0 + i as f64 * 500.0).collect(); // 500..8000 RPM
+        let y_bins: Vec<f64> = (0..rows).map(|i| 16.0 + i as f64 * 6.0).collect(); // 16..106 kPa
+
+        let regions = scorer.define_regions(&x_bins, &y_bins, rows, cols);
+
+        let mut covered = vec![vec![0u32; cols]; rows];
+        for (_, _, (r0, r1), (c0, c1)) in &regions {
+            for r in *r0..=*r1 {
+                for c in *c0..=*c1 {
+                    covered[r][c] += 1;
+                }
+            }
+        }
+
+        let uncovered: Vec<(usize, usize)> = (0..rows)
+            .flat_map(|r| (0..cols).map(move |c| (r, c)))
+            .filter(|(r, c)| covered[*r][*c] == 0)
+            .collect();
+
+        assert!(
+            uncovered.is_empty(),
+            "{} of {} cells belong to no region (e.g. {:?})",
+            uncovered.len(),
+            rows * cols,
+            &uncovered[..uncovered.len().min(5)]
+        );
+
+        // Specifically the high-load / low-RPM corner (the boost/lugging hole)
+        // must now be scored.
+        assert!(
+            covered[rows - 1][0] > 0,
+            "highest-load lowest-RPM cell is unscored"
+        );
+        // And the low-load / high-RPM corner (overrun hole).
+        assert!(
+            covered[0][cols - 1] > 0,
+            "low-load high-RPM cell is unscored"
+        );
     }
 
     #[test]

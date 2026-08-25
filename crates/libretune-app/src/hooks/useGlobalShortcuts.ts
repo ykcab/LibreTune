@@ -3,7 +3,7 @@ import { useEffect } from "react";
 export interface UseGlobalShortcutsDeps {
   isConnected: boolean;
   tuneModified: boolean;
-  setNewProjectDialogOpen: (open: boolean) => void;
+  setConnectEcuWizardOpen: (open: boolean) => void;
   setLoadDialogOpen: (open: boolean) => void;
   setSaveDialogOpen: (open: boolean) => void;
   setBurnDialogOpen: (open: boolean) => void;
@@ -11,7 +11,7 @@ export interface UseGlobalShortcutsDeps {
 
 /**
  * Global keyboard shortcuts:
- *   Ctrl/Cmd + N → New Project
+ *   Ctrl/Cmd + N → Connect ECU / New Project
  *   Ctrl/Cmd + O → Load Tune
  *   Ctrl/Cmd + S → Save Tune
  *   Ctrl/Cmd + B → Burn Tune (requires connection)
@@ -20,7 +20,7 @@ export function useGlobalShortcuts(deps: UseGlobalShortcutsDeps) {
   const {
     isConnected,
     tuneModified,
-    setNewProjectDialogOpen,
+    setConnectEcuWizardOpen,
     setLoadDialogOpen,
     setSaveDialogOpen,
     setBurnDialogOpen,
@@ -33,7 +33,7 @@ export function useGlobalShortcuts(deps: UseGlobalShortcutsDeps) {
         switch (e.key.toLowerCase()) {
           case 'n':
             e.preventDefault();
-            setNewProjectDialogOpen(true);
+            setConnectEcuWizardOpen(true);
             break;
           case 'o':
             e.preventDefault();
@@ -55,5 +55,5 @@ export function useGlobalShortcuts(deps: UseGlobalShortcutsDeps) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isConnected, tuneModified, setNewProjectDialogOpen, setLoadDialogOpen, setSaveDialogOpen, setBurnDialogOpen]);
+  }, [isConnected, tuneModified, setConnectEcuWizardOpen, setLoadDialogOpen, setSaveDialogOpen, setBurnDialogOpen]);
 }

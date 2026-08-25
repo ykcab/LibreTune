@@ -1,6 +1,6 @@
 //! Update project INI command (extracted from lib.rs).
 
-use crate::{load_settings, save_settings, AppState};
+use crate::{with_settings, AppState};
 use libretune_core::ini::EcuDefinition;
 use libretune_core::tune::{TuneCache, TuneFile};
 use tauri::Emitter;
@@ -70,9 +70,9 @@ pub async fn update_project_ini(
     crate::commands::realtime_stream::stop_streaming_on_definition_change(&state).await;
 
     // Prefer the project copy so reconnects always use the persisted INI.
-    let mut settings = load_settings(&app);
-    settings.last_ini_path = project_ini_path_str.or(Some(ini_path));
-    save_settings(&app, &settings);
+    with_settings(&app, |settings| {
+        settings.last_ini_path = project_ini_path_str.or(Some(ini_path));
+    });
 
     // Keep in-memory current tune signature in sync
     {

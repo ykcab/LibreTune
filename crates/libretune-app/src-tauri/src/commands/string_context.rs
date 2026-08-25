@@ -63,15 +63,53 @@ pub fn numeric_context_from_tune(tune: Option<&TuneFile>) -> HashMap<String, f64
     context
 }
 
+/// Identifiers an expression mentions.
+///
+/// Used to build only the lookup maps an expression can actually reach. The
+/// scan is deliberately over-inclusive - it returns every bare word, including
+/// function names and keywords - because a spurious extra entry costs one map
+/// insertion while a missing one would change the result.
+pub(crate) fn referenced_identifiers(expression: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut word = String::new();
+    // A name cannot start with a digit, so a run beginning with one is a
+    // numeric literal and is dropped rather than inserted as junk.
+    let keep = |w: &str| w.starts_with(|c: char| c.is_alphabetic() || c == '_');
+    for ch in expression.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            word.push(ch);
+        } else if !word.is_empty() {
+            let w = std::mem::take(&mut word);
+            if keep(&w) {
+                out.insert(w);
+            }
+        }
+    }
+    if !word.is_empty() && keep(&word) {
+        out.insert(word);
+    }
+    out
+}
+
+type NameFilter<'a> = Option<&'a std::collections::HashSet<String>>;
+
+fn wanted(filter: NameFilter, name: &str) -> bool {
+    filter.is_none_or(|f| f.contains(name))
+}
+
 fn string_map_from_tune(
     tune: Option<&TuneFile>,
     def: Option<&EcuDefinition>,
+    filter: NameFilter,
 ) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let Some(tune) = tune else {
         return map;
     };
     for (name, value) in &tune.constants {
+        if !wanted(filter, name) {
+            continue;
+        }
         if let TuneValue::String(s) = value {
             let is_string_const = def
                 .and_then(|d| d.constants.get(name))
@@ -85,12 +123,18 @@ fn string_map_from_tune(
     map
 }
 
-fn bit_options_map(def: Option<&EcuDefinition>) -> HashMap<String, Vec<String>> {
+fn bit_options_map(
+    def: Option<&EcuDefinition>,
+    filter: NameFilter,
+) -> HashMap<String, Vec<String>> {
     let mut map = HashMap::new();
     let Some(def) = def else {
         return map;
     };
     for (name, constant) in &def.constants {
+        if !wanted(filter, name) {
+            continue;
+        }
         if !constant.bit_options.is_empty() {
             map.insert(name.clone(), constant.bit_options.clone());
         }
@@ -98,12 +142,15 @@ fn bit_options_map(def: Option<&EcuDefinition>) -> HashMap<String, Vec<String>> 
     map
 }
 
-fn array_map_from_tune(tune: Option<&TuneFile>) -> HashMap<String, Vec<f64>> {
+fn array_map_from_tune(tune: Option<&TuneFile>, filter: NameFilter) -> HashMap<String, Vec<f64>> {
     let mut map = HashMap::new();
     let Some(tune) = tune else {
         return map;
     };
     for (name, value) in &tune.constants {
+        if !wanted(filter, name) {
+            continue;
+        }
         if let TuneValue::Array(arr) = value {
             map.insert(name.clone(), arr.clone());
         }
@@ -130,16 +177,50 @@ fn interpolate_array(values: &[f64], index: f64) -> Option<f64> {
 
 /// Snapshot AppState into a [`StringContext`] (closures hold owned data / Arcs).
 pub async fn build_string_context(state: &AppState) -> StringContext {
+    build_string_context_filtered(state, None).await
+}
+
+/// As [`build_string_context`], but only populating entries an expression can
+/// reach.
+///
+/// The unfiltered build clones every string constant, every array, and the
+/// option list of every bitfield: on a real Speeduino INI that is 910
+/// constants, 507 of them bitfields and 144 arrays, rebuilt on every call.
+/// Measured against a live ECU it costs ~100 ms per call, and it is CPU rather
+/// than lock contention (100.6 ms with the realtime stream stopped, 115.7 ms
+/// with it running). The dashboard evaluates a visibility expression every
+/// 250 ms per conditioned gauge, so a handful of them saturates the backend -
+/// which is what made raising the realtime poll rate unusable.
+///
+/// An expression names a few identifiers, so building the rest is pure waste.
+pub async fn build_string_context_filtered(
+    state: &AppState,
+    filter: NameFilter<'_>,
+) -> StringContext {
     let def_guard = state.definition.lock().await;
     let tune_guard = state.current_tune.lock().await;
     let project_guard = state.current_project.lock().await;
-    let conn_guard = state.connection.lock().await;
     let demo = *state.demo_mode.lock().await;
     let streaming = state.streaming_task.lock().await.is_some();
 
-    let string_values = string_map_from_tune(tune_guard.as_ref(), def_guard.as_ref());
-    let bit_options = bit_options_map(def_guard.as_ref());
-    let arrays = array_map_from_tune(tune_guard.as_ref());
+    // The connection is consulted for exactly one boolean, so never wait on
+    // its mutex here. This context builds while table writes hold the
+    // connection for seconds (paced, verified serial I/O), and blocking on it
+    // with `current_tune` held deadlocks those writes — they hold the
+    // connection and then take `current_tune` — until something tears one
+    // side down. A busy connection mutex means serial I/O is in flight,
+    // which is itself proof of "online".
+    let conn_online = match state.connection.try_lock() {
+        Ok(g) => g
+            .as_ref()
+            .map(|c| c.state() == ConnectionState::Connected)
+            .unwrap_or(false),
+        Err(_) => true,
+    };
+
+    let string_values = string_map_from_tune(tune_guard.as_ref(), def_guard.as_ref(), filter);
+    let bit_options = bit_options_map(def_guard.as_ref(), filter);
+    let arrays = array_map_from_tune(tune_guard.as_ref(), filter);
 
     let projects_dir = Project::projects_dir()
         .map(|p| p.display().to_string())
@@ -149,16 +230,11 @@ pub async fn build_string_context(state: &AppState) -> StringContext {
         .map(|p| p.path.display().to_string())
         .unwrap_or_default();
 
-    let is_online = demo && streaming
-        || conn_guard
-            .as_ref()
-            .map(|c| c.state() == ConnectionState::Connected)
-            .unwrap_or(false);
+    let is_online = demo && streaming || conn_online;
 
     let start_time = state.app_start_epoch;
     let cache = Arc::clone(&state.inc_table_cache);
 
-    drop(conn_guard);
     drop(project_guard);
     drop(tune_guard);
     drop(def_guard);
@@ -198,9 +274,9 @@ pub fn build_string_context_from_parts(
     start_time: f64,
     cache: Arc<Mutex<IncTableCache>>,
 ) -> StringContext {
-    let string_values = string_map_from_tune(tune, def);
-    let bit_options = bit_options_map(def);
-    let arrays = array_map_from_tune(tune);
+    let string_values = string_map_from_tune(tune, def, None);
+    let bit_options = bit_options_map(def, None);
+    let arrays = array_map_from_tune(tune, None);
     let projects_dir = Project::projects_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
@@ -226,4 +302,37 @@ pub fn build_string_context_from_parts(
             .and_then(|table| table.lookup(lookup))
     }));
     ctx
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::referenced_identifiers;
+
+    /// The filter decides which of the INI's ~910 constants get cloned into the
+    /// evaluation context, so it must never miss a name the expression can
+    /// reach. Being over-inclusive is free; being under-inclusive changes the
+    /// answer.
+    #[test]
+    fn finds_every_name_an_expression_can_reach() {
+        let ids = referenced_identifiers("{ nCylinders > 4 && injType == 1 }");
+        assert!(ids.contains("nCylinders"));
+        assert!(ids.contains("injType"));
+
+        // Underscores and digits are part of a name, not separators.
+        let ids = referenced_identifiers("std_injection + rtc_trim * page2Value");
+        assert!(ids.contains("std_injection"));
+        assert!(ids.contains("rtc_trim"));
+        assert!(ids.contains("page2Value"));
+
+        // Names butted against punctuation must still be seen.
+        let ids = referenced_identifiers("table(fuelLoadBins,rpm)>=veTable1Tbl");
+        for want in ["table", "fuelLoadBins", "rpm", "veTable1Tbl"] {
+            assert!(ids.contains(want), "missed {want}");
+        }
+    }
+
+    #[test]
+    fn an_expression_naming_nothing_yields_nothing() {
+        assert!(referenced_identifiers("1 + 2 * (3 - 4)").is_empty());
+    }
 }

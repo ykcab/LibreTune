@@ -18,6 +18,7 @@ pub async fn reset_tune_to_defaults(state: tauri::State<'_, AppState>) -> Result
     let tune = tune_guard.as_mut().ok_or("No tune loaded")?;
 
     let mut reset_count = 0u32;
+    let mut skipped_no_default = 0usize;
 
     // Reset each constant to its default value
     for (name, constant) in &def.constants {
@@ -26,12 +27,14 @@ pub async fn reset_tune_to_defaults(state: tauri::State<'_, AppState>) -> Result
             continue;
         }
 
-        // Get default value from INI [Defaults] section
-        let default_value = if let Some(&default_val) = def.default_values.get(name) {
-            default_val
-        } else {
-            // No default defined - use min value as fallback
-            constant.min
+        // Only reset constants the INI actually declares a default for.
+        // Falling back to `constant.min` turned "reset to defaults" into
+        // "reset to minimum" for the ~68% of constants with no [Defaults]
+        // entry — observed live: reqFuel 12.5 -> 0, nCylinders -> "INVALID",
+        // reported as a successful reset of 730 constants.
+        let Some(&default_value) = def.default_values.get(name) else {
+            skipped_no_default += 1;
+            continue;
         };
 
         // Update PC variable locally
@@ -51,12 +54,25 @@ pub async fn reset_tune_to_defaults(state: tauri::State<'_, AppState>) -> Result
         tune.constants
             .insert(name.clone(), TuneValue::Scalar(default_value));
 
-        // Encode value to bytes and write to cache
-        let bytes = encode_constant_value(raw_value, &constant.data_type);
+        // Encode with the INI's declared endianness. encode_constant_value
+        // hardcoded big-endian, byte-swapping every multi-byte scalar on
+        // little-endian ECUs (Speeduino/rusEFI) — observed live: mapMax 260
+        // written as 1025, boostSens 2000 as 53255.
+        let mut bytes = vec![0u8; constant.data_type.size_bytes()];
+        constant
+            .data_type
+            .write_to_bytes(&mut bytes, 0, raw_value, def.endianness);
         cache.write_bytes(constant.page, constant.offset, &bytes);
         reset_count += 1;
     }
 
+    if skipped_no_default > 0 {
+        tracing::info!(
+            "reset_tune_to_defaults: {} constants reset; {} skipped (no [Defaults] entry)",
+            reset_count,
+            skipped_no_default
+        );
+    }
     Ok(reset_count)
 }
 
@@ -369,8 +385,14 @@ pub async fn import_tune_from_csv(
         tune.constants
             .insert(name.to_string(), TuneValue::Scalar(clamped_value));
 
-        // Encode value to bytes and write to cache
-        let bytes = encode_constant_value(raw_value, &constant.data_type);
+        // Encode with the INI's declared endianness. encode_constant_value
+        // hardcoded big-endian, byte-swapping every multi-byte scalar on
+        // little-endian ECUs (Speeduino/rusEFI) — observed live: mapMax 260
+        // written as 1025, boostSens 2000 as 53255.
+        let mut bytes = vec![0u8; constant.data_type.size_bytes()];
+        constant
+            .data_type
+            .write_to_bytes(&mut bytes, 0, raw_value, def.endianness);
         cache.write_bytes(constant.page, constant.offset, &bytes);
         import_count += 1;
     }
@@ -425,35 +447,6 @@ pub(crate) fn parse_csv_line(line: &str) -> Vec<&str> {
     }
 
     fields
-}
-
-/// Encode a constant value to bytes based on data type (big-endian)
-pub(crate) fn encode_constant_value(raw_value: f64, data_type: &DataType) -> Vec<u8> {
-    match data_type {
-        DataType::U08 => vec![raw_value.clamp(0.0, 255.0) as u8],
-        DataType::S08 => vec![raw_value.clamp(-128.0, 127.0) as i8 as u8],
-        DataType::U16 => {
-            let val = raw_value.clamp(0.0, 65535.0) as u16;
-            val.to_be_bytes().to_vec()
-        }
-        DataType::S16 => {
-            let val = raw_value.clamp(-32768.0, 32767.0) as i16;
-            val.to_be_bytes().to_vec()
-        }
-        DataType::U32 => {
-            let val = raw_value.clamp(0.0, 4294967295.0) as u32;
-            val.to_be_bytes().to_vec()
-        }
-        DataType::S32 => {
-            let val = raw_value.clamp(-2147483648.0, 2147483647.0) as i32;
-            val.to_be_bytes().to_vec()
-        }
-        DataType::F32 => (raw_value as f32).to_be_bytes().to_vec(),
-        DataType::F64 => raw_value.to_be_bytes().to_vec(),
-        DataType::Bits | DataType::String => {
-            vec![raw_value.clamp(0.0, 255.0) as u8]
-        }
-    }
 }
 
 /// Truncate an imported array-constant's values to `elem_count` so

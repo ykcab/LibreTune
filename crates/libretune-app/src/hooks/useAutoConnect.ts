@@ -9,6 +9,14 @@ export interface ConnectOptions {
   silent?: boolean;
   /** Override the port for this attempt (defaults to UI selection). */
   port?: string;
+  /** Override the baud rate for this attempt (defaults to UI selection). */
+  baudRate?: number;
+  /** Override the connection type for this attempt (defaults to UI selection). */
+  connectionType?: 'Serial' | 'Tcp';
+  /** Override the TCP host for this attempt (defaults to UI selection). */
+  tcpHost?: string;
+  /** Override the TCP port for this attempt (defaults to UI selection). */
+  tcpPort?: number;
 }
 
 export interface UseAutoConnectDeps {

@@ -1,8 +1,18 @@
 .tune-diff-content {
-  min-width: 880px;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+/* The 880px minimum is a comfort width for reading the diff table side by
+   side, not a hard requirement (.tune-diff-table itself is width: 100% and
+   has no minimum of its own) — only enforce it once the viewport can
+   actually afford it, so the dialog isn't forced wider than the window on
+   a narrow screen. */
+@media (min-width: 900px) {
+  .tune-diff-content {
+    min-width: 880px;
+  }
 }
 
 .tune-diff-files {

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::engine_spec::{Aspiration, EngineSpec, FuelType, StrokeType};
+use super::engine_spec::{Aspiration, EngineSpec, FuelType};
 
 /// Acceleration enrichment configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,10 +233,15 @@ pub fn generate_ignition_table(
     let redline = spec.redline_rpm as f64;
     let max_load = spec.max_load_kpa();
 
-    let stroke_factor = match spec.stroke_type {
-        StrokeType::FourStroke => 1.0,
-        StrokeType::TwoStroke => 0.75, // Less advance for 2-stroke
-    };
+    // Peak total advance from octane / compression / stroke (TunerStudio rules).
+    let peak_advance = spec.max_spark_advance();
+    // Idle advance: a stable, conservative light-load value.
+    let idle_advance = 14.0_f64;
+    // How much timing is pulled from light load to WOT (naturally aspirated).
+    // Bounded so a low peak (low octane / high CR) doesn't push WOT negative.
+    let wot_pull = (peak_advance - 12.0).clamp(6.0, 16.0);
+    // Knock headroom under boost: higher octane pulls less per unit of boost.
+    let boost_retard_rate = (20.0 - (spec.effective_octane() - 90.0) * 0.4).clamp(8.0, 22.0);
 
     let mut table = vec![vec![0.0; cols]; rows];
 
@@ -245,25 +250,29 @@ pub fn generate_ignition_table(
             let rpm_norm = ((rpm - idle) / (redline - idle)).clamp(0.0, 1.0);
             let load_norm = ((load - 15.0) / (max_load - 15.0)).clamp(0.0, 1.0);
 
-            // Base timing: increases with RPM, decreases with load
-            let rpm_advance = 10.0 + 22.0 * rpm_norm; // 10° at idle → 32° at redline
-            let load_retard = load_norm * 8.0; // Up to 8° less at WOT
+            // Advance ramps in with RPM, reaching the peak by ~55% of the range
+            // and holding after (typical mechanical-advance shape).
+            let ramp = (rpm_norm / 0.55).min(1.0);
+            let base = idle_advance + (peak_advance - idle_advance) * ramp;
 
-            let mut advance = (rpm_advance - load_retard) * stroke_factor;
+            // Pull timing as cylinder pressure (load) rises.
+            let mut advance = base - wot_pull * load_norm;
 
-            // Extra retard for boosted engines above atmospheric
+            // Extra retard above atmospheric for boosted engines, scaled by the
+            // fuel's knock resistance.
             if matches!(
                 spec.aspiration,
                 Aspiration::Turbo | Aspiration::Supercharged
             ) && load > 101.0
+                && max_load > 101.0
             {
                 let boost_pct = (load - 101.0) / (max_load - 101.0);
-                advance -= boost_pct * 8.0; // Up to 8° more retard under boost
+                advance -= boost_pct * boost_retard_rate;
             }
 
-            // Idle timing: fixed ~15° for stability
+            // Keep idle/off-idle timing in a stable band.
             if rpm < idle * 1.2 && load < 50.0 {
-                advance = advance.clamp(12.0, 18.0);
+                advance = advance.clamp(10.0, 20.0);
             }
 
             table[r][c] = advance.clamp(0.0, 45.0).round();

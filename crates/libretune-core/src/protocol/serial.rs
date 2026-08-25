@@ -73,6 +73,22 @@ fn port_sort_key(name: &str) -> (u8, usize, String) {
     (2, 0, basename.to_string())
 }
 
+/// Windows leaves a stale entry in `HKLM\HARDWARE\DEVICEMAP\SERIALCOMM` for
+/// some USB-serial devices whose driver doesn't clean it up on unplug — most
+/// notably the ST-Link/STM32 Virtual COM Port that rusEFI boards use. Device
+/// Manager correctly shows the device as not present, but `serialport`'s
+/// Windows enumeration reads that registry map and lists the "ghost" port
+/// anyway. A quick open-then-close probe filters these out: a genuinely
+/// disconnected port fails fast (the OS has nothing to open), while a real,
+/// unused port opens fine in a few milliseconds.
+#[cfg(target_os = "windows")]
+fn is_port_actually_present(name: &str) -> bool {
+    serialport::new(name, DEFAULT_BAUD_RATE)
+        .timeout(Duration::from_millis(50))
+        .open()
+        .is_ok()
+}
+
 /// List all available serial ports, with /dev fallbacks and deterministic ordering
 pub fn list_ports() -> Vec<PortInfo> {
     // Collect from serialport API
@@ -84,6 +100,12 @@ pub fn list_ports() -> Vec<PortInfo> {
         let p = PortInfo::from(info);
         map.entry(p.name.clone()).or_insert(p);
     }
+
+    // Windows-only: drop ports whose registry entry outlived the device (see
+    // `is_port_actually_present`). Other platforms remove the device node
+    // (/dev/ttyUSB*, /dev/cu.*) immediately on unplug, so this doesn't apply.
+    #[cfg(target_os = "windows")]
+    map.retain(|name, _| is_port_actually_present(name));
 
     // Linux-only: Add /dev/ttyACM* and /dev/ttyUSB* entries if present but not found by API
     #[cfg(target_os = "linux")]
@@ -171,6 +193,12 @@ mod tests {
         for port in &ports {
             println!("Found port: {} - {:?}", port.name, port.product);
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_is_port_actually_present_rejects_bogus_name() {
+        assert!(!is_port_actually_present("COM_DOES_NOT_EXIST_9999"));
     }
 
     #[test]

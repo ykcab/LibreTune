@@ -467,8 +467,11 @@ impl Project {
                 let filename = path.file_name().unwrap().to_string_lossy().to_string();
                 let metadata = entry.metadata()?;
 
-                // Try to parse timestamp from filename
-                let timestamp = parse_restore_point_timestamp(&filename);
+                // Prefer the timestamp in the filename; fall back to the file's
+                // modified time so an unparseable name does not get "now" and
+                // rank as the newest point (which pruning would then always
+                // keep, deleting real backups instead).
+                let timestamp = restore_point_created(&filename, &metadata);
 
                 points.push(RestorePointInfo {
                     filename,
@@ -597,28 +600,62 @@ pub struct RestorePointInfo {
 /// Parse timestamp from restore point filename
 ///
 /// Expected format: `{Name}_{YYYY-MM-DD_HH.MM.SS}.msq`
-fn parse_restore_point_timestamp(filename: &str) -> String {
-    // Try to find the timestamp pattern at the end
-    // Look for _YYYY-MM-DD_HH.MM.SS.msq
+fn parse_restore_point_timestamp(filename: &str) -> Option<String> {
+    // Expected suffix: _YYYY-MM-DD_HH.MM.SS.msq
     let without_ext = filename.strip_suffix(".msq").unwrap_or(filename);
 
-    // Find the last underscore that starts a date pattern
-    if let Some(pos) = without_ext.rfind('_') {
-        let date_part = &without_ext[..pos];
-        if let Some(date_pos) = date_part.rfind('_') {
-            // Extract YYYY-MM-DD_HH.MM.SS
-            let timestamp = &without_ext[date_pos + 1..];
-            // Convert from YYYY-MM-DD_HH.MM.SS to ISO format
-            if timestamp.len() >= 19 {
-                let date = &timestamp[0..10];
-                let time = timestamp[11..].replace('.', ":");
-                return format!("{}T{}Z", date, time);
-            }
-        }
-    }
+    // The timestamp is the final `_YYYY-MM-DD_HH.MM.SS` segment. Split on the
+    // underscore before the date so a project name containing underscores does
+    // not confuse the search.
+    let pos = without_ext.rfind('_')?;
+    let date_part = &without_ext[..pos];
+    let date_pos = date_part.rfind('_')?;
+    let timestamp = &without_ext[date_pos + 1..];
 
-    // Fallback: use current time
-    Utc::now().to_rfc3339()
+    if timestamp.len() < 19 {
+        return None;
+    }
+    let date = &timestamp[0..10];
+    let time = timestamp[11..].replace('.', ":");
+
+    // Validate the shape rather than trusting `len >= 19`: a renamed file such
+    // as `backup_before_turbo.msq` can otherwise yield a garbage pseudo-date.
+    // Digits where digits belong, dashes/colons where separators belong.
+    let date_ok = date.len() == 10
+        && date.as_bytes()[4] == b'-'
+        && date.as_bytes()[7] == b'-'
+        && date
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit());
+    let time_ok = time.len() == 8
+        && time.as_bytes()[2] == b':'
+        && time.as_bytes()[5] == b':'
+        && time
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| i == 2 || i == 5 || b.is_ascii_digit());
+
+    if date_ok && time_ok {
+        Some(format!("{}T{}Z", date, time))
+    } else {
+        None
+    }
+}
+
+/// Render a filesystem timestamp as RFC 3339, for restore points whose name
+/// carries no parseable timestamp. Falls back to the Unix epoch (not "now"),
+/// so an unnamed/renamed point sorts as *oldest* rather than newest — the
+/// opposite of the previous `Utc::now()` fallback, which made such files
+/// immune to pruning and pushed genuine dated backups off the keep-list.
+fn restore_point_created(filename: &str, metadata: &fs::Metadata) -> String {
+    if let Some(ts) = parse_restore_point_timestamp(filename) {
+        return ts;
+    }
+    metadata
+        .modified()
+        .map(|t| chrono::DateTime::<Utc>::from(t).to_rfc3339())
+        .unwrap_or_else(|_| chrono::DateTime::<Utc>::UNIX_EPOCH.to_rfc3339())
 }
 
 /// Extract the signature from an INI file content
@@ -643,6 +680,60 @@ fn extract_signature(content: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::env::temp_dir;
+
+    #[test]
+    fn test_parse_restore_point_timestamp() {
+        // A well-formed name parses to the embedded timestamp...
+        assert_eq!(
+            parse_restore_point_timestamp("NA6_SPEEDUINO_2026-08-11_08.47.31.msq").as_deref(),
+            Some("2026-08-11T08:47:31Z")
+        );
+        // ...including project names that themselves contain underscores.
+        assert_eq!(
+            parse_restore_point_timestamp("My_Turbo_Build_2025-01-02_03.04.05.msq").as_deref(),
+            Some("2025-01-02T03:04:05Z")
+        );
+        // A renamed / hand-made file has no parseable timestamp — and must NOT
+        // be silently assigned one (previously it got Utc::now()).
+        assert_eq!(
+            parse_restore_point_timestamp("backup_before_turbo.msq"),
+            None
+        );
+        // A garbage segment of the right length must be rejected, not accepted
+        // as a pseudo-date.
+        assert_eq!(
+            parse_restore_point_timestamp("proj_xxxxxxxxxx_yy.zz.ww.msq"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_unparseable_restore_point_timestamp_is_stable() {
+        // The old fallback returned `Utc::now()` on every listing, so an
+        // unparseable file's "created" jittered forward each refresh and always
+        // sorted as the newest point — surviving every prune while dated
+        // backups were deleted. The mtime fallback must instead be stable
+        // across calls (and a dated backup's parsed timestamp obviously is).
+        let dir = temp_dir().join(format!("libretune_rp_ts_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("backup_before_turbo.msq");
+        fs::write(&path, b"<msq/>").unwrap();
+        let md = fs::metadata(&path).unwrap();
+
+        let a = restore_point_created("backup_before_turbo.msq", &md);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let b = restore_point_created("backup_before_turbo.msq", &md);
+        assert_eq!(a, b, "unparseable restore-point timestamp must be stable");
+
+        // A dated point ranks above it, and its value is the embedded date, not
+        // a filesystem time — so real backups keep their true order.
+        let dated = restore_point_created("Proj_2026-08-09_10.00.00.msq", &md);
+        assert_eq!(dated, "2026-08-09T10:00:00Z");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_project_creation() {

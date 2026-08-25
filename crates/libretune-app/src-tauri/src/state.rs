@@ -125,6 +125,11 @@ pub static LOGGER_RECORDING: std::sync::atomic::AtomicBool =
 pub enum AutoTuneLoadSource {
     Map,
     Maf,
+    /// Throttle Position Sensor — used by Alpha-N / ITB (individual throttle
+    /// body) fuelling strategies where the VE table's load (Y) axis is indexed
+    /// by throttle opening rather than manifold pressure or mass airflow.
+    /// See GitHub issue #132.
+    Tps,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -140,10 +145,35 @@ pub fn is_maf_channel_name(name: &str) -> bool {
     lower.contains("maf") || lower.contains("airmass") || lower.contains("airflow")
 }
 
+/// Detect a throttle-position (Alpha-N) load channel from an INI channel name
+/// or label. Mirrors [`is_maf_channel_name`]. Typical Speeduino / rusEFI
+/// channel names: `tps`, `tpsValue`, `throttle`, `throttlePos`, `tp` (and
+/// `tpsAccel`/`tpsDot`, which are rate channels but still indicate a
+/// TPS-based tune — we match on the `tps`/`throttle` root).
+pub fn is_tps_channel_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    // Match `tps`/`throttle` roots but avoid `map`/`maf` false positives and
+    // avoid bare `tp` matching substrings like `output`/`stopt`.
+    lower == "tps"
+        || lower == "tp"
+        || lower == "throttle"
+        || lower.contains("tps")
+        || lower.contains("throttle")
+}
+
+/// Whether a decoded `algorithm` constant value selects a throttle-position
+/// (Alpha-N) fuel load. Speeduino names its VE load-axis output channel
+/// `fuelLoad` no matter which fuel algorithm is active, so channel-name
+/// detection cannot distinguish a MAP tune from an Alpha-N / ITB one. The
+/// `algorithm` bits constant is authoritative instead: bit 1 is TPS on
+/// Speeduino (`$loadSourceNames`) and Alpha-N on MS2/MS3. See issue #132.
+pub fn algorithm_selects_tps_load(algorithm_value: f64) -> bool {
+    algorithm_value == 1.0
+}
+
 /// AutoTune configuration stored when tuning session starts
 #[derive(Clone)]
 pub struct AutoTuneConfig {
-    #[allow(dead_code)]
     pub table_name: String,
     /// Signature of the ECU definition this session's bins/tables were
     /// resolved against. If the loaded definition changes (e.g. reconnect to
@@ -222,6 +252,58 @@ pub struct AppState {
     pub app_start_epoch: f64,
     /// Cached `.inc` table files for INI `table()` expressions.
     pub inc_table_cache: Arc<std::sync::Mutex<IncTableCache>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{algorithm_selects_tps_load, is_maf_channel_name, is_tps_channel_name};
+
+    #[test]
+    fn detects_tps_load_channels() {
+        // The names a Speeduino / rusEFI INI actually uses for the throttle
+        // channel on an Alpha-N / ITB tune. All must be recognised so a TPS
+        // Y-axis is auto-detected and the load source switches off MAP.
+        for name in [
+            "tps",
+            "TPS",
+            "tpsValue",
+            "throttle",
+            "throttlePos",
+            "tp",
+            "tpsDot",
+        ] {
+            assert!(is_tps_channel_name(name), "{name:?} should be TPS");
+        }
+    }
+
+    #[test]
+    fn does_not_false_positive_tps() {
+        // Channels that must NOT be treated as throttle load sources.
+        for name in ["map", "maf", "rpm", "afr", "clt", "boost", "dwell"] {
+            assert!(!is_tps_channel_name(name), "{name:?} should not be TPS");
+        }
+    }
+
+    #[test]
+    fn tps_detection_independent_of_maf() {
+        // The two detectors are orthogonal: a MAF channel is not a TPS channel
+        // and vice-versa, so auto-detection picks the right load source.
+        assert!(is_maf_channel_name("maf") && !is_tps_channel_name("maf"));
+        assert!(is_tps_channel_name("tps") && !is_maf_channel_name("tps"));
+    }
+
+    #[test]
+    fn algorithm_value_selects_tps_only_on_alpha_n() {
+        // Speeduino $loadSourceNames: 0 = MAP, 1 = TPS, 2 = IMAP/EMAP (then
+        // INVALID fillers). MS2/MS3: 0 = Speed Density, 1 = Alpha-N, 2 = MAF.
+        // Only 1 means a throttle-position load in both.
+        assert!(!algorithm_selects_tps_load(0.0), "0 = MAP / speed density");
+        assert!(algorithm_selects_tps_load(1.0), "1 = TPS / Alpha-N");
+        assert!(
+            !algorithm_selects_tps_load(2.0),
+            "2 = IMAP-EMAP / MAF, not TPS"
+        );
+    }
 }
 
 impl AppState {

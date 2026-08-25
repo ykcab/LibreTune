@@ -13,6 +13,7 @@ import {
   Lock,
   LockOpen,
   Palette,
+  Wand2,
 } from 'lucide-react';
 
 interface TableContextProps {
@@ -53,6 +54,11 @@ interface TableContextProps {
   // View
   onToggleHeatmap?: () => void;
   onTraceOptions?: () => void;
+
+  // Generate (TunerStudio-style table generator). Only wired for VE/ignition/
+  // AFR tables; `generatableLabel` is the human label (e.g. "VE Table").
+  onGenerate?: () => void;
+  generatableLabel?: string;
 }
 
 export default function TableContextMenu({
@@ -76,6 +82,8 @@ export default function TableContextMenu({
   onCopy,
   onPaste,
   onToggleHeatmap,
+  onGenerate,
+  generatableLabel,
 }: TableContextProps) {
   // Shared input state for Scale/Offset operations
   const [inputValue, setInputValue] = useState('1.5');
@@ -200,10 +208,12 @@ export default function TableContextMenu({
         <div className="context-menu-item" onClick={() => { onInterpolateLinear('row'); onClose(); }}>
           <span className="icon"><MoveHorizontal size={14} /></span>
           <span>Interpolate Horizontal</span>
+          <span className="shortcut">H</span>
         </div>
         <div className="context-menu-item" onClick={() => { onInterpolateLinear('col'); onClose(); }}>
           <span className="icon"><MoveVertical size={14} /></span>
           <span>Interpolate Vertical</span>
+          <span className="shortcut">V</span>
         </div>
         <div className="context-menu-item" onClick={() => { onSmooth(); onClose(); }}>
           <span className="icon"><Waves size={14} /></span>
@@ -225,6 +235,18 @@ export default function TableContextMenu({
           <span>Fill Col Down</span>
         </div>
       </div>
+
+      {onGenerate && (
+        <>
+          <div className="context-menu-separator" />
+          <div className="context-menu-section">
+            <div className="context-menu-item" onClick={() => { onGenerate(); onClose(); }}>
+              <span className="icon"><Wand2 size={14} /></span>
+              <span>Generate {generatableLabel ?? 'Table'}…</span>
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="context-menu-separator" />
 

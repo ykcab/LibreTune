@@ -317,6 +317,7 @@ pub(crate) async fn find_matching_inis_from_state(
             let match_type = compare_signatures(ecu_signature, &entry.signature);
             if match_type != SignatureMatchType::Mismatch {
                 matches.push(MatchingIniInfo {
+                    id: entry.id.clone(),
                     path: entry.path.clone(),
                     name: entry.name.clone(),
                     signature: entry.signature.clone(),

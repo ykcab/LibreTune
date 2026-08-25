@@ -18,6 +18,22 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  /* Lets the AI assistant panel auto-hide by available width below,
+     mirroring the container-query pattern already used for dialog panels
+     (DialogRenderer.css's .dialog-column). */
+  container-type: inline-size;
+}
+
+/* The AI assistant side panel is optional and already user-toggleable
+   (agentPanelVisible) — auto-hide it first when the window gets tight
+   rather than letting its own 260px min-width floor squeeze the sidebar
+   and document area into something unusable. It reappears on its own once
+   there's room again; the underlying agentPanelVisible state is untouched,
+   so this never fights the user's manual toggle. */
+@container (max-width: 900px) {
+  .agent-panel {
+    display: none;
+  }
 }
 
 /* Document area (tabs + content) */

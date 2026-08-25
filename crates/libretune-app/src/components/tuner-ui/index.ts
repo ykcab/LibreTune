@@ -46,3 +46,4 @@ export { AutoTune } from './AutoTune';
 // Data Logging
 export { DataLogView } from './DataLogView';
 export { VirtualDynoView } from './VirtualDynoView';
+export { DatalogViewer } from './DatalogViewer';

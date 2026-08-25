@@ -42,6 +42,8 @@ pub(crate) struct SignatureMismatchInfo {
 /// Information about an INI that matches the ECU signature
 #[derive(Serialize, Clone)]
 pub(crate) struct MatchingIniInfo {
+    /// Repository ID (usable with `create_project` / `remove_ini`)
+    pub id: String,
     /// Path to the INI file
     pub path: String,
     /// Display name of the INI

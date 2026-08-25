@@ -28,7 +28,7 @@
  * @see {@link AutoTuneAuthorityLimits} for correction limits
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { FolderOpen, Save, Square, Play, Upload, X, Lock, LockOpen } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
@@ -47,6 +47,12 @@ import './AutoTune.css';
 interface AutoTuneSettings {
   /** Target AFR for corrections (e.g., 14.7 for stoich) */
   target_afr: number;
+  /** How much a sample counts toward the cell it lands in. */
+  hit_weighting: 'uniform' | 'cell_proximity' | 'cell_proximity_squared' | 'cell_centre_only';
+  /** Accumulated weight at which a cell proposes its full change (TS: baseWeight, 20). */
+  base_weight: number;
+  /** Smallest change worth making, in table units (TS: minChangeThreshold, 1). */
+  min_change: number;
   /** Algorithm name (e.g., 'proportional', 'integral') */
   algorithm: string;
   /** How often to process data in milliseconds */
@@ -101,17 +107,64 @@ interface AutoTuneFilters {
  * Limits on how much AutoTune can modify cell values.
  */
 interface AutoTuneAuthorityLimits {
-  /** Maximum change per update per cell (percentage) */
+  /**
+   * Maximum change per update per cell, in ABSOLUTE table units (VE points).
+   * Not a percentage - the backend clamps the raw delta against this value.
+   * It was labelled "(%)" here and in the panel for as long as it has existed,
+   * so anyone who typed 15 meaning 15% was authorising +/-15 VE.
+   */
   max_change_per_cell: number;
-  /** Maximum total change from original value (percentage) */
+  /** Maximum change per update as a percentage of the cell's session-start value. */
   max_total_change: number;
-  /** Absolute minimum allowed cell value */
+  /**
+   * Absolute floor for any cell value. The two limits above are both measured
+   * from the cell's value at session start, so they reset every session and
+   * cannot bound drift across several; these rails can.
+   */
   min_value: number;
-  /** Absolute maximum allowed cell value */
+  /** Absolute ceiling for any cell value. See `min_value`. */
   max_value: number;
 }
 
-type AutoTuneLoadSource = 'map' | 'maf';
+type AutoTuneLoadSource = 'map' | 'maf' | 'tps';
+
+/** One thing worth telling the user before a session starts. */
+interface PreflightFinding {
+  severity: 'blocker' | 'warning' | 'info';
+  code: string;
+  title: string;
+  detail: string;
+  current: string | null;
+  suggested: string | null;
+}
+
+interface FlowDelayFit {
+  floorMs: number;
+  k: number;
+  anchorMs: number;
+  rmsMs: number;
+  samples: number;
+}
+
+/** A filter the INI declares for VE Analyze, and what this session does about it. */
+interface DeclaredFilter {
+  name: string;
+  displayName: string;
+  channel: string;
+  operator: string;
+  iniValue: number;
+  userAdjustable: boolean;
+  sessionValue: number | null;
+  differs: boolean;
+}
+
+interface PreflightReport {
+  findings: PreflightFinding[];
+  delayFit: FlowDelayFit | null;
+  hasBlocker: boolean;
+  candidateTargetTables: string[];
+  resolvedTargetTable: string | null;
+}
 
 /**
  * Heat map data for a single table cell.
@@ -152,6 +205,18 @@ interface ChannelInfo {
 }
 
 /**
+ * Live sample tallies for the rejection indicator (issue #132).
+ *
+ * A session that accepts nothing looks exactly like a broken one — the
+ * indicator surfaces how many samples passed the filters and, when data is
+ * being rejected, which filter is eating it (most frequent reason first).
+ */
+interface AutotuneSampleStats {
+  accepted: number;
+  rejections: { reason: string; count: number }[];
+}
+
+/**
  * Minimal table info for selection dropdown.
  */
 interface TableInfo {
@@ -183,6 +248,41 @@ interface VeAnalyzeConfig {
 // AutoTune Component
 // =============================================================================
 
+/// AutoTune's tuning parameters, kept across restarts.
+///
+/// These are per-engine facts the operator measures once - a transport delay of
+/// ~470 ms at idle, a coolant threshold in the INI's own units - not view state
+/// worth re-deriving each launch. They used to reset on every start, and the
+/// default `lambda_delay_ms: 0` does not mean "no delay": it means "fall back
+/// to the built-in RPM curve", which tops out at 200 ms. On a car whose real
+/// idle delay is more than twice that, samples land in the wrong cell and the
+/// low-load corrections come back inflated - which is what happened on a
+/// 59-minute drive where the delay had simply never been set.
+///
+/// Versioned so a future field change discards old state rather than merging a
+/// stale shape into a new one.
+const SETTINGS_KEY = 'libretune.autotune.settings.v1';
+
+function loadPersisted<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    // Merge over the fallback so a field added since the value was written
+    // takes its default instead of arriving undefined.
+    return { ...fallback, ...(JSON.parse(raw) as object) } as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function persist(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // localStorage unavailable - settings just won't survive the restart
+  }
+}
+
 export function AutoTune({ tableName: initialTableName = '', onClose, isConnected }: AutoTuneProps) {
   const { showToast } = useToast();
 
@@ -199,6 +299,7 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
   const [tableData, setTableData] = useState<TableData | null>(null);
   const [_referenceData, setReferenceData] = useState<TableData | null>(null);
   const [heatmapData, setHeatmapData] = useState<HeatmapEntry[]>([]);
+  const [sampleStats, setSampleStats] = useState<AutotuneSampleStats | null>(null);
   const [veAnalyzeConfig, setVeAnalyzeConfig] = useState<VeAnalyzeConfig | null>(null);
   const [lockedCells, setLockedCells] = useState<Set<string>>(new Set());
   const [selectedCells, _setSelectedCells] = useState<Set<string>>(new Set());
@@ -207,43 +308,74 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
   const [error, setError] = useState<string | null>(null);
   const [loadSource, setLoadSource] = useState<AutoTuneLoadSource>('map');
   const [loadSourceHint, setLoadSourceHint] = useState<string | null>(null);
+  // Set the moment the user picks a load source themselves. Auto-detection
+  // (by Y-axis channel name or by the `algorithm` constant) must never fight
+  // an explicit choice — without this, a stale-closure check on `loadSource`
+  // lets async detection re-fire after e.g. the MAF-verify demotion and flip
+  // the dropdown back (issue #132).
+  const manualLoadSourceRef = useRef(false);
 
   // Settings state
-  const [settings, setSettings] = useState<AutoTuneSettings>({
+  const [settings, setSettings] = useState<AutoTuneSettings>(() =>
+    loadPersisted<AutoTuneSettings>(`${SETTINGS_KEY}.settings`, {
     target_afr: 14.7,
+    hit_weighting: 'uniform',
+    base_weight: 20,
+    min_change: 1,
     algorithm: 'simple',
     update_rate_ms: 100,
     lambda_delay_ms: 0,
     lambda_delay_flow_scaled: false,
     lambda_delay_floor_ms: 120,
-  });
+  }));
 
-  const [filters, setFilters] = useState<AutoTuneFilters>({
+  const [filters, setFilters] = useState<AutoTuneFilters>(() =>
+    loadPersisted<AutoTuneFilters>(`${SETTINGS_KEY}.filters`, {
     min_rpm: 800,
     max_rpm: 7000,
     min_tps: 0,
     max_tps: 100,
     min_clt: 60,
     custom_filter: '',
-    max_tps_rate: 10,
+    // 50 %/s — ITB/Alpha-N throttles move far faster than the old 10 %/s
+    // default allowed, which made AutoTune reject nearly every sample and
+    // look dead (issue #132). Accel transients are still filtered by
+    // exclude_accel_enrich.
+    max_tps_rate: 50,
     exclude_accel_enrich: true,
     require_steady_state: true,
     steady_state_rpm_delta: 50,
     steady_state_time_ms: 500,
-  });
+  }));
 
-  const [authority, setAuthority] = useState<AutoTuneAuthorityLimits>({
+  const [authority, setAuthority] = useState<AutoTuneAuthorityLimits>(() =>
+    loadPersisted<AutoTuneAuthorityLimits>(`${SETTINGS_KEY}.authority`, {
     max_change_per_cell: 15,
     max_total_change: 30,
     min_value: 0,
     max_value: 200,
-  });
+  }));
+
+  // Write back on change, so the next launch starts where the operator left
+  // off rather than at a default that silently disables the measured delay.
+  useEffect(() => persist(`${SETTINGS_KEY}.settings`, settings), [settings]);
+  useEffect(() => persist(`${SETTINGS_KEY}.filters`, filters), [filters]);
+  useEffect(() => persist(`${SETTINGS_KEY}.authority`, authority), [authority]);
 
   // Reference-table / lambda-match configuration (bug #2, #14).
   // Leaving the AFR table blank uses auto-discovery from the INI, falling back
   // to settings.target_afr. Strict lambda matching (default on) drops samples
   // with no delayed-buffer match rather than mis-attributing them.
   const [targetAfrTable, setTargetAfrTable] = useState<string>('');
+  // Preflight: AutoTune fails quietly, so a session gets checked before it is
+  // allowed to eat a drive. `null` means nothing pending.
+  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
+  const [preflightBusy, setPreflightBusy] = useState(false);
+  // What the INI itself declares for VE Analyze. These carry the project's unit
+  // system already resolved (coolant < 71 on a Celsius project, < 160 on a
+  // Fahrenheit one), which is the number that should be used rather than a
+  // constant compiled into the app.
+  const [declaredFilters, setDeclaredFilters] = useState<DeclaredFilter[]>([]);
   const [lambdaDelayTable, setLambdaDelayTable] = useState<string>('');
   const [strictLambdaMatch, setStrictLambdaMatch] = useState(true);
 
@@ -251,6 +383,16 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
     if (!name) return false;
     const lower = name.toLowerCase();
     return lower.includes('maf') || lower.includes('airmass') || lower.includes('airflow');
+  }, []);
+
+  // Detect a throttle-position (Alpha-N / ITB) load channel from an INI
+  // channel name or label. Mirrors isMafChannelName. A TPS-based VE table has
+  // its load (Y) axis indexed by throttle opening, so live data must be
+  // attributed by TPS instead of MAP/MAF (issue #132).
+  const isTpsChannelName = useCallback((name?: string | null) => {
+    if (!name) return false;
+    const lower = name.toLowerCase();
+    return lower === 'tps' || lower === 'tp' || lower === 'throttle' || lower.includes('tps') || lower.includes('throttle');
   }, []);
 
   useEffect(() => {
@@ -281,7 +423,17 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
 
   const loadAvailableTables = useCallback(async () => {
     try {
-      const tables = await invoke<TableInfo[]>('get_tables');
+      // Only tables a fuel tune may legitimately be applied to. `get_tables`
+      // returns every table in the INI, which put the spark table two clicks
+      // from being scaled by measured/target AFR — a lean cell multiplies by
+      // more than one, so that *adds advance*. The backend refuses it either
+      // way; this keeps it out of the picker so nobody is offered the choice.
+      // Falls back to the unfiltered list if that call fails, rather than
+      // leaving the picker empty: `start_autotune` refuses a non-fuel table on
+      // its own, so the worst case is an error on Start instead of a dead UI.
+      const allowed = await invoke<string[]>('list_tunable_tables').catch(() => null);
+      const all = await invoke<TableInfo[]>('get_tables');
+      const tables = Array.isArray(allowed) ? all.filter((t) => allowed.includes(t.name)) : all;
       setAvailableTables(tables);
 
       // Auto-select table: prefer INI config, then common VE table names, then first table
@@ -345,6 +497,37 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
     }
   }, [secondaryTableEnabled, secondaryTable, selectedTable, secondaryOptions]);
 
+  // Re-attach to a live session. The backend session survives this view
+  // unmounting (switching to the dashboard and back), but isRunning is
+  // component state and resets to false on remount — so the view showed a
+  // running session as stopped and never resumed polling.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await invoke<{
+          running: boolean;
+          tableName: string | null;
+          secondaryTableName: string | null;
+        }>('get_autotune_status');
+        if (cancelled || !status?.running) return;
+        setIsRunning(true);
+        if (status.tableName) {
+          setSelectedTable(status.tableName);
+        }
+        if (status.secondaryTableName) {
+          setSecondaryTableEnabled(true);
+          setSecondaryTable(status.secondaryTableName);
+        }
+      } catch {
+        // No session (or status unavailable) — keep the stopped default.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Load initial table data
   useEffect(() => {
     loadAvailableTables();
@@ -355,11 +538,49 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
   }, [activeTable]);
 
   useEffect(() => {
-    if (!tableData || isRunning) return;
-    if (isMafChannelName(tableData.y_output_channel) && loadSource !== 'maf') {
+    if (!tableData || isRunning || manualLoadSourceRef.current) return;
+    // Auto-detect the load source from the selected table's Y-axis output
+    // channel when the user hasn't already picked one. TPS (Alpha-N / ITB) is
+    // checked first because a TPS channel name like "tps" would not otherwise
+    // match MAF and would silently stay on the wrong MAP source (issue #132).
+    const yChan = tableData.y_output_channel;
+    if (isTpsChannelName(yChan) && loadSource !== 'tps') {
+      setLoadSource('tps');
+      setLoadSourceHint('Throttle (TPS/Alpha-N) load axis detected.');
+    } else if (isMafChannelName(yChan) && loadSource !== 'maf') {
       setLoadSource('maf');
     }
-  }, [isMafChannelName, isRunning, loadSource, tableData]);
+  }, [isMafChannelName, isTpsChannelName, isRunning, loadSource, tableData]);
+
+  // Speeduino names its VE load-axis output channel `fuelLoad` regardless of
+  // the fuel algorithm, so channel-name detection (above) cannot fire there.
+  // The `algorithm` constant is authoritative instead: 1 = TPS / Alpha-N on
+  // Speeduino and MS2/MS3 alike. Only corrects the untouched MAP default so a
+  // deliberate manual choice is respected (issue #132).
+  useEffect(() => {
+    if (!tableData || isRunning || loadSource !== 'map' || manualLoadSourceRef.current) {
+      return;
+    }
+    const yChan = tableData.y_output_channel;
+    if (isTpsChannelName(yChan) || isMafChannelName(yChan)) {
+      return; // channel-name detection already decided
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const v = await invoke<number>('get_constant_value', { name: 'algorithm' });
+        if (!cancelled && v === 1 && loadSource === 'map') {
+          setLoadSource('tps');
+          setLoadSourceHint('Fuel algorithm is TPS (Alpha-N) — throttle load selected.');
+        }
+      } catch {
+        // No `algorithm` constant in this INI — nothing to detect.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isMafChannelName, isTpsChannelName, isRunning, loadSource, tableData]);
 
   useEffect(() => {
     if (loadSource !== 'maf') {
@@ -413,6 +634,20 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
         setHeatmapData(data);
       } catch (e) {
         console.error('Failed to fetch heatmap:', e);
+      }
+      // Sample tallies ride the same poll: the rejection indicator must say
+      // *why* nothing accumulates while the user watches (issue #132).
+      try {
+        const status = await invoke<{
+          acceptedSamples: number;
+          rejections: { reason: string; count: number }[];
+        }>('get_autotune_status');
+        setSampleStats({
+          accepted: status.acceptedSamples ?? 0,
+          rejections: status.rejections ?? [],
+        });
+      } catch {
+        // Status is diagnostic; keep the last known tallies.
       }
     }, 500);
 
@@ -485,11 +720,8 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
     }
   }, [tableData]);
 
-  const startAutoTune = useCallback(async () => {
-    if (!isConnected) {
-      showToast('Connect to the ECU to start AutoTune — it needs live data to generate recommendations.', 'warning');
-      return;
-    }
+  const reallyStartAutoTune = useCallback(async () => {
+    setPreflight(null);
     try {
       const result = await invoke<{
         warnings: string[];
@@ -517,7 +749,49 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
     } catch (e) {
       setError(`Failed to start AutoTune: ${e}`);
     }
-  }, [isConnected, showToast, selectedTable, secondaryTableEnabled, secondaryTable, loadSource, settings, filters, authority, targetAfrTable, lambdaDelayTable, strictLambdaMatch]);
+  }, [selectedTable, secondaryTableEnabled, secondaryTable, loadSource, settings, filters, authority, targetAfrTable, lambdaDelayTable, strictLambdaMatch]);
+
+  /**
+   * Check before starting. AutoTune will happily run against a missing target
+   * table or a filter that rejects every sample and report nothing wrong, so
+   * the whole drive is wasted before anyone finds out.
+   */
+  const startAutoTune = useCallback(async () => {
+    if (!isConnected) {
+      showToast('Connect to the ECU to start AutoTune — it needs live data to generate recommendations.', 'warning');
+      return;
+    }
+    setPreflightBusy(true);
+    try {
+      const report = await invoke<PreflightReport>('preflight_autotune', {
+        tableName: selectedTable,
+        settings,
+        filters,
+        authorityLimits: authority,
+        targetAfrTableName: targetAfrTable.trim() || null,
+        lambdaDelayTableName: lambdaDelayTable.trim() || null,
+        willWriteToEcu: false,
+      });
+      // Always show it: the write-mode line is an Info finding, and "nothing is
+      // wrong" is worth seeing once rather than inferred from silence.
+      setPreflight(report);
+      try {
+        setDeclaredFilters(
+          await invoke<DeclaredFilter[]>('get_declared_analyze_filters', { filters })
+        );
+      } catch {
+        // An INI with no [VeAnalyze] section simply has none to show.
+        setDeclaredFilters([]);
+      }
+    } catch (e) {
+      // A preflight that cannot run must not block the session - it is a
+      // safety net, not a gate.
+      setError(`Preflight check failed (starting anyway is your call): ${e}`);
+      setPreflight({ findings: [], hasBlocker: false, candidateTargetTables: [], resolvedTargetTable: null, delayFit: null });
+    } finally {
+      setPreflightBusy(false);
+    }
+  }, [isConnected, showToast, selectedTable, settings, filters, authority, targetAfrTable, lambdaDelayTable]);
 
   const stopAutoTune = useCallback(async () => {
     try {
@@ -629,6 +903,12 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
     return lookup;
   }, [heatmapData]);
 
+  // Highest hit count on the board, for normalizing the weighting heatmap.
+  const maxHits = useMemo(
+    () => heatmapData.reduce((m, e) => Math.max(m, e.hit_count), 0),
+    [heatmapData]
+  );
+
   // Get cell color based on heatmap mode
   const getCellColor = useCallback(
     (x: number, y: number, value: number) => {
@@ -639,15 +919,26 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
         return 'var(--cell-locked)';
       }
 
+      if (showHeatmap === 'weighting') {
+        // hit_weighting accumulates 1.0 per accepted sample, so the previous
+        // min(1, hit_weighting) saturated after a single hit and every visited
+        // cell rendered the same colour regardless of count. Colour by hit
+        // count on a log scale against the busiest cell, interpolating the
+        // same yellow->blue ramp the legend shows (hsl(60,80%,30%) ->
+        // hsl(240,80%,50%) in RGB, matching the CSS gradient). Unhit cells go
+        // neutral — the VE-value gradient here read as hit intensity.
+        const hits = entry?.hit_count ?? 0;
+        if (hits <= 0 || maxHits <= 0) {
+          return 'var(--cell-neutral)';
+        }
+        const t = Math.log1p(hits) / Math.log1p(maxHits);
+        const lerp = (a: number, b: number) => Math.round(a + (b - a) * t);
+        return `rgb(${lerp(138, 26)}, ${lerp(138, 26)}, ${lerp(15, 230)})`;
+      }
+
       if (!entry || showHeatmap === 'none') {
         // Default value-based coloring using centralized heatmap utility
         return valueToHeatmapColor(value, 0, 100, 'tunerstudio');
-      }
-
-      if (showHeatmap === 'weighting') {
-        // Coverage/weighting heatmap using centralized utility
-        const w = Math.min(1, entry.hit_weighting);
-        return valueToHeatmapColor(w, 0, 1, 'tunerstudio');
       }
 
       if (showHeatmap === 'change') {
@@ -666,7 +957,7 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
 
       return 'var(--cell-default)';
     },
-    [heatmapLookup, showHeatmap, lockedCells, authority.max_change_per_cell]
+    [heatmapLookup, showHeatmap, lockedCells, authority.max_change_per_cell, maxHits]
   );
 
   // Stats
@@ -688,8 +979,298 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
     );
   }
 
+  /**
+   * How to repair each finding, in place. Keyed by the backend's stable code so
+   * a new check arrives with its fix attached rather than as another thing to
+   * read and act on somewhere else in the panel.
+   */
+  const applyFix = (finding: PreflightFinding) => {
+    // The backend already worked out the right value and put it in `suggested`
+    // ("60 C", "10 %/s", "10 / 20%"). Reading it back beats re-deriving the
+    // rule here, where it would drift out of step with the check that raised it.
+    const num = parseFloat((finding.suggested ?? '').replace(/[^0-9.\-]/g, ''));
+    switch (finding.code) {
+      case 'min_clt_units':
+        if (Number.isFinite(num)) setFilters((f) => ({ ...f, min_clt: num }));
+        break;
+      case 'rpm_window_empty':
+        setFilters((f) => ({ ...f, min_rpm: 1000, max_rpm: 7000 }));
+        break;
+      case 'tps_rate_inert':
+        setFilters((f) => ({ ...f, max_tps_rate: 10 }));
+        break;
+      case 'authority_zero':
+        setAuthority((a) => ({ ...a, max_change_per_cell: 10, max_total_change: 20 }));
+        break;
+      case 'rails_reversed':
+        setAuthority((a) => ({ ...a, min_value: Math.min(a.min_value, a.max_value), max_value: Math.max(a.min_value, a.max_value) }));
+        break;
+      case 'delay_default_curve':
+        if (preflight?.delayFit) {
+          setSettings((s2) => ({
+            ...s2,
+            lambda_delay_flow_scaled: true,
+            lambda_delay_floor_ms: Math.round(preflight.delayFit!.floorMs),
+            lambda_delay_ms: Math.round(preflight.delayFit!.anchorMs),
+          }));
+        }
+        break;
+      default:
+        break;
+    }
+  };
+
+  /** Codes this dialog knows how to repair without leaving it. */
+  const fixable = (code: string) =>
+    ['min_clt_units', 'rpm_window_empty', 'tps_rate_inert', 'authority_zero', 'rails_reversed'].includes(code) ||
+    (code === 'delay_default_curve' && !!preflight?.delayFit);
+
+  const severityLabel: Record<PreflightFinding['severity'], string> = {
+    blocker: 'Will not work',
+    warning: 'Check this',
+    info: 'For information',
+  };
+
   return (
     <div className="autotune">
+      {preflight && (
+        <div className="preflight-backdrop" role="dialog" aria-modal="true" aria-label="AutoTune pre-start check">
+          <div className="preflight-dialog">
+            <h2>
+              {preflight.hasBlocker
+                ? 'AutoTune will not produce a usable result'
+                : preflight.findings.some((f) => f.severity === 'warning')
+                  ? 'Worth checking before you start'
+                  : 'Ready to start'}
+            </h2>
+            <p className="preflight-target">
+              AFR target:{' '}
+              {preflight.resolvedTargetTable
+                ? <strong>{preflight.resolvedTargetTable}</strong>
+                : <strong className="preflight-none">none — a flat {settings.target_afr} will be used for every cell</strong>}
+            </p>
+
+            {/* Everything the session depends on, always visible and always
+                changeable - not only surfaced once something has gone wrong.
+                Getting the target table right matters more than any other
+                setting here, so it does not hide when it happens to resolve. */}
+            <div className="preflight-settings">
+              <div className="preflight-setting">
+                <label htmlFor="pf-target">AFR target table</label>
+                <select
+                  id="pf-target"
+                  value={targetAfrTable || preflight.resolvedTargetTable || ''}
+                  onChange={(e) => setTargetAfrTable(e.target.value)}
+                >
+                  <option value="">Auto-discover</option>
+                  {preflight.candidateTargetTables.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                <span className="pf-hint">
+                  {preflight.resolvedTargetTable
+                    ? `resolved: ${preflight.resolvedTargetTable}`
+                    : `none — every cell would use a flat ${settings.target_afr}`}
+                </span>
+              </div>
+
+              <div className="preflight-setting">
+                <label htmlFor="pf-weight">Hit weighting</label>
+                <select
+                  id="pf-weight"
+                  value={settings.hit_weighting}
+                  onChange={(e) => setSettings({ ...settings, hit_weighting: e.target.value as AutoTuneSettings['hit_weighting'] })}
+                >
+                  {/* Soft / Medium / Hard are the names tuners coming from other
+                      popular tuning software will already know. The description
+                      after each says what it actually does, so the familiar label
+                      does not have to carry the meaning on its own. */}
+                  <option value="uniform">
+                    None — every sample counts fully for its nearest cell
+                  </option>
+                  <option value="cell_proximity">
+                    Soft — a sample is shared with the cell it sits nearest to
+                  </option>
+                  <option value="cell_proximity_squared">
+                    Medium — sharing falls away faster, so cells stay distinct
+                  </option>
+                  <option value="cell_centre_only">
+                    Hard — only samples near a cell centre count at all
+                  </option>
+                </select>
+                <span className="pf-hint">
+                  {settings.hit_weighting === 'uniform'
+                    ? 'no sharing: a sample on a cell boundary is credited entirely to one side'
+                    : settings.hit_weighting === 'cell_centre_only'
+                      ? 'cleanest per-cell answer, and the slowest to fill a map'
+                      : 'full authority at ' + settings.base_weight + ' accumulated weight'}
+                </span>
+              </div>
+
+              <div className="preflight-setting">
+                <label htmlFor="pf-base">Base weight</label>
+                <input id="pf-base" type="number" value={settings.base_weight}
+                  onChange={(e) => setSettings({ ...settings, base_weight: parseFloat(e.target.value) || 0 })} />
+                <label htmlFor="pf-minch">Min change</label>
+                <input id="pf-minch" type="number" step="0.1" value={settings.min_change}
+                  onChange={(e) => setSettings({ ...settings, min_change: parseFloat(e.target.value) || 0 })} />
+                <span className="pf-hint">common defaults: 20 / 1.0</span>
+              </div>
+
+              {declaredFilters.length > 0 && (
+                <div className="preflight-filters">
+                  <div className="pf-filters-head">
+                    Filters this INI declares
+                    <span className="pf-hint">
+                      values come from the INI and already match its unit system
+                    </span>
+                  </div>
+                  {declaredFilters.filter((f) => f.channel).map((f) => (
+                    <div key={f.name} className={`pf-filter${f.differs ? ' pf-filter-differs' : ''}`}>
+                      <span className="pf-filter-name">{f.displayName}</span>
+                      <code>{f.channel} {f.operator} {f.iniValue}</code>
+                      {f.sessionValue !== null ? (
+                        <>
+                          <input
+                            type="number"
+                            value={f.sessionValue}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (!Number.isFinite(v)) return;
+                              if (f.name === 'minCltFilter') setFilters({ ...filters, min_clt: v });
+                              if (f.name === 'minRPMFilter') setFilters({ ...filters, min_rpm: v });
+                              setDeclaredFilters((prev) =>
+                                prev.map((x) => (x.name === f.name
+                                  ? { ...x, sessionValue: v, differs: Math.abs(v - x.iniValue) > 0.5 }
+                                  : x)));
+                            }}
+                          />
+                          {f.differs && (
+                            <button type="button" onClick={() => {
+                              if (f.name === 'minCltFilter') setFilters({ ...filters, min_clt: f.iniValue });
+                              if (f.name === 'minRPMFilter') setFilters({ ...filters, min_rpm: f.iniValue });
+                              setDeclaredFilters((prev) =>
+                                prev.map((x) => (x.name === f.name
+                                  ? { ...x, sessionValue: x.iniValue, differs: false } : x)));
+                            }}>Use INI value</button>
+                          )}
+                        </>
+                      ) : (
+                        <span className="pf-hint">not applied by this session yet</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <ul className="preflight-findings">
+              {preflight.findings
+                // The delay has its own block below with the numbers and the
+                // controls; repeating the whole explanation here said the same
+                // thing twice on one screen.
+                .filter((f) => f.code !== 'delay_default_curve')
+                .map((f) => (
+                <li key={f.code} className={`preflight-${f.severity}`}>
+                  <div className="preflight-head">
+                    <span className="preflight-sev">{severityLabel[f.severity]}</span>
+                    <span className="preflight-title">{f.title}</span>
+                  </div>
+                  <div className="preflight-detail">{f.detail}</div>
+                  {f.current && (
+                    <div className="preflight-values">
+                      now <code>{f.current}</code>
+                      {f.suggested && <> → suggested <code>{f.suggested}</code></>}
+                      {fixable(f.code) && (
+                        <button
+                          type="button"
+                          className="preflight-fixbtn"
+                          onClick={() => { applyFix(f); void startAutoTune(); }}
+                          disabled={preflightBusy}
+                        >
+                          Apply &amp; re-check
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+              {preflight.findings.length === 0 && <li className="preflight-info">Nothing to flag.</li>}
+            </ul>
+
+            {/* The delay is the one setting where a measurement beats any
+                default, so the fitted model is offered - but left editable,
+                because a fit over few samples is a suggestion, not a fact. */}
+            <div className="preflight-delay">
+              <div className="preflight-delay-head">
+                <strong>Transport delay</strong>
+                {preflight.delayFit ? (
+                  <span className="preflight-delay-fit">
+                    fitted to {preflight.delayFit.samples} of your own measurements
+                    {' '}(±{Math.round(preflight.delayFit.rmsMs)} ms)
+                  </span>
+                ) : (
+                  <span className="preflight-delay-fit">
+                    no measurements this session — run the AFR Delay tool for a fitted model
+                  </span>
+                )}
+              </div>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={settings.lambda_delay_flow_scaled}
+                  onChange={(e) => setSettings({ ...settings, lambda_delay_flow_scaled: e.target.checked })}
+                />
+                Scale with flow
+              </label>
+              <label>
+                Idle anchor (ms)
+                <input
+                  type="number"
+                  value={settings.lambda_delay_ms}
+                  onChange={(e) => setSettings({ ...settings, lambda_delay_ms: parseFloat(e.target.value) || 0 })}
+                />
+              </label>
+              <label>
+                Floor (ms)
+                <input
+                  type="number"
+                  value={settings.lambda_delay_floor_ms}
+                  onChange={(e) => setSettings({ ...settings, lambda_delay_floor_ms: parseFloat(e.target.value) || 0 })}
+                />
+              </label>
+              {preflight.delayFit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettings({
+                      ...settings,
+                      lambda_delay_flow_scaled: true,
+                      lambda_delay_floor_ms: Math.round(preflight.delayFit!.floorMs),
+                      lambda_delay_ms: Math.round(preflight.delayFit!.anchorMs),
+                    });
+                  }}
+                >
+                  Use fitted ({Math.round(preflight.delayFit.anchorMs)} / {Math.round(preflight.delayFit.floorMs)} ms)
+                </button>
+              )}
+            </div>
+
+            <div className="preflight-actions">
+              <button type="button" onClick={() => setPreflight(null)}>Cancel</button>
+              <button
+                type="button"
+                className="preflight-go"
+                onClick={reallyStartAutoTune}
+                disabled={preflight.hasBlocker}
+                title={preflight.hasBlocker ? 'Fix the blocking problems first' : undefined}
+              >
+                {preflight.findings.some((f) => f.severity === 'warning') ? 'Start anyway' : 'Start AutoTune'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="autotune-header">
         <div className="autotune-title-row">
@@ -746,6 +1327,40 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
             </div>
           </div>
         </div>
+        {/* Rejection indicator (issue #132): a session that accepts nothing
+            looks exactly like a broken one. Show what the filters are doing
+            while the session runs; highlight when nothing gets through. */}
+        {isRunning && sampleStats && (
+          <div
+            className={`autotune-sample-stats${
+              sampleStats.accepted === 0 && sampleStats.rejections.length > 0
+                ? ' autotune-sample-stats-warning'
+                : ''
+            }`}
+            title={
+              sampleStats.rejections.length > 0
+                ? `Rejected samples by reason:\n${sampleStats.rejections
+                    .map((r) => `${r.reason}: ${r.count}`)
+                    .join('\n')}`
+                : 'All samples passed the filters.'
+            }
+          >
+            <span className="autotune-sample-accepted">
+              {sampleStats.accepted} sample{sampleStats.accepted === 1 ? '' : 's'} accepted
+            </span>
+            {sampleStats.rejections.length > 0 && (
+              <span className="autotune-sample-rejected">
+                {sampleStats.rejections
+                  .slice(0, 2)
+                  .map((r) => `${r.count}× ${r.reason}`)
+                  .join(' · ')}
+                {sampleStats.rejections.length > 2
+                  ? ` · +${sampleStats.rejections.length - 2} more`
+                  : ''}
+              </span>
+            )}
+          </div>
+        )}
         <div className="autotune-controls">
           <button onClick={loadReferenceTable} title="Load reference table from CSV">
             <FolderOpen size={14} /> Load Ref
@@ -962,6 +1577,7 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
               <select
                 value={loadSource}
                 onChange={(e) => {
+                  manualLoadSourceRef.current = true;
                   setLoadSource(e.target.value as AutoTuneLoadSource);
                   setLoadSourceHint(null);
                 }}
@@ -969,6 +1585,7 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
               >
                 <option value="map">MAP (Speed Density)</option>
                 <option value="maf">MAF</option>
+                <option value="tps">TPS (Alpha-N / ITB)</option>
               </select>
             </div>
             {loadSourceHint && <div className="autotune-hint">{loadSourceHint}</div>}
@@ -1042,7 +1659,7 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
           <div className="autotune-settings-section">
             <h3>Authority Limits</h3>
             <div className="setting-row">
-              <label>Max Change/Cell (%):</label>
+              <label>Max Change/Cell (VE):</label>
               <input
                 type="number"
                 value={authority.max_change_per_cell}
@@ -1050,11 +1667,27 @@ export function AutoTune({ tableName: initialTableName = '', onClose, isConnecte
               />
             </div>
             <div className="setting-row">
-              <label>Max Total Change (%):</label>
+              <label>Max Change/Cell (%):</label>
               <input
                 type="number"
                 value={authority.max_total_change}
                 onChange={(e) => setAuthority({ ...authority, max_total_change: parseFloat(e.target.value) })}
+              />
+            </div>
+            <div className="setting-row">
+              <label>Min Cell Value (VE):</label>
+              <input
+                type="number"
+                value={authority.min_value}
+                onChange={(e) => setAuthority({ ...authority, min_value: parseFloat(e.target.value) })}
+              />
+            </div>
+            <div className="setting-row">
+              <label>Max Cell Value (VE):</label>
+              <input
+                type="number"
+                value={authority.max_value}
+                onChange={(e) => setAuthority({ ...authority, max_value: parseFloat(e.target.value) })}
               />
             </div>
           </div>

@@ -1,6 +1,6 @@
 //! INI dialog/indicator/port-editor/help/expression query commands.
 
-use crate::commands::string_context::build_string_context;
+use crate::commands::string_context::{build_string_context_filtered, referenced_identifiers};
 use crate::port_editor::{load_port_editor_store, save_port_editor_store, PortEditorAssignment};
 use crate::state::AppState;
 use libretune_core::ini::expression::{evaluate, evaluate_display_string, Parser};
@@ -23,7 +23,12 @@ pub async fn evaluate_expression(
     expression: String,
     context: HashMap<String, f64>,
 ) -> Result<bool, String> {
-    let string_ctx = build_string_context(&state).await;
+    // Only the identifiers this expression mentions: the dashboard calls this
+    // every 250 ms per conditioned gauge, and the unfiltered build clones every
+    // string, array and bitfield option list in the INI (~100 ms on a real
+    // Speeduino tune) to answer a question about one or two names.
+    let names = referenced_identifiers(&expression);
+    let string_ctx = build_string_context_filtered(&state, Some(&names)).await;
     let mut parser = Parser::new(&expression);
     let expr = parser.parse()?;
     let val = evaluate(&expr, &context, Some(&string_ctx))?;
@@ -37,7 +42,8 @@ pub async fn evaluate_string_expression(
     expression: String,
     context: HashMap<String, f64>,
 ) -> Result<String, String> {
-    let string_ctx = build_string_context(&state).await;
+    let names = referenced_identifiers(&expression);
+    let string_ctx = build_string_context_filtered(&state, Some(&names)).await;
     Ok(evaluate_display_string(
         &expression,
         &context,
@@ -61,22 +67,31 @@ pub async fn get_dialog_definition(
 ) -> Result<DialogDefinition, String> {
     let def_guard = state.definition.lock().await;
     let def = def_guard.as_ref().ok_or("Definition not loaded")?;
-    if let Some(dialog) = def.dialogs.get(&name) {
-        return Ok(dialog.clone());
+
+    // First try a real `dialog = name` defined in the INI.
+    if let Some(defn) = def.dialogs.get(&name) {
+        return Ok(defn.clone());
     }
 
-    // Some INIs/menu targets differ only by case. Fall back to case-insensitive
-    // lookup so menu navigation remains robust.
-    def.dialogs
-        .iter()
-        .find_map(|(dialog_name, dialog)| {
-            if dialog_name.eq_ignore_ascii_case(&name) {
-                Some(dialog.clone())
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| format!("Dialog {} not found", name))
+    // Some INIs/menu targets differ only by case.
+    if let Some(defn) = def.dialogs.iter().find_map(|(dialog_name, dialog)| {
+        dialog_name
+            .eq_ignore_ascii_case(&name)
+            .then(|| dialog.clone())
+    }) {
+        return Ok(defn);
+    }
+
+    // Then synthesize the built-in TunerStudio `std_*` panels (e.g.
+    // std_injection) from the constants actually present in this INI. These
+    // panels are referenced via `panel = std_injection` but never defined as
+    // a dialog; without this the Engine Constants dialog renders a placeholder
+    // instead of reqFuel/divider/alternate/etc. (issue #152).
+    if let Some(defn) = def.std_panel_definition(&name) {
+        return Ok(defn);
+    }
+
+    Err(format!("Dialog {} not found", name))
 }
 
 /// Retrieves an indicator panel definition from the INI file.

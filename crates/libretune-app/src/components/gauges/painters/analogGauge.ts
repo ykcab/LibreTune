@@ -4,6 +4,7 @@
 
 import { tsColorToHex, tsColorToRgba } from '../../dashboards/dashTypes';
 import { roundRect, lightenColor, darkenColor, createMetallicGradient } from '../drawUtils';
+import { resolveGaugeArc, traceFacePath, faceOppositeDirection } from './gaugeGeometry';
 import type { Painter } from './types';
 
 export const analogGaugePainter: Painter = (pctx) => {
@@ -20,42 +21,70 @@ export const analogGaugePainter: Painter = (pctx) => {
     return;
   }
 
+  // Geometry — resolves TunerStudio's FaceAngle/SweepAngle/SweepBeginDegree
+  // into the effective needle sweep and the face shape (issue #129): a
+  // FaceAngle < 360 renders a sector face instead of a full-circle disc.
+  const arc = resolveGaugeArc(config);
+  const ccw = arc.counterClockwise;
+  const faceStartRad = (arc.faceStartDeg * Math.PI) / 180;
+  const faceEndRad = ((arc.faceStartDeg + arc.faceAngleDeg) * Math.PI) / 180;
+
   // Background - use image if available, otherwise use color
   if (bgImage) {
-    // Center the image in the square area
-    ctx.drawImage(bgImage, centerX - size / 2, centerY - size / 2, size, size);
+    if (arc.isFullCircle) {
+      // Center the image in the square area
+      ctx.drawImage(bgImage, centerX - size / 2, centerY - size / 2, size, size);
+    } else {
+      ctx.save();
+      traceFacePath(ctx, centerX, centerY, radius, arc);
+      ctx.clip();
+      ctx.drawImage(bgImage, centerX - size / 2, centerY - size / 2, size, size);
+      ctx.restore();
+    }
   } else {
     ctx.fillStyle = tsColorToRgba(config.back_color);
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    traceFacePath(ctx, centerX, centerY, radius, arc);
     ctx.fill();
   }
 
-  // Outer shadow
+  // Outer shadow (follows the face silhouette)
   ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
   ctx.shadowBlur = 8;
   ctx.shadowOffsetX = 3;
   ctx.shadowOffsetY = 3;
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  traceFacePath(ctx, centerX, centerY, radius, arc);
   ctx.fillStyle = '#333';
   ctx.fill();
   ctx.shadowColor = 'transparent';
 
-  // Metallic bezel - outer ring
+  // Metallic bezel - outer ring, following the face shape
   const bezelWidth = config.border_width > 0
     ? Math.min(radius * 0.3, config.border_width)
     : Math.max(6, radius * 0.08);
   const bezelGradient = createMetallicGradient(ctx, centerX, centerY, radius + 2, radius - bezelWidth, config.trim_color);
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-  ctx.arc(centerX, centerY, radius - bezelWidth, 0, Math.PI * 2, true);
-  ctx.fillStyle = bezelGradient;
-  ctx.fill();
+  if (arc.isFullCircle) {
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.arc(centerX, centerY, radius - bezelWidth, 0, Math.PI * 2, true);
+    ctx.fillStyle = bezelGradient;
+    ctx.fill();
+  } else {
+    // Sector face: the bezel becomes a band along the curved edge
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius - bezelWidth / 2, faceStartRad, faceEndRad);
+    ctx.strokeStyle = bezelGradient;
+    ctx.lineWidth = bezelWidth;
+    ctx.lineCap = 'butt';
+    ctx.stroke();
+  }
 
   // Inner bezel highlight
   ctx.beginPath();
-  ctx.arc(centerX, centerY, radius - bezelWidth + 1, 0, Math.PI * 2);
+  if (arc.isFullCircle) {
+    ctx.arc(centerX, centerY, radius - bezelWidth + 1, 0, Math.PI * 2);
+  } else {
+    ctx.arc(centerX, centerY, radius - bezelWidth + 1, faceStartRad, faceEndRad);
+  }
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
   ctx.lineWidth = 1;
   ctx.stroke();
@@ -70,18 +99,14 @@ export const analogGaugePainter: Painter = (pctx) => {
   faceGradient.addColorStop(0, lightenColor(backHex, 15));
   faceGradient.addColorStop(0.7, backHex);
   faceGradient.addColorStop(1, darkenColor(backHex, 10));
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, faceRadius, 0, Math.PI * 2);
+  traceFacePath(ctx, centerX, centerY, faceRadius, arc);
   ctx.fillStyle = faceGradient;
   ctx.fill();
 
-  // Calculate angles (TS uses degrees, canvas uses radians)
-  const startDeg = config.sweep_begin_degree ?? config.start_angle ?? 225;
-  const sweepDeg = config.sweep_angle ?? 270;
-  const ccw = config.counter_clockwise ?? false;
-
-  const startAngle = startDeg * Math.PI / 180;
-  const sweepAngle = sweepDeg * Math.PI / 180;
+  // Needle sweep angles (TS uses degrees, canvas uses radians). The
+  // effective sweep comes from the resolved arc — clamped to the face.
+  const startAngle = (arc.startDeg * Math.PI) / 180;
+  const sweepAngle = (arc.sweepDeg * Math.PI) / 180;
   const endAngle = ccw ? startAngle - sweepAngle : startAngle + sweepAngle;
 
   // Helper to calculate angle at a given percentage (0-1) along the sweep
@@ -283,14 +308,20 @@ export const analogGaugePainter: Painter = (pctx) => {
     ctx.restore();
   }
 
-  // Title with shadow (move up to avoid overlap)
+  // Title with shadow (move up to avoid overlap). Full circles keep the
+  // legacy in-face offsets; sector faces anchor the text just outside the
+  // flat side of the gauge (a half-sweep face puts its readout below the
+  // pivot, like TunerStudio's half gauges).
+  const textDir = arc.isFullCircle ? null : faceOppositeDirection(arc);
+  const titleX = textDir ? centerX + textDir.x * faceRadius * 0.1 : centerX;
+  const titleY = textDir ? centerY + textDir.y * faceRadius * 0.1 : centerY + faceRadius * 0.25;
   ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
   ctx.shadowBlur = 2;
   ctx.fillStyle = fontHex;
   ctx.font = getFontSpec(Math.max(9, faceRadius * 0.13), { bold: true });
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText(config.title, centerX, centerY + faceRadius * 0.25);
+  ctx.fillText(config.title, titleX, titleY);
   ctx.shadowColor = 'transparent';
 
   // Value display with background (move down to avoid overlap)
@@ -298,7 +329,7 @@ export const analogGaugePainter: Painter = (pctx) => {
   const valueText = `${value.toFixed(config.value_digits)} ${config.units}`;
   ctx.font = getFontSpec(valueFontSize, { bold: true, monospace: true });
   const valueWidth = ctx.measureText(valueText).width;
-  const valueY = centerY + faceRadius * 0.55;
+  const valueY = textDir ? centerY + textDir.y * faceRadius * 0.32 : centerY + faceRadius * 0.55;
   ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
   roundRect(ctx, centerX - valueWidth / 2 - 4, valueY - valueFontSize / 2 - 2, valueWidth + 8, valueFontSize + 4, 3);
   ctx.fill();

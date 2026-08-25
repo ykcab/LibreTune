@@ -4,6 +4,7 @@ import {
   AutoTune,
   DataLogView,
   VirtualDynoView,
+  DatalogViewer,
   type TableData as TunerTableData,
 } from "./tuner-ui";
 import TsDashboard from "./dashboards/TsDashboard";
@@ -41,8 +42,7 @@ export interface TabContentRouterProps {
 
   // Welcome view actions
   openProject: (path: string) => void | Promise<void>;
-  setNewProjectDialogOpen: (open: boolean) => void;
-  setConnectionDialogOpen: (open: boolean) => void;
+  setConnectEcuWizardOpen: (open: boolean) => void;
   setImportProjectOpen: (open: boolean) => void;
   handleDeleteProject: (name: string) => void | Promise<void>;
 
@@ -79,8 +79,7 @@ export function TabContentRouter(props: TabContentRouterProps) {
     tabContents,
     setTabContents,
     openProject,
-    setNewProjectDialogOpen,
-    setConnectionDialogOpen,
+    setConnectEcuWizardOpen,
     setImportProjectOpen,
     handleDeleteProject,
     setBurnDialogOpen,
@@ -101,8 +100,7 @@ export function TabContentRouter(props: TabContentRouterProps) {
       <WelcomeView
         projects={availableProjects}
         onOpenProject={(path) => openProject(path)}
-        onNewProject={() => setNewProjectDialogOpen(true)}
-        onConnect={() => setConnectionDialogOpen(true)}
+        onNewProject={() => setConnectEcuWizardOpen(true)}
         onImportTsProject={() => setImportProjectOpen(true)}
         onDeleteProject={handleDeleteProject}
       />
@@ -225,6 +223,13 @@ export function TabContentRouter(props: TabContentRouterProps) {
       return <DataLogView />;
     case "virtual-dyno":
       return <VirtualDynoView />;
+    case "datalog-viewer":
+      return (
+        <DatalogViewer
+          tableName={typeof content.data === "string" ? content.data : undefined}
+          isConnected={status.state === "Connected"}
+        />
+      );
     case "tooth-logger":
       return <ToothLoggerView onClose={() => handleTabClose("tooth-logger")} />;
     case "composite-logger":

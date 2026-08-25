@@ -13,6 +13,382 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-08-23 — Dashboard performance & readability (issue #82)
+
+The dashboard redraw path was reworked around the three complaints in issue
+#82: extreme CPU load on battery, jumping value text when digit count or sign
+changes, and line graphs that look like an audio waveform at high stream
+rates.
+
+#### Added
+- **Configurable gauge refresh rate** — Settings → General → Dashboard →
+  "Gauge refresh rate" (10/15/20/25/30 Hz, default 30). Gauge redraw timers
+  are phase-staggered (16 slots, deterministic per channel) so a dashboard
+  full of gauges no longer piles all canvas work onto the same frame.
+- **Transient spike highlight** — when the raw channel value deviates from
+  the EMA-smoothed display value by more than 15% of the gauge range, digital
+  readouts flash the value in the critical color (~400 ms) and line graphs
+  draw a colored dot at the raw sample position, so short problem pulses stay
+  visible despite smoothing (the issue's "peak detect" ask).
+- **Right-align gauge values setting** (opt-in, default off) — digital/bar
+  gauges anchor value text to a fixed right edge; dial gauges pad values to a
+  fixed monospace width (`steadyValueText`), so number of characters changing
+  no longer shifts glyphs.
+
+#### Changed
+- **Value smoothing is now a time-constant EMA** (`components/gauges/ema.ts`,
+  τ=120 ms) instead of a per-frame lerp factor, so motion converges
+  identically at any refresh rate (the old lerp converged ~6× slower at
+  10 fps than at 60 fps).
+- **LineGraph renders the EMA of the history buffer** rather than raw
+  samples, eliminating the noisy "audio wave" look.
+
+#### Fixed
+- **`pub mod tooth_logger;` restored** in `commands/mod.rs` — the PR #247
+  merge dropped the declaration, leaving `main` not compiling
+  (`commands::tooth_logger::*` references in `lib.rs`).
+
+#### Notes
+- No `.dash` format changes: refresh/smoothing settings are app-global, not
+  per-gauge, so TunerStudio dashboard files round-trip unchanged.
+
+### 2026-08-21 — Fix: open-table render storm with live data (freeze on open)
+
+Opening the fuel table with a live stream froze the window (issue #132): the
+grid re-rendered at up to ~40 Hz and every one of the 256 cells re-derived
+the whole-grid min/max (flattened twice per cell, since `data.min`/`max` are
+never populated) plus regex color parsing per call — enough allocation and
+CPU to saturate the WebView main thread. Merely opening a table also paid an
+unfiltered ~100 ms string-context build server-side.
+
+#### Fixed
+- **Z min/max computed once per data change** (`tuner-ui/TableEditor.tsx`):
+  new `zBounds` memo replaces the per-cell `Math.min(...zValues.flat())` /
+  `Math.max(...)` scans; each cell's color is now derived once instead of
+  twice (background + contrast text both called `getValueColor`).
+- **Live-position identity stabilized.** The raw position memo produced a
+  fresh `{row, col}` object on every realtime tick, so the history-trail
+  effect re-fired per tick and queued a second render even when the cursor
+  stayed in the same cell — the render amplifier behind the storm.
+- **Trail state no longer churns.** The trail-append and cleanup paths return
+  the previous array when nothing changed (the old code always allocated a
+  new filtered array, forcing a re-render every 200 ms tick).
+- **Trail fade driven by a ~5 Hz tick that only runs while trail entries
+  exist**, instead of accidental re-renders.
+- **Per-cell trail lookup is a Map** built once per trail change instead of
+  `Array.find` per cell per render. Behavioral fix included: a re-entered
+  cell (A→B→A) now fades from its *newest* visit — `find()` returned the
+  oldest duplicate entry and showed a freshly re-entered cell as faded.
+- **Same fixes in the dialog-embedded grid** (`tables/TableGrid.tsx`
+  `getCellColor`): `zBounds` memo replaces per-cell whole-grid scans.
+- **`get_table_data` builds a filtered string context.** Only the two
+  axis-label display strings are evaluated, so `build_string_context_filtered`
+  is used with their referenced identifiers instead of the unfiltered
+  ~100 ms build (which also held the definition/tune/project locks), making
+  table-open visibly snappier against a live ECU.
+
+#### Tests
+- New `TableEditor.trail.test.tsx` regression tests, verified failing against
+  the pre-fix code: (1) a re-entered cell fades from its newest visit, and
+  (2) same-cell realtime ticks no longer queue an extra render.
+
+### 2026-08-21 — Alpha-N / ITB: Control Algorithm field, AutoTune auto-detect, rejection indicator
+
+Closes the remaining gaps from #132 (the PR #162 follow-up): an ITB/Alpha-N
+user could not select the fuel algorithm anywhere, AutoTune could not
+auto-detect a TPS load source on Speeduino, changing the algorithm did not
+re-scale the load axis, and a filter-rejected session was indistinguishable
+from a broken one.
+
+#### Added
+- **Control Algorithm selector in Engine Constants.** The Speeduino `algorithm`
+  constant (MAP / TPS / IMAP-EMAP) is carried by TunerStudio's built-in
+  `std_injection` panel and never declared as an INI dialog field, so it was
+  unreachable in LibreTune's entire UI. `EcuDefinition::std_panel_definition`
+  now synthesizes it first (plus `twoStroke` / `engineType`, which the INI
+  also never declares), rendered as a dropdown; MS2/MS3 (Alpha-N = 1 there
+  too) gain it for free via the existing per-INI candidate skipping.
+- **Changing the fuel algorithm now re-scales load axes immediately.**
+  `update_constant` re-runs the expression-scale resolution when the edited
+  constant feeds a scale/translate expression — directly or through an
+  output-channel helper (`algorithm` → `fuelLoadRes` → the VE load-axis
+  scale, detected by the new `EcuDefinition::constant_feeds_dynamic_scale`).
+  When scales actually change, `tune:loaded` ("scales-resolved") refreshes
+  open tables and dialogs. Previously the axis kept the old factor until the
+  next full sync.
+- **AutoTune auto-detects TPS load on Speeduino.** The VE load-axis channel is
+  named `fuelLoad` regardless of fuel algorithm, so PR #162's channel-name
+  detection could never fire. `start_autotune` (and the AutoTune view's
+  auto-detect) now fall back to the `algorithm` constant: 1 = TPS/Alpha-N
+  selects the throttle load source. A manual choice in the dropdown is never
+  overridden (new `manualLoadSourceRef` guard on both detection effects).
+- **Rejection indicator.** `AutoTuneState` counts rejected samples per filter
+  reason; `get_autotune_status` exposes accepted/rejected tallies and the
+  AutoTune header shows them while running (warning-styled when nothing gets
+  through, hover for the full tally). A session that accepts everything no
+  longer looks identical to one whose filters discard every sample.
+
+#### Changed
+- **`max_tps_rate` default 10 → 50 %/s** (core + AutoTune view). Individual
+  throttle bodies snap far faster than 10 %/s, so the old default rejected
+  nearly every sample on Alpha-N cars and AutoTune looked dead. Genuine accel
+  transients are still caught by `exclude_accel_enrich`. Existing persisted
+  settings keep their stored value.
+### 2026-08-20 — Dialog fidelity pass, `.table` file IO, pin-lint gating & AutoTune sample integrity
+
+#### Added
+- **Per-table `.table` file import/export (TunerStudio-compatible)** — the
+  single-table "Save Table to File" / "Load Table from File" workflow, next to
+  CSV (whole-tune) IO. New core reader/writer `crates/libretune-core/src/table_file.rs`
+  for the `<tableData>` XML format (verified against real TunerStudio-exported
+  files), plus `export_table_to_file` / `import_table_from_file` commands
+  (`commands/table_file_io.rs`) and toolbar buttons in both table editors.
+  Import requires the file's dimensions to match the table's current size
+  exactly — unlike TunerStudio it does not silently resample a mismatched
+  grid onto the table's axes.
+- **Online INI search runs automatically on signature mismatch** — the
+  Signature Mismatch dialog now kicks off the online search (Speeduino /
+  rusEFI / FOME sources) as soon as a mismatch is reported, keyed off the ECU
+  signature so it re-runs per mismatch, and jumps straight to the online tab
+  when there is no local match to show. Only the *search* is automated —
+  applying an INI still requires an explicit Download click.
+- **AFR Delay Test (Tools → AFR Delay Test…)** — automated exhaust
+  transport-delay measurement (shipped Aug 6, hardened in this pass; see
+  Fixed below). Steps fuel through `wueRates[9]`, overlays the sampled
+  pulse/AFR traces, and reports the measured delay so it can be entered as
+  AutoTune's `lambda_delay_ms`. Runs until stopped so a whole drive fills
+  the RPM/load map.
+- **INI `xAxis` layout hint respected for top-level panels** — dialog
+  panels carrying the INI's xAxis layout hint now lay their field grid out
+  accordingly instead of ignoring it.
+
+#### Fixed
+- **AutoTune dropped a third to a half of all samples in strict mode** — the
+  delayed-sample match window was a fixed 50 ms while real hardware samples
+  every 111–200 ms (single-shot reads contend with the realtime poll for the
+  connection lock), so good matches were rejected. The tolerance now follows
+  the stream's measured cadence (0.6× the mean sample gap, floored at the
+  historical 50 ms). This was the "AutoTune runs but recommendations never
+  accumulate" symptom.
+- **Overrun fuel-cut and railed wideband readings polluted AutoTune** —
+  samples taken during fuel cut (injectors off, wideband pinned lean) asked
+  for maximum enrichment in exactly the low-load cells every lift passes
+  through; readings below ~10 or above ~19.5 AFR are a sensor at a stop, not
+  a mixture. Both are now excluded, with named `rejection_reason`s in the
+  diagnostic log. `VEDataPoint::default()` now uses 14.7 rather than a
+  physically impossible 0.0 AFR.
+- **AFR delay test measured the leading edge, not the delay** — a step
+  response is the cumulative distribution of transit times, so its
+  half-height is the *median* transit (the transport delay); the leading
+  edge is just the fastest path through the manifold and sits in the noise
+  (median 268 ms scattering 8–2117 ms vs. 435 ms ± 30 ms IQR for
+  half-excursion on the same 80 steps). `detect_delay` now reports the
+  half-excursion crossing, keeps the old figure as `leading_edge_ms`,
+  rejects unsettled traces (`ResponseNotSettled`) with a "hold longer than
+  N ms" hint, samples the settle window so recovery traces are drawn, and
+  guards against concurrent runs (a second start mid-step previously read
+  the enriched value as its baseline and could leave the engine rich in RAM).
+- **Pin lint: a switched-off feature no longer claims its pin** — the
+  pre-burn conflict scan counted every pin selector in the INI, enabled or
+  not, so a bone-stock Speeduino tune raised an eight-line conflict warning
+  on every burn (sixteen Auxin selectors on two analog pins, knock_pin on
+  ignBypassPin with detection off, …). A pin field whose INI enable
+  condition evaluates false now drops out of the scan and out of the
+  assignment-denial check; unparseable conditions stay in the scan (a missed
+  conflict is worse than a spurious one). Also: `'Board Default'` is not a
+  pin, and loading a tune is no longer blocked by pin lint. Both behaviours
+  are pinned by tests.
+- **Dialog fields with only an enable condition were hidden instead of
+  disabled**, command-button and indicatorPanel labels showed raw
+  `{expression}` text instead of the evaluated result, dynamic units showed
+  the raw expression, `indicatorPanel` without an explicit `columns` count
+  was dropped entirely, indicator tiles overflowed their text, and the
+  two-column field grid inside `xAxis` rows collapsed into one column — all
+  fixed to match TunerStudio rendering.
+- **Sidebar now highlights the currently open item** in the project tree.
+- **Table editor**: the Interpolate shortcut (`/`) no longer steals focus
+  to the search box; Y-axis bin labels are no longer hidden on tables with
+  more than 12 rows.
+- **Dashboard drag-and-drop works in the Tauri webview** — Tauri's native
+  drag-drop handler was swallowing the HTML5 DnD events the gauge designer
+  relies on; it is now disabled for the webview.
+- **HotkeyEditor infinite re-render loop** in the Settings dialog (PR #230,
+  with a new regression test).
+- **INI parser**: expression-valued `scale`/`translate` are now resolved
+  instead of silently falling back to 1.0; the two `DEFAULT_SYMBOLS` parser
+  tests are serialized (they shared a process-global symbol table and
+  flaked under parallel execution).
+
+#### Changed
+- **CI modernized** — the flaky legacy pipelines were replaced with a lean
+  gated flow: reusable composite actions
+  (`.github/actions/setup-rust`, `setup-linux-deps`,
+  `collect-tauri-artifacts`) shared across `ci.yml` / `nightly.yml` /
+  `release.yml`, plus a new `.cargo/audit.toml` gating `cargo audit`.
+
+### 2026-08-18 — Spark generator: combustion chamber & boost (psi)
+
+#### Added
+- The ignition generator now also accounts for **combustion chamber design**
+  (open chamber / 2-valve quench / multi-valve swirl) via the new
+  `EngineSpec::combustion_chamber`, folded into `max_spark_advance` (slower
+  burn → more advance). The Generate dialog exposes it for ignition tables.
+- Boost is now entered as **gauge psi** in the Generate dialog (converted to
+  absolute kPa internally), matching TunerStudio's spark generator inputs.
+
+### 2026-08-17 — Per-table generator ("Generate…" in the table editor)
+
+#### Added
+- **Generate a single table from engine specs, TunerStudio-style.** The base-map
+  generators (VE / ignition / AFR) were previously reachable only through the
+  one-shot base-map wizard. The table editor's right-click menu now offers a
+  **"Generate <VE / Ignition / AFR Target> Table…"** action for those tables,
+  which seeds the open table over its **current axes** and applies the result as
+  a single undoable edit (nothing is burned to the ECU automatically).
+  - New Tauri command `generate_table_values(table_name, rpm_bins, load_bins, …engine spec)`
+    (`crates/libretune-app/src-tauri/src/commands/generate_table.rs`). It
+    classifies the table by its INI-derived `TableRole` and falls back to the
+    same name lists `apply_base_map` uses, then calls the existing
+    `generate_ve_table` / `generate_ignition_table` / `generate_afr_table`
+    core generators. Returns `{ table_type, z_values }`.
+  - New frontend: `GenerateTableDialog` (compact engine-spec form) and a
+    `classifyGeneratableTable` helper (`utils/tableGenerator.ts`) that gates the
+    menu affordance. The context menu shows the action only for VE/ignition/AFR
+    tables.
+  - Tests: Rust unit tests for the name/role classifiers, and vitest coverage
+    for `classifyGeneratableTable` / `generatableTableLabel`.
+### 2026-08-17 — Table "Interpolate" NaN fix on single-row/column selections
+
+#### Fixed
+- **`Interpolate` (bilinear, the `/` key) corrupted a whole row or column with
+  `NaN`** — `interpolate_cells` computed the blend ratio as
+  `(y - min_y) / (max_y - min_y)`. When the selection was a single row or a
+  single column that denominator is `0`, and Rust evaluates `0.0 / 0.0` to
+  `NaN` (no panic), so every selected cell was silently overwritten with `NaN`.
+  Because the value could then be burned to the ECU, this was a data-corruption
+  bug, not just a display glitch. A degenerate axis is now pinned to ratio
+  `0.0`, which reduces the bilinear blend to a clean **linear** interpolation
+  along the remaining axis — matching TunerStudio's behaviour for a 1×N or N×1
+  selection. Rectangular selections are unchanged (the 3×3 centre still blends
+  to the corner mean).
+- **Out-of-bounds selections are now a guaranteed no-op** — if any of the four
+  corners falls outside the current table (e.g. a stale selection left over
+  after `rebin_table` shrank the grid) the operation returns the table
+  unmodified instead of reading past the edges.
+
+#### Added
+- Regression tests in `crates/libretune-core/tests/table_ops.rs`:
+  `test_interpolate_cells_single_row_is_linear_not_nan`,
+  `test_interpolate_cells_single_col_is_linear_not_nan`, and
+  `test_interpolate_cells_out_of_bounds_selection_is_noop`; the existing 3×3
+  test now also asserts the exact bilinear centre (`37.5`).
+
+### 2026-08-17 — Issue #129: apply seven parsed-but-ignored .dash gauge properties at render time
+
+#### Fixed
+- **`face_angle` never shaped the gauge face** — roughly a third of stock
+  TunerStudio gauges are authored with `FaceAngle=180/182/188` (half-sweep
+  faces), but every analog gauge rendered as a full circle. New shared
+  geometry helper (`painters/gaugeGeometry.ts`, `resolveGaugeArc`) resolves
+  the effective needle sweep (clamped to the face extent — the needle never
+  travels outside the face) and the face arc (centered on the sweep, which
+  reproduces the 182/188 "sweep + margin" shapes). `analogGauge.ts` now
+  draws a sector face (wedge background, arc-band bezel, text anchored
+  outside the flat side) when `face_angle < 360`; full-circle faces render
+  exactly as before. Also corrected the Rust default/parse-fallback for
+  `FaceAngle` from 270 → 360 (stock corpus values are only 360/180/182/188;
+  TunerStudio renders absent-FaceAngle gauges as full circles, and 270
+  would have shrunk them into sectors).
+- **`history_value` never seeded the peak marker** — TunerStudio persists
+  the last peak in the file; the renderer now seeds `peakValueRef` from it
+  (clamped to range) when `peak_hold` is on (`peakTracking.ts::seedPeak`).
+- **`history_delay` never decayed the peak marker** — the peak only ever
+  ratcheted upward for the life of the gauge. New pure state machine
+  (`peakTracking.ts::nextPeakState`) ratchets upward and, once
+  `history_delay` ms elapse without a new peak, lets the marker fall back to
+  the present value. `history_delay <= 0` holds forever (semantics
+  undocumented; matches previous behavior).
+- **`default_min`/`default_max` were unreachable** — the dashboard designer's
+  property editor now shows a "Reset range to default" button when the gauge
+  carries authored defaults, restoring the TunerStudio-authored range.
+  `.dash` Min/Max and the INI range auto-sync remain authoritative at render.
+
+#### Docs
+- `gauge_style` and `needle_smoothing` are now documented as intentional
+  render-time no-ops (Rust `types.rs` + `dashTypes.ts`): `gauge_style` is
+  provenance only (painter selection is `gauge_painter`; TS styles are
+  free-form names with no in-file definition), and `needle_smoothing` is
+  uniformly 1 across the stock corpus with undocumented semantics — applying
+  it would invent behaviour (per the issue reporter's recommendation).
+
+#### Tests
+- Rust: `face_angle` parse/round-trip regression tests (PR #125 pattern)
+  incl. absent → 360 and malformed → 360 fallbacks.
+- Vitest: `gaugeGeometry.test.ts` (11 tests — full-circle passthrough,
+  180/182 sector centering, sweep clamp, ccw mirroring, garbage face values)
+  and `peakTracking.test.ts` (9 tests — seed/clamp, ratchet, hold, decay,
+  hold-forever on `<= 0`, decay clock for seeded peaks).
+
+### 2026-08-17 — Online INI discovery covers FOME
+
+#### Added
+- **FOME added as an online INI source.** The online INI repository
+  (`search_online_inis` → `OnlineIniRepository`) previously fetched definitions
+  only from Speeduino and rusEFI. It now also fetches FOME's TunerStudio INIs
+  (`FOME-Tech/fome-fw/firmware/tunerstudio`), so signature-based discovery works
+  for FOME ECUs too. The `"fome"` source string is accepted by `download_ini`.
+
+#### Changed
+- The set of upstream sources the search iterates over is now centralized in
+  `IniSource::online_sources()` (previously a hard-coded array inside
+  `refresh_cache`), so adding future platforms is a one-line change plus URLs.
+  Added tests asserting every online source has both a GitHub API URL and a
+  raw-content prefix, and is never the `Custom` (no-upstream) tag.
+
+### 2026-08-13 — std_injection panel synthesis & offline constant reads
+
+#### Fixed
+- **`reqFuel` (and all injection constants) missing from the Engine Constants
+  dialog** (Issue #152) — the Speeduino/MS2/MS3 `engine_constants` dialog nests
+  a built-in TunerStudio panel via `panel = std_injection`. `std_injection` is
+  not a `dialog =` defined in any INI; it renders `reqFuel`, `divider`,
+  `alternate`, `injType`, `nCylinders`, `nInjectors`, `injOpen` from
+  `[Constants]`. LibreTune's `buildStdPlaceholderDefinition` was pre-empting
+  resolution of `std_injection` with a single placeholder `Label`, so the
+  entire panel collapsed to one line of text and every constant in it
+  (including `reqFuel`) was invisible. This was not a tune-import bug — the
+  MSQ constants parsed and applied fine; only the UI was stubbed out.
+  - Added `EcuDefinition::std_panel_definition(name)` (core), which synthesizes
+    a real `DialogDefinition` from the candidate constants actually present in
+    the loaded INI (missing candidates are skipped, so the same panel adapts
+    across Speeduino/MS2/MS3 despite naming differences). `get_dialog_definition`
+    consults it after the real-dialog lookup.
+  - Extended to `std_ms3Rtc` (Speeduino RTC panel) → surfaces `rtc_trim`.
+  - Frontend: removed the pre-emptive `std_injection` placeholder;
+    `buildStdPlaceholderDefinition` is now the *final* fallback for genuinely
+    unknown `std_*` panels (e.g. `std_ms2gentherm`).
+  - Drive-by: `std_panel_definition` previously hardcoded
+    `title: "Injection Setup"` for all panels; refactored to a per-panel
+    `(title, candidates)` tuple so `std_ms3Rtc` is correctly titled.
+  - Validated against a 687-file ECU corpus (rusEFI/epicEFI/FOME/Speeduino/
+    MS2/MS3/MShift): 100% parse success; `reqFuel` present in every affected
+    platform.
+
+- **Every constant displayed `0` offline for `<pageData>`-format MSQs** —
+  `get_constant_value`'s offline branch read *only* from `tune.constants`
+  (named `<constant>` XML tags) and returned `0` when not found by name. But
+  most MSQs (and every "Use LibreTune Settings" save) store data as raw
+  `<pageData>` blobs, for which `tune.constants` is empty. The decoded data
+  was sitting in the `TuneCache` the whole time, but the offline branch
+  refused to fall back to it. A second instance of the same bug existed for
+  bits constants (no cache fallback at all when offline).
+  - Scalar path: fall through to the cache instead of returning `0.0`.
+  - Bits path: added a cache fallback that extracts the packed bit field from
+    the decoded page bytes.
+  - This makes `get_constant_value` consistent with the canonical helper
+    `read_constant_from_cache_or_tune` (CSV export / pin conflicts already did
+    it correctly).
+
 ### 2026-08-01 — Table editing operations restored
 
 #### Fixed
@@ -1828,4 +2204,3 @@ This preserves only essential environment variables (PATH, HOME, DISPLAY) and re
   - ✅ AGENTS.md updated (this section)
   - ✅ All code still functional (but deprecated)
   - ⏳ Removal scheduled for after grace period (Steps 4-5)
-

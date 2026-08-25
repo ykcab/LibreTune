@@ -83,6 +83,20 @@ pub enum IgnitionMode {
     Distributor,
 }
 
+/// Combustion chamber design, which sets flame-travel speed and therefore how
+/// much spark advance the engine wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CombustionChamber {
+    /// Older open chamber — slower burn, wants more advance.
+    OpenChamber,
+    /// 2-valve head with quench — moderate burn (baseline).
+    #[default]
+    QuenchTwoValve,
+    /// Multi-valve head with swirl/tumble — fast burn, wants less advance.
+    SwirlMultiValve,
+}
+
 /// Complete engine specification for base map generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineSpec {
@@ -123,6 +137,21 @@ pub struct EngineSpec {
     /// Target AFR for WOT (display units, e.g. 12.5 for gasoline)
     /// Defaults to a safe rich value if not provided
     pub target_wot_afr: Option<f64>,
+
+    /// Fuel octane rating (AKI/pump number, e.g. 87, 91, 93, 98). Higher octane
+    /// resists knock and allows more spark advance. `None` → inferred from
+    /// `fuel_type` (see [`EngineSpec::effective_octane`]).
+    #[serde(default)]
+    pub octane: Option<f64>,
+
+    /// Static compression ratio (e.g. 10.5 for 10.5:1). Higher compression needs
+    /// less advance to stay out of knock. `None` → treated as ~10.0:1.
+    #[serde(default)]
+    pub compression_ratio: Option<f64>,
+
+    /// Combustion chamber design (flame speed). `None` → 2-valve quench baseline.
+    #[serde(default)]
+    pub combustion_chamber: Option<CombustionChamber>,
 }
 
 impl Default for EngineSpec {
@@ -140,6 +169,9 @@ impl Default for EngineSpec {
             redline_rpm: 6500,
             boost_target_kpa: None,
             target_wot_afr: None,
+            octane: None,
+            compression_ratio: None,
+            combustion_chamber: None,
         }
     }
 }
@@ -195,6 +227,43 @@ impl EngineSpec {
                 self.boost_target_kpa.unwrap_or(200.0).max(120.0)
             }
         }
+    }
+
+    /// Effective fuel octane used for spark-advance calculations. When `octane`
+    /// is not given, infer a sensible value from the fuel chemistry (E85 /
+    /// methanol / LPG are far more knock-resistant than pump gasoline).
+    pub fn effective_octane(&self) -> f64 {
+        self.octane.unwrap_or(match self.fuel_type {
+            FuelType::Gasoline => 93.0,
+            FuelType::E85 => 100.0,
+            FuelType::E100 | FuelType::Methanol => 105.0,
+            FuelType::LPG => 105.0,
+        })
+    }
+
+    /// Peak (total) spark advance the engine can safely take, in crank degrees.
+    ///
+    /// Follows the MegaSquirt/TunerStudio "rules of thumb": start from a typical
+    /// 2-valve pump-premium baseline (~34°) and adjust for octane, compression
+    /// ratio and stroke type. Higher octane allows more; higher compression and
+    /// two-stroke operation require less.
+    pub fn max_spark_advance(&self) -> f64 {
+        let mut adv = 34.0;
+        // Octane relative to 93 pump premium (~0.6°/point, bounded).
+        adv += ((self.effective_octane() - 93.0) * 0.6).clamp(-8.0, 8.0);
+        // Compression ratio relative to 10.0:1 (higher CR → less advance).
+        let cr = self.compression_ratio.unwrap_or(10.0);
+        adv += ((10.0 - cr) * 1.5).clamp(-8.0, 6.0);
+        // Combustion chamber flame speed: slower burn wants more advance.
+        adv += match self.combustion_chamber.unwrap_or_default() {
+            CombustionChamber::OpenChamber => 2.0,
+            CombustionChamber::QuenchTwoValve => 0.0,
+            CombustionChamber::SwirlMultiValve => -2.0,
+        };
+        if matches!(self.stroke_type, StrokeType::TwoStroke) {
+            adv -= 6.0;
+        }
+        adv.clamp(18.0, 42.0)
     }
 }
 

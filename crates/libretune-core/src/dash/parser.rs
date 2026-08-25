@@ -586,7 +586,9 @@ fn set_gauge_property(gauge: &mut GaugeConfig, prop: &str, value: &str) {
         "ItalicFont" => gauge.italic_font = value.parse().unwrap_or(false),
         "SweepAngle" => gauge.sweep_angle = value.parse().unwrap_or(270),
         "StartAngle" => gauge.start_angle = value.parse().unwrap_or(135),
-        "FaceAngle" => gauge.face_angle = value.parse().unwrap_or(270),
+        // Fallback 360 = full-circle face: a malformed value must not turn
+        // the gauge into a partial-sector face it was never authored with.
+        "FaceAngle" => gauge.face_angle = value.parse().unwrap_or(360),
         "SweepBeginDegree" => gauge.sweep_begin_degree = value.parse().unwrap_or(135),
         "CounterClockwise" => gauge.counter_clockwise = value.parse().unwrap_or(false),
         "MajorTicks" => gauge.major_ticks = value.parse().unwrap_or(-1.0),
@@ -845,6 +847,92 @@ mod tests {
             DashComponent::Gauge(g) => assert!(
                 g.peak_hold,
                 "peak_hold must survive a write/parse round-trip"
+            ),
+            _ => panic!("Expected Gauge component"),
+        }
+    }
+
+    /// `FaceAngle` drives the face shape (full circle vs. sector) at render
+    /// time (issue #129) — roughly a third of stock TunerStudio gauges use
+    /// 180°, which must survive parsing rather than silently becoming the
+    /// default. Gauges without the property stay full-circle (360).
+    #[test]
+    fn test_face_angle_parses_and_defaults() {
+        let dash_with = |face_angle: &str| {
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<dsh xmlns="http://www.EFIAnalytics.com/:dsh">
+    <bibliography author="Test" company="TestCo" writeDate="2025-01-01"/>
+    <versionInfo fileFormat="3.0" firmwareSignature="speeduino"/>
+    <gaugeCluster antiAliasing="true" clusterBackgroundColor="-16777216">
+        <dashComp type="Gauge">
+            <Title type="String">RPM</Title>
+            <OutputChannel type="String">rpm</OutputChannel>
+            <GaugePainter type="GaugePainter">Analog Gauge</GaugePainter>
+            {face_angle}
+        </dashComp>
+    </gaugeCluster>
+</dsh>"#
+            )
+        };
+
+        let gauge_from = |xml: &str| {
+            let mut dash = parse_dash_file(xml).expect("parse");
+            match dash.gauge_cluster.components.remove(0) {
+                DashComponent::Gauge(g) => *g,
+                _ => panic!("Expected Gauge component"),
+            }
+        };
+
+        let half = gauge_from(&dash_with("<FaceAngle type=\"int\">180</FaceAngle>"));
+        assert_eq!(
+            half.face_angle, 180,
+            "FaceAngle=180 must parse through, otherwise half-sweep faces render as full circles"
+        );
+
+        let absent = gauge_from(&dash_with(""));
+        assert_eq!(
+            absent.face_angle, 360,
+            "a gauge without FaceAngle must default to a full-circle face"
+        );
+
+        let malformed = gauge_from(&dash_with("<FaceAngle type=\"int\">abc</FaceAngle>"));
+        assert_eq!(
+            malformed.face_angle, 360,
+            "an unparseable FaceAngle must fall back to full-circle, not a partial sector"
+        );
+    }
+
+    /// A gauge authored with a sector face must keep it through a
+    /// write/parse round-trip.
+    #[test]
+    fn test_face_angle_round_trips() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<dsh xmlns="http://www.EFIAnalytics.com/:dsh">
+    <bibliography author="Test" company="TestCo" writeDate="2025-01-01"/>
+    <versionInfo fileFormat="3.0" firmwareSignature="speeduino"/>
+    <gaugeCluster antiAliasing="true" clusterBackgroundColor="-16777216">
+        <dashComp type="Gauge">
+            <Title type="String">RPM</Title>
+            <OutputChannel type="String">rpm</OutputChannel>
+            <GaugePainter type="GaugePainter">Analog Gauge</GaugePainter>
+            <FaceAngle type="int">180</FaceAngle>
+        </dashComp>
+    </gaugeCluster>
+</dsh>"#;
+
+        let dash = parse_dash_file(xml).expect("parse");
+        let written = crate::dash::writer::write_dash_file(&dash).expect("write");
+        assert!(
+            written.contains("<FaceAngle type=\"int\">180</FaceAngle>"),
+            "face_angle must survive a write, got:\n{written}"
+        );
+
+        let mut reparsed = parse_dash_file(&written).expect("reparse");
+        match reparsed.gauge_cluster.components.remove(0) {
+            DashComponent::Gauge(g) => assert_eq!(
+                g.face_angle, 180,
+                "face_angle must survive a write/parse round-trip"
             ),
             _ => panic!("Expected Gauge component"),
         }

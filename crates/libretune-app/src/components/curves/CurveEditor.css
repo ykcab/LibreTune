@@ -126,11 +126,33 @@
 }
 
 .curve-editor.embedded .curve-content {
-  flex-direction: column;
+  /* Chart beside the values table/gauge, matching TunerStudio's layout,
+     instead of stacking them (which pushed a dialog with multiple curves
+     far below the fold). container-type lets the @container rule below
+     switch back to stacked once there's genuinely not enough width for
+     both side by side, rather than clipping or forcing the page wider. */
+  flex-direction: row;
   padding: 8px;
   gap: 12px;
   overflow: visible;
   align-items: flex-start;
+  container-type: inline-size;
+}
+
+/* Chart (min 320px readable) + 220px table + 12px gap need ~552px; below
+   that there's no room to keep them side by side. */
+@container (max-width: 600px) {
+  .curve-editor.embedded .curve-content {
+    flex-direction: column;
+  }
+
+  .curve-editor.embedded .curve-chart-container {
+    max-width: 100%;
+  }
+
+  .curve-editor.embedded .curve-bottom-section {
+    width: 100%;
+  }
 }
 
 /* Chart container */
@@ -147,12 +169,22 @@
 }
 
 .curve-editor.embedded .curve-chart-container {
-  width: var(--curve-embedded-width, 500px);
+  /* CSS decides the available width (up to the 500px comfort size, down to
+     a 320px floor where the SVG stays readable); the component reads the
+     resulting rendered width via ResizeObserver to size the SVG/axes
+     instead of the other way around (a JS-computed width driving this
+     rule would be circular — the width IS the thing being measured). */
+  width: 100%;
+  max-width: 500px;
+  min-width: 320px;
+  flex-shrink: 1;
 }
 
-/* Bottom section for embedded mode (data table + compact live readout) */
+/* Side section for embedded mode (data table + compact live readout),
+   sitting next to the chart rather than spanning its full width. */
 .curve-editor.embedded .curve-bottom-section {
-  width: var(--curve-embedded-width, 500px);
+  width: 220px;
+  flex-shrink: 0;
 }
 
 .curve-bottom-section {
@@ -217,13 +249,16 @@
 }
 
 .curve-editor.embedded .curve-data-table {
-  max-height: 150px;
+  /* Matches the chart's embedded height so the table sits flush beside it;
+     extra rows scroll inside this box instead of growing the page. */
+  max-height: 280px;
   min-width: 0;
   flex: none;
 }
 
 .curve-editor.embedded .curve-bottom-section .curve-data-table {
-  max-height: none;
+  max-height: 280px;
+  overflow-y: auto;
 }
 
 .curve-bottom-section .curve-data-table table {

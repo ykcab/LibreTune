@@ -53,6 +53,23 @@
   overflow: hidden;
 }
 
+/* Stack the nav above the article on a narrow window instead of squeezing
+   the article column into an unusably thin remainder. */
+@media (max-width: 768px) {
+  .manual-viewer-body {
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .manual-sidebar {
+    width: 100%;
+    max-height: 35vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+}
+
 .manual-sidebar-header {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-subtle);

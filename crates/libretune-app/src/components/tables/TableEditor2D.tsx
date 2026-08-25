@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { ArrowLeft, Save, Zap, ExternalLink, AlertTriangle, Palette, MapPin, Crosshair, Box, Scaling } from 'lucide-react';
 import TableToolbar from './TableToolbar';
 import TableGrid, { SelectionRange } from './TableGrid';
@@ -8,6 +9,8 @@ import TableContextMenu from './TableContextMenu';
 import RebinDialog from '../dialogs/RebinDialog';
 import SetTableSizeDialog from '../dialogs/SetTableSizeDialog';
 import CellEditDialog from '../dialogs/CellEditDialog';
+import GenerateTableDialog from '../dialogs/GenerateTableDialog';
+import { classifyGeneratableTable, generatableTableLabel } from '../../utils/tableGenerator';
 import { Dialog, Button, FormField } from '../common';
 import type { BackendTableData, TableSizeInfo } from '../../types/app';
 import LambdaPreviewTable from './LambdaPreviewTable';
@@ -148,7 +151,9 @@ export default function TableEditor2D({
   const safeXBins = hasValidData ? x_bins : [0];
   const safeYBins = hasValidData ? y_bins : [0];
   
-  const [localZValues, setLocalZValues] = useState<number[][]>([...safeZValues]);
+  // Renamed: every mutation goes through the `setLocalZValues` wrapper defined
+  // below, which persists as well as sets. Nothing should call this directly.
+  const [localZValues, setLocalZValuesState] = useState<number[][]>([...safeZValues]);
   const [localXBins, setLocalXBins] = useState<number[]>([...safeXBins]);
   const [localYBins, setLocalYBins] = useState<number[]>([...safeYBins]);
   
@@ -231,6 +236,11 @@ export default function TableEditor2D({
   const yAxisBottom = useTableYAxisBottom();
   const trailFadeSec = useTrailFadeSec();
 
+  // Whether this table can be seeded by the TunerStudio-style generator
+  // (VE / ignition / AFR target). Gates the "Generate…" context-menu action.
+  const generatableKind = useMemo(() => classifyGeneratableTable(table_name), [table_name]);
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+
   // Show the read-only lambda companion only for actual target-AFR tables
   // (not blend/bias tables whose values aren't AFR).
   const isAfrTargetTable = table_name.toLowerCase().startsWith('afrtable');
@@ -271,6 +281,33 @@ export default function TableEditor2D({
       showToast(`${operation} failed: ${message}`, 'error');
     },
     [showToast]
+  );
+
+  /**
+   * Set the grid AND persist it. Every one of the seventeen mutation sites in
+   * this component calls this, so an operation cannot silently forget to save.
+   *
+   * It used to be a plain `useState` setter, and only the toolbar's "s" button
+   * pushed anything to the backend. The result: edits lived in component state
+   * alone, so switching tabs unmounted the grid and discarded them, and
+   * File -> Save As serialised the backend cache and wrote the pre-edit values
+   * with no warning. A real tuning session was lost that way twice - the table
+   * on screen and the table in the file simply disagreed.
+   *
+   * Persisting per edit writes the whole table each time, which is what undo
+   * and redo already did, so the cost is not new. If that ever matters on a
+   * slow link, debounce here rather than moving the call back out to the call
+   * sites, where the next new operation will forget it again.
+   */
+  const setLocalZValues = useCallback(
+    (values: number[][]) => {
+      setLocalZValuesState(values);
+      invoke('update_table_data', { tableName: table_name, zValues: values })
+        // Loudly. The previous `.then(() => {})` had no catch at all, so a
+        // rejected write left the grid showing values the ECU never received.
+        .catch((err) => handleOperationError('Saving table', err));
+    },
+    [table_name, handleOperationError]
   );
 
   useEffect(() => {
@@ -473,6 +510,8 @@ export default function TableEditor2D({
           'table.increaseMultiple': ['+'],
           'table.scale': ['*'],
           'table.interpolate': ['/'],
+          'table.interpolateHorizontal': ['h', 'H'],
+          'table.interpolateVertical': ['v', 'V'],
           'table.smooth': ['s', 'S'],
           'table.toggleFollowMode': ['f', 'F'],
           'table.jumpToActive': ['g', 'G'],
@@ -543,6 +582,17 @@ export default function TableEditor2D({
       if (matchesAction('table.interpolate') || e.key === '/') {
         e.preventDefault();
         handleInterpolate();
+        return;
+      }
+      if ((matchesAction('table.interpolateHorizontal') || ['h', 'H'].includes(e.key)) && !isCtrl) {
+        e.preventDefault();
+        handleInterpolateLinear('row');
+        return;
+      }
+      // V is guarded so Ctrl+V still reaches the paste handler below.
+      if ((matchesAction('table.interpolateVertical') || ['v', 'V'].includes(e.key)) && !isCtrl) {
+        e.preventDefault();
+        handleInterpolateLinear('col');
         return;
       }
       if ((matchesAction('table.smooth') || ['s', 'S'].includes(e.key)) && !isCtrl) {
@@ -683,6 +733,47 @@ export default function TableEditor2D({
     }
   };
 
+  // TunerStudio-compatible .table file import/export for this one table.
+  // import_table_from_file already writes the result to the tune/ECU cache
+  // on the backend; this just brings the local editor state (and undo
+  // stack) in sync with what was just written.
+  const handleExportTable = useCallback(async () => {
+    try {
+      const path = await save({
+        title: 'Save Table to File',
+        defaultPath: `${table_name}.table`,
+        filters: [{ name: 'TunerStudio Table', extensions: ['table'] }],
+      });
+      if (!path) return;
+      await invoke('export_table_to_file', { tableName: table_name, path });
+    } catch (err) {
+      showToast(`Failed to save table: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }, [table_name, showToast]);
+
+  const handleImportTable = useCallback(async () => {
+    try {
+      const path = await open({
+        title: 'Load Table from File',
+        filters: [{ name: 'TunerStudio Table', extensions: ['table'] }],
+        multiple: false,
+        directory: false,
+      });
+      if (!path) return;
+      const result = await invoke<BackendTableData>('import_table_from_file', {
+        tableName: table_name,
+        path,
+      });
+      setLocalXBins(result.x_bins);
+      setLocalYBins(result.y_bins);
+      setLocalZValues(result.z_values);
+      pushHistory(result.z_values, result.x_bins, result.y_bins);
+      onValuesChange?.(result.z_values);
+    } catch (err) {
+      showToast(`Failed to load table: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }, [table_name, showToast, pushHistory, onValuesChange]);
+
   const handleSetEqual = async () => {
     const values = selectedCellsCoords.map(([x, y]) => {
       return { x, y, value: localZValues[y][x] };
@@ -801,6 +892,19 @@ export default function TableEditor2D({
     } catch (err) {
       handleOperationError('Smooth', err);
     }
+  };
+
+  // Apply a freshly generated grid (from GenerateTableDialog) as a single
+  // undoable edit. This is an intentional full-table reseed, so unlike the
+  // cell operations it doesn't run the large-change guard.
+  const handleGenerateApply = (result: { zValues: number[][]; xBins?: number[]; yBins?: number[] }) => {
+    const newX = result.xBins ?? localXBins;
+    const newY = result.yBins ?? localYBins;
+    setLocalZValues(result.zValues);
+    if (result.xBins) setLocalXBins(result.xBins);
+    if (result.yBins) setLocalYBins(result.yBins);
+    onValuesChange?.(result.zValues);
+    pushHistory(result.zValues, newX, newY);
   };
 
   const handleInterpolate = async () => {
@@ -1026,13 +1130,9 @@ export default function TableEditor2D({
       });
 
       if (hasChanges) {
+        // setLocalZValues persists; no second write.
         setLocalZValues(newValues);
         pushHistory(newValues, localXBins, localYBins);
-        // Persist to backend without triggering n*m alerts
-        invoke('update_table_data', {
-          tableName: table_name,
-          zValues: newValues
-        });
         
         // Update selection to cover pasted area
         const endY = Math.min(startY + rows.length - 1, y_bins.length - 1);
@@ -1062,13 +1162,9 @@ export default function TableEditor2D({
       setHistoryIndex(prevIndex);
       onValuesChange?.(snapshot.z);
       
-      // Update backend
-      invoke('update_table_data', {
-        tableName: table_name,
-        zValues: snapshot.z,
-        // Backend update for axis not yet available via simple set command
-        // but local state is reverted
-      });
+      // The z values are persisted by setLocalZValues above. Axis bins are
+      // still local-only: there is no command to write them, so an undo that
+      // crosses a re-bin restores the grid but not the ECU's axes.
     }
   };
 
@@ -1085,10 +1181,6 @@ export default function TableEditor2D({
       setHistoryIndex(nextIndex);
       onValuesChange?.(snapshot.z);
 
-      invoke('update_table_data', {
-        tableName: table_name,
-        zValues: snapshot.z
-      });
     }
   };
 
@@ -1111,12 +1203,16 @@ export default function TableEditor2D({
     }
   };
 
+  /**
+   * Explicit re-send. Edits already persist as they are made, so this is now a
+   * "push it again" for when the ECU was offline at the time - not the only
+   * thing standing between a session's work and losing it, which is what it
+   * used to be.
+   */
   const handleSave = () => {
-    invoke('update_table_data', {
-      tableName: table_name,
-      zValues: localZValues
-    }).then(() => {
-    });
+    invoke('update_table_data', { tableName: table_name, zValues: localZValues })
+      .then(() => showToast('Table sent to the ECU', 'success'))
+      .catch((err) => handleOperationError('Saving table', err));
   };
 
   const handleRightClick = (e: React.MouseEvent, x: number, y: number, cell: HTMLElement) => {
@@ -1292,6 +1388,10 @@ export default function TableEditor2D({
           onColorShadeToggle={() => setShowColorShade(!showColorShade)}
           show3D={show3D}
           onToggle3D={() => setShow3D(!show3D)}
+          onGenerate={generatableKind ? () => setShowGenerateDialog(true) : undefined}
+          generatableLabel={generatableKind ? generatableTableLabel(generatableKind) : undefined}
+          onImportTable={handleImportTable}
+          onExportTable={handleExportTable}
         />
       )}
 
@@ -1386,7 +1486,21 @@ export default function TableEditor2D({
         onCopy={() => { setContextMenu({ visible: false, x: 0, y: 0, value: 0 }); handleCopy(); }}
         onPaste={() => { setContextMenu({ visible: false, x: 0, y: 0, value: 0 }); handlePaste(); }}
         onToggleHeatmap={() => { setContextMenu({ visible: false, x: 0, y: 0, value: 0 }); setShowColorShade(prev => !prev); }}
+        onGenerate={generatableKind ? () => { setContextMenu({ visible: false, x: 0, y: 0, value: 0 }); setShowGenerateDialog(true); } : undefined}
+        generatableLabel={generatableKind ? generatableTableLabel(generatableKind) : undefined}
       />
+
+      {generatableKind && (
+        <GenerateTableDialog
+          isOpen={showGenerateDialog}
+          onClose={() => setShowGenerateDialog(false)}
+          tableName={table_name}
+          kind={generatableKind}
+          rpmBins={localXBins}
+          loadBins={localYBins}
+          onApply={handleGenerateApply}
+        />
+      )}
 
       <RebinDialog
         isOpen={rebinDialog.show}

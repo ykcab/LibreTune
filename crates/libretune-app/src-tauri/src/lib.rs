@@ -19,7 +19,7 @@ use state::{AppState, AutoTuneLoadSource, RpmState, RpmStateTracker, StreamStats
 
 // Re-exports for cross-module use within the crate.
 pub(crate) use commands::app_settings::{
-    get_commit_message_format, load_settings, save_settings, Settings,
+    get_commit_message_format, load_settings, with_settings, Settings,
 };
 pub(crate) use commands::signature_helpers::{
     call_connection_factory_and_build_result, find_matching_inis_internal,
@@ -41,7 +41,9 @@ pub(crate) use commands::util_helpers::{
 use commands::adaptive_timing::{
     disable_adaptive_timing, enable_adaptive_timing, get_adaptive_timing_stats,
 };
-use commands::afr_delay_test::{abort_afr_delay_test, run_afr_delay_test};
+use commands::afr_delay_test::{
+    abort_afr_delay_test, clear_afr_delay_samples, get_afr_delay_table, run_afr_delay_test,
+};
 use commands::agent::{
     agent_apply_proposals, agent_delete_chat, agent_list_chats, agent_load_chat, agent_save_chat,
     agent_send_message, agent_status, agent_stop,
@@ -94,6 +96,7 @@ use commands::firmware_update::{
     get_firmware_flasher_info, get_firmware_update_guidance, recover_ecu_firmware_dfu,
     release_serial_port_blockers, suggest_firmware_companion, update_ecu_firmware,
 };
+use commands::generate_table::generate_table_values;
 use commands::get_table_data::get_table_data;
 use commands::git::{
     git_checkout, git_commit, git_create_branch, git_current_branch, git_diff, git_has_changes,
@@ -153,6 +156,7 @@ use commands::sync_ecu_data::{
 };
 use commands::system::{get_build_info, get_serial_ports};
 use commands::table_compare::compare_tables;
+use commands::table_file_io::{export_table_to_file, import_table_from_file};
 use commands::table_ops::{
     add_offset, fill_region, interpolate_cells, interpolate_linear, rebin_table, resize_table_size,
     scale_cells, set_cells_equal, smooth_table,
@@ -186,7 +190,18 @@ pub fn run() {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_target(false)
+        // `fmt()` writes to STDOUT by default. Everything that captures this
+        // app's diagnostics redirects stderr, so without this line every
+        // `tracing::` event went to a stream nobody was reading - while the
+        // `eprintln!` calls still being migrated away kept landing in the file,
+        // making the log look healthy. A car session's entire AutoTune trail
+        // was lost that way, including the line naming which AFR target table
+        // had been resolved.
+        .with_writer(std::io::stderr)
+        // Keep the module path: with `RUST_LOG` filtering by target, a line
+        // that does not say where it came from cannot be traced back to the
+        // directive that did or did not select it.
+        .with_target(true)
         .init();
 
     tauri::Builder::default()
@@ -250,6 +265,8 @@ pub fn run() {
             stop_realtime_stream,
             get_table_data,
             get_table_info,
+            export_table_to_file,
+            import_table_from_file,
             get_curve_data,
             get_tables,
             get_curves,
@@ -272,6 +289,8 @@ pub fn run() {
             // AFR transport-delay step test
             run_afr_delay_test,
             abort_afr_delay_test,
+            get_afr_delay_table,
+            clear_afr_delay_samples,
             // Math Channels
             get_math_channels,
             set_math_channel,
@@ -294,6 +313,19 @@ pub fn run() {
             get_all_constant_values,
             start_autotune,
             stop_autotune,
+            get_autotune_status,
+            commands::autotune_preflight::preflight_autotune,
+            commands::analyze_filters::get_declared_analyze_filters,
+            commands::autotune_export::build_autotune_proposal,
+            commands::autotune_export::save_autotune_proposal,
+            commands::autotune_preflight::save_delay_model,
+            commands::temperature_units::get_temperature_units_status,
+            commands::temperature_units::set_temperature_units,
+            commands::autotune_preflight::preflight_autotune,
+            commands::analyze_filters::get_declared_analyze_filters,
+            commands::autotune_export::build_autotune_proposal,
+            commands::autotune_export::save_autotune_proposal,
+            commands::autotune_preflight::save_delay_model,
             get_autotune_recommendations,
             get_autotune_status,
             get_autotune_heatmap,
@@ -379,6 +411,14 @@ pub fn run() {
             write_text_file,
             // Diagnostic commands (stubs)
             start_tooth_logger,
+            commands::constant_update::update_constant_array,
+            commands::file_io::write_file_contents,
+            commands::file_io::read_file_contents,
+            commands::tooth_logger::start_tooth_capture,
+            commands::tooth_logger::stop_tooth_capture,
+            commands::tooth_logger::list_diagnostic_loggers,
+            commands::ini_meta::list_tunable_tables,
+            commands::analyse_log::analyse_log,
             stop_tooth_logger,
             start_composite_logger,
             stop_composite_logger,
@@ -418,6 +458,7 @@ pub fn run() {
             // Base map generator commands
             generate_base_map,
             apply_base_map,
+            generate_table_values,
             get_msq_info,
             delete_project,
             // INI signature management commands

@@ -13,7 +13,10 @@ import {
   Crosshair,
   Palette,
   Box,
-  Scaling
+  Scaling,
+  Wand2,
+  Upload,
+  Download
 } from 'lucide-react';
 
 interface TableToolbarProps {
@@ -38,6 +41,12 @@ interface TableToolbarProps {
   onColorShadeToggle?: () => void;
   show3D?: boolean;
   onToggle3D?: () => void;
+  /** Generate the whole table from engine specs (VE/ignition/AFR only). */
+  onGenerate?: () => void;
+  generatableLabel?: string;
+  /** TunerStudio-compatible per-table .table file import/export. */
+  onImportTable?: () => void;
+  onExportTable?: () => void;
 }
 
 export default function TableToolbar({ 
@@ -62,6 +71,10 @@ export default function TableToolbar({
   onColorShadeToggle,
   show3D = false,
   onToggle3D,
+  onGenerate,
+  generatableLabel,
+  onImportTable,
+  onExportTable,
 }: TableToolbarProps) {
   return (
     <div className="ts-toolbar">
@@ -137,6 +150,16 @@ export default function TableToolbar({
             <Scaling size={14} />
           </button>
         )}
+        {onGenerate && (
+          <button
+            className="ts-toolbar-btn"
+            title={`Generate ${generatableLabel ?? 'table'} from engine specs`}
+            onClick={onGenerate}
+          >
+            <Wand2 size={14} />
+            <span className="ts-toolbar-label">Generate</span>
+          </button>
+        )}
       </div>
 
       <div className="ts-toolbar-divider" />
@@ -202,7 +225,7 @@ export default function TableToolbar({
           </button>
         )}
         {onToggle3D && (
-          <button 
+          <button
             className={`ts-toolbar-btn ${show3D ? 'ts-toolbar-btn-active' : ''}`}
             title="Toggle 3D View"
             onClick={onToggle3D}
@@ -211,6 +234,32 @@ export default function TableToolbar({
           </button>
         )}
       </div>
+
+      {(onImportTable || onExportTable) && (
+        <>
+          <div className="ts-toolbar-divider" />
+          <div className="ts-toolbar-group">
+            {onImportTable && (
+              <button
+                className="ts-toolbar-btn"
+                title="Load Table from File... (.table)"
+                onClick={onImportTable}
+              >
+                <Upload size={14} />
+              </button>
+            )}
+            {onExportTable && (
+              <button
+                className="ts-toolbar-btn"
+                title="Save Table to File... (.table)"
+                onClick={onExportTable}
+              >
+                <Download size={14} />
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
