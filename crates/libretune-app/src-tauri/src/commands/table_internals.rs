@@ -15,6 +15,73 @@ async fn autosave_tune_after_table_edit(state: &tauri::State<'_, AppState>) {
     }
 }
 
+/// Keep the three representations of one constant in step.
+///
+/// A written value lives in three places and they have to move together: the
+/// `TuneCache` page bytes, the `TuneFile` page bytes, and `tune.constants`.
+/// Offline reads prefer the parsed msq constants over page data
+/// (`read_const_values` checks `tune.constants` first) and `save_msq`
+/// serialises *only* constants - page bytes are never emitted - so leaving the
+/// constants leg out means the value is absent from the file that was just
+/// saved, while the cache and pages both hold it.
+///
+/// `set_constant_with_page` rather than a bare `constants.insert`: `save_msq`
+/// groups by `constant_pages`, so a constant the tune did not already carry
+/// would otherwise be written out under page 0.
+pub(crate) fn sync_constant_into_tune(
+    cache: &mut libretune_core::tune::TuneCache,
+    tune: &mut TuneFile,
+    constant: &Constant,
+    raw_data: &[u8],
+    default_page_bytes: usize,
+    value: TuneValue,
+) {
+    // TuneCache::write_bytes creates the page if absent and grows it if short,
+    // so it has no failure path to branch on.
+    cache.write_bytes(constant.page, constant.offset, raw_data);
+
+    let page_data = tune
+        .pages
+        .entry(constant.page)
+        .or_insert_with(|| vec![0u8; default_page_bytes]);
+    let start = constant.offset as usize;
+    let end = start + raw_data.len();
+    if end <= page_data.len() {
+        page_data[start..end].copy_from_slice(raw_data);
+    }
+
+    tune.set_constant_with_page(constant.name.clone(), value, constant.page);
+}
+
+/// [`sync_constant_into_tune`] for callers that hold `AppState` rather than the
+/// tune itself, marking the tune modified afterwards.
+pub(crate) async fn mirror_write_into_tune(
+    state: &AppState,
+    cache: &mut libretune_core::tune::TuneCache,
+    constant: &Constant,
+    raw_data: &[u8],
+    default_page_bytes: usize,
+    values: &[f64],
+) {
+    let mut tune_guard = state.current_tune.lock().await;
+    if let Some(tune) = tune_guard.as_mut() {
+        sync_constant_into_tune(
+            cache,
+            tune,
+            constant,
+            raw_data,
+            default_page_bytes,
+            TuneValue::Array(values.to_vec()),
+        );
+    } else {
+        // No tune open: the cache is still the live view, so keep it current.
+        cache.write_bytes(constant.page, constant.offset, raw_data);
+    }
+    drop(tune_guard);
+
+    *state.tune_modified.lock().await = true;
+}
+
 #[derive(Serialize)]
 pub(crate) struct TableData {
     pub name: String,
@@ -65,6 +132,78 @@ impl From<&TableSizeInfo> for TableSizeInfoDto {
 }
 
 // Tune health/anomaly/predicted_fills/dyno_overlay extracted to commands/tune_health.rs
+/// Read one constant's values out of the loaded tune.
+///
+/// Every failure returns an error rather than a zero. This used to
+/// substitute `0.0` for an element that would not decode and
+/// `vec![0.0; element_count]` for a missing or short page, then hand the
+/// result to the editor as though it had come from the tune. A table of
+/// zeros is not a recognisable failure - it looks like a table someone
+/// zeroed - and the first edit sends those zeros back down
+/// `update_table_data`, so a display fault becomes a written one. A zero
+/// VE or dwell table is also the shape most likely to hurt if it is
+/// believed. `read_axis_bins` and `read_table_z_values` already refuse the
+/// same conditions.
+///
+/// The `tune.constants` path below is left alone: it returns values that
+/// really are in the tune, so nothing is fabricated there.
+pub(crate) fn read_const_values(
+    constant: &Constant,
+    tune: Option<&TuneFile>,
+    endianness: libretune_core::ini::Endianness,
+) -> Result<Vec<f64>, String> {
+    let element_count = constant.shape.element_count();
+    let element_size = constant.data_type.size_bytes();
+    let tune_file = tune.ok_or_else(|| {
+        format!(
+            "No tune is loaded, so '{}' has no values to show.",
+            constant.name
+        )
+    })?;
+
+    if let Some(tune_value) = tune_file.constants.get(&constant.name) {
+        match tune_value {
+            TuneValue::Array(arr) => return Ok(arr.clone()),
+            TuneValue::Scalar(v) => return Ok(vec![*v]),
+            _ => {}
+        }
+    }
+
+    let page_data = tune_file.pages.get(&constant.page).ok_or_else(|| {
+        format!(
+            "'{}' lives on page {}, which the loaded tune does not contain.",
+            constant.name, constant.page
+        )
+    })?;
+
+    let offset = constant.offset as usize;
+    let total_bytes = element_count * element_size;
+    if offset + total_bytes > page_data.len() {
+        return Err(format!(
+            "'{}' needs {total_bytes} bytes at offset {offset} of page {}, which holds                  only {}. Re-sync the tune and try again.",
+            constant.name,
+            constant.page,
+            page_data.len()
+        ));
+    }
+
+    let mut values = Vec::with_capacity(element_count);
+    for i in 0..element_count {
+        let elem_offset = offset + i * element_size;
+        let raw_val = constant
+            .data_type
+            .read_from_bytes(page_data, elem_offset, endianness)
+            .ok_or_else(|| {
+                format!(
+                    "Element {i} of {element_count} in '{}' could not be decoded from                          page {}. Re-sync the tune and try again.",
+                    constant.name, constant.page
+                )
+            })?;
+        values.push(constant.raw_to_display(raw_val));
+    }
+    Ok(values)
+}
+
 /// Helper function to get table data internally (avoids code duplication)
 pub(crate) async fn get_table_data_internal(
     state: &tauri::State<'_, AppState>,
@@ -123,53 +262,15 @@ pub(crate) async fn get_table_data_internal(
     // Read from tune file (offline mode)
     let tune_guard = state.current_tune.lock().await;
 
-    fn read_const_values(
-        constant: &Constant,
-        tune: Option<&TuneFile>,
-        endianness: libretune_core::ini::Endianness,
-    ) -> Vec<f64> {
-        let element_count = constant.shape.element_count();
-        let element_size = constant.data_type.size_bytes();
-        if let Some(tune_file) = tune {
-            if let Some(tune_value) = tune_file.constants.get(&constant.name) {
-                match tune_value {
-                    TuneValue::Array(arr) => return arr.clone(),
-                    TuneValue::Scalar(v) => return vec![*v],
-                    _ => {}
-                }
-            }
-
-            if let Some(page_data) = tune_file.pages.get(&constant.page) {
-                let offset = constant.offset as usize;
-                let total_bytes = element_count * element_size;
-                if offset + total_bytes <= page_data.len() {
-                    let mut values = Vec::with_capacity(element_count);
-                    for i in 0..element_count {
-                        let elem_offset = offset + i * element_size;
-                        if let Some(raw_val) =
-                            constant
-                                .data_type
-                                .read_from_bytes(page_data, elem_offset, endianness)
-                        {
-                            values.push(constant.raw_to_display(raw_val));
-                        } else {
-                            values.push(0.0);
-                        }
-                    }
-                    return values;
-                }
-            }
-        }
-        vec![0.0; element_count]
-    }
-
-    let x_bins_full = read_const_values(&x_const, tune_guard.as_ref(), endianness);
+    let x_bins_full = read_const_values(&x_const, tune_guard.as_ref(), endianness)?;
     let y_bins_full = if let Some(ref y) = y_const {
-        read_const_values(y, tune_guard.as_ref(), endianness)
+        read_const_values(y, tune_guard.as_ref(), endianness)?
     } else {
+        // A 2D table has no Y axis to read; this placeholder is not a value
+        // standing in for one that could not be read.
         vec![0.0]
     };
-    let z_flat = read_const_values(&z_const, tune_guard.as_ref(), endianness);
+    let z_flat = read_const_values(&z_const, tune_guard.as_ref(), endianness)?;
 
     let size_info = size_snapshot.map(|(mut info, cols_c, rows_c, defaults, max_elements)| {
         info.active_cols = dynamic_table::resolve_axis_count(
@@ -372,32 +473,15 @@ pub(crate) async fn update_table_z_values_internal(
 
     // Write to TuneCache if available
     if let Some(cache) = cache_guard.as_mut() {
-        if cache.write_bytes(constant.page, constant.offset, &raw_data) {
-            // Also update TuneFile in memory
-            let mut tune_guard = state.current_tune.lock().await;
-            if let Some(tune) = tune_guard.as_mut() {
-                let page_data = tune
-                    .pages
-                    .entry(constant.page)
-                    .or_insert_with(|| vec![0u8; default_page_bytes]);
-                let start = constant.offset as usize;
-                let end = start + raw_data.len();
-                if end <= page_data.len() {
-                    page_data[start..end].copy_from_slice(&raw_data);
-                }
-                // Offline reads prefer the parsed msq constants over page
-                // data (read_const_values checks tune.constants first), so
-                // keep them in sync or every toolbar op silently reverts on
-                // the next read while a connected ECU has already taken the
-                // write. Same invariant PR #59 established for
-                // update_table_data; these internal helpers were missed.
-                tune.constants.insert(
-                    constant.name.clone(),
-                    libretune_core::tune::TuneValue::Array(flat_values.clone()),
-                );
-            }
-            *state.tune_modified.lock().await = true;
-        }
+        mirror_write_into_tune(
+            state,
+            cache,
+            &constant,
+            &raw_data,
+            default_page_bytes,
+            &flat_values,
+        )
+        .await;
     }
 
     // Write to ECU if connected (optional)
@@ -503,32 +587,15 @@ pub(crate) async fn update_constant_array_internal(
     }
 
     if let Some(cache) = cache_guard.as_mut() {
-        if cache.write_bytes(constant.page, constant.offset, &raw_data) {
-            let mut tune_guard = state.current_tune.lock().await;
-            if let Some(tune) = tune_guard.as_mut() {
-                let page_data = tune
-                    .pages
-                    .entry(constant.page)
-                    .or_insert_with(|| vec![0u8; default_page_bytes]);
-
-                let start = constant.offset as usize;
-                let end = start + raw_data.len();
-                if end <= page_data.len() {
-                    page_data[start..end].copy_from_slice(&raw_data);
-                }
-
-                // Same tune.constants sync as above: without it, rebin_table's
-                // axis write "succeeds", the next get_table_data serves the old
-                // bins from tune.constants, and the new axis is lost — while
-                // the ECU already received it.
-                tune.constants.insert(
-                    constant.name.clone(),
-                    libretune_core::tune::TuneValue::Array(values.clone()),
-                );
-            }
-
-            *state.tune_modified.lock().await = true;
-        }
+        mirror_write_into_tune(
+            state,
+            cache,
+            &constant,
+            &raw_data,
+            default_page_bytes,
+            &values,
+        )
+        .await;
     }
 
     if let Some(conn) = conn_guard.as_mut() {
@@ -551,4 +618,167 @@ pub(crate) async fn update_constant_array_internal(
     autosave_tune_after_table_edit(state).await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod read_const_values_tests {
+    use super::*;
+    use libretune_core::ini::{DataType, Endianness};
+    use libretune_core::tune::TuneFile;
+
+    /// One 4-element U08 constant at offset 2 of page 3.
+    fn constant() -> Constant {
+        Constant {
+            name: "veTable".to_string(),
+            page: 3,
+            offset: 2,
+            data_type: DataType::U08,
+            scale: 1.0,
+            translate: 0.0,
+            shape: libretune_core::ini::Shape::Array1D(4),
+            ..Default::default()
+        }
+    }
+
+    fn tune_with_page(bytes: Vec<u8>) -> TuneFile {
+        let mut t = TuneFile::default();
+        t.pages.insert(3, bytes);
+        t
+    }
+
+    #[test]
+    fn a_complete_page_reads_the_real_values() {
+        let t = tune_with_page(vec![0, 0, 10, 20, 30, 40]);
+        let v = read_const_values(&constant(), Some(&t), Endianness::Big).unwrap();
+        assert_eq!(v, vec![10.0, 20.0, 30.0, 40.0]);
+    }
+
+    /// The bug: a page too short for the constant used to return
+    /// `vec![0.0; element_count]`, which the editor showed as a real table of
+    /// zeros and sent back down update_table_data on the first edit.
+    #[test]
+    fn a_short_page_refuses_rather_than_returning_zeros() {
+        let t = tune_with_page(vec![0, 0, 10, 20]); // 2 of the 4 elements
+        let err = read_const_values(&constant(), Some(&t), Endianness::Big)
+            .expect_err("a page that cannot hold the constant must not answer");
+        assert!(err.contains("veTable") && err.contains("page 3"), "{err}");
+    }
+
+    #[test]
+    fn a_missing_page_refuses() {
+        let mut t = TuneFile::default();
+        t.pages.insert(9, vec![0; 64]); // some other page
+        let err = read_const_values(&constant(), Some(&t), Endianness::Big)
+            .expect_err("a tune without the page must not answer");
+        assert!(err.contains("page 3"), "{err}");
+    }
+
+    #[test]
+    fn no_tune_loaded_refuses() {
+        let err = read_const_values(&constant(), None, Endianness::Big)
+            .expect_err("no tune means no values");
+        assert!(err.contains("veTable"), "{err}");
+    }
+
+    /// Values that really are in the tune are still served from there - that
+    /// path never fabricated anything and is deliberately unchanged.
+    #[test]
+    fn a_stored_constant_is_served_from_the_tune() {
+        let mut t = tune_with_page(vec![0, 0, 10, 20, 30, 40]);
+        t.constants.insert(
+            "veTable".to_string(),
+            TuneValue::Array(vec![1.0, 2.0, 3.0, 4.0]),
+        );
+        let v = read_const_values(&constant(), Some(&t), Endianness::Big).unwrap();
+        assert_eq!(v, vec![1.0, 2.0, 3.0, 4.0], "the stored array wins");
+    }
+}
+
+#[cfg(test)]
+mod sync_constant_into_tune_tests {
+    use super::*;
+    use libretune_core::ini::{DataType, EcuDefinition, Shape};
+    use libretune_core::tune::{TuneCache, TuneFile};
+
+    fn def_and_constant() -> (EcuDefinition, Constant) {
+        let mut def = EcuDefinition {
+            page_sizes: vec![0, 0, 0, 64],
+            n_pages: 4,
+            signature: "test".to_string(),
+            ..Default::default()
+        };
+        let c = Constant {
+            name: "veTable".to_string(),
+            page: 3,
+            offset: 2,
+            data_type: DataType::U08,
+            scale: 1.0,
+            translate: 0.0,
+            shape: Shape::Array1D(4),
+            ..Default::default()
+        };
+        def.constants.insert(c.name.clone(), c.clone());
+        (def, c)
+    }
+
+    /// The bug this closes: apply_base_map wrote the cache and tune.pages, then
+    /// saved the msq - and save_msq serialises only `constants`, which nothing
+    /// had written. The generated map was absent from the file it just wrote.
+    #[test]
+    fn a_synced_constant_survives_a_save_and_reload() {
+        let (def, c) = def_and_constant();
+        let mut cache = TuneCache::from_definition(&def);
+        let mut tune = TuneFile::default();
+        tune.signature = "test".to_string();
+
+        sync_constant_into_tune(
+            &mut cache,
+            &mut tune,
+            &c,
+            &[10, 20, 30, 40],
+            64,
+            TuneValue::Array(vec![10.0, 20.0, 30.0, 40.0]),
+        );
+
+        let dir = std::env::temp_dir().join("libretune-sync-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("CurrentTune.msq");
+        tune.save(&path).expect("save");
+
+        let reloaded = TuneFile::load(&path).expect("reload");
+        match reloaded.constants.get("veTable") {
+            Some(TuneValue::Array(a)) => assert_eq!(a, &vec![10.0, 20.0, 30.0, 40.0]),
+            other => panic!("veTable did not survive the save: {other:?}"),
+        }
+        assert_eq!(
+            reloaded.constant_pages.get("veTable"),
+            Some(&3),
+            "the page must survive too, or save_msq groups it under page 0"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn all_three_representations_move_together() {
+        let (def, c) = def_and_constant();
+        let mut cache = TuneCache::from_definition(&def);
+        let mut tune = TuneFile::default();
+
+        sync_constant_into_tune(
+            &mut cache,
+            &mut tune,
+            &c,
+            &[1, 2, 3, 4],
+            64,
+            TuneValue::Array(vec![1.0, 2.0, 3.0, 4.0]),
+        );
+
+        assert_eq!(
+            cache.read_bytes(3, 2, 4),
+            Some(&[1u8, 2, 3, 4][..]),
+            "cache"
+        );
+        assert_eq!(&tune.pages[&3][2..6], &[1u8, 2, 3, 4], "tune pages");
+        assert!(tune.constants.contains_key("veTable"), "tune constants");
+    }
 }
