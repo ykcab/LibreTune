@@ -63,14 +63,18 @@ pub fn is_pin_assignment_constant(constant: &Constant) -> bool {
     if name.contains("pinmode") || name.ends_with("mode") || name.contains("invert") {
         return false;
     }
-    let name_looks_like_pin = name.contains("pin");
+    // Require "pin" in the name. A looser heuristic (None + any pin-like option)
+    // pulled in blend/axis/condition bitfields whose option 0 is "Zero"/"None",
+    // producing a phantom "Pin Zero" conflict on every stock rusEFI tune.
+    if !name.contains("pin") {
+        return false;
+    }
     let has_none = constant
         .bit_options
         .iter()
         .any(|o| is_unassigned_pin_label(o));
     let has_pinish_option = constant.bit_options.iter().any(|o| looks_like_pin_label(o));
-    (name_looks_like_pin && has_none)
-        || (has_none && has_pinish_option && constant.bit_options.len() >= 8)
+    has_none || has_pinish_option
 }
 
 /// Labels that mean "no pin selected".
@@ -85,6 +89,9 @@ pub fn is_unassigned_pin_label(label: &str) -> bool {
         // not a physical pin, and most outputs legitimately sit there at once.
         // Counting it produced a phantom conflict listing a dozen stock
         // functions, and blocked ever assigning a selector back to it.
+        //
+        // "Zero" / "0" is rusEFI's common "unassigned" enum entry (shown in the
+        // UI as "None"); many unused selectors share it and must not collide.
         "none"
             | "invalid"
             | "off"
@@ -95,6 +102,8 @@ pub fn is_unassigned_pin_label(label: &str) -> bool {
             | "na"
             | "default"
             | "board default"
+            | "zero"
+            | "0"
     )
 }
 
@@ -335,5 +344,52 @@ mod tests {
             conflict_if_assigning(&def, "waterPumpPin", 0, |name, _| values.get(name).copied())
                 .is_none()
         );
+    }
+
+    #[test]
+    fn zero_label_is_not_a_conflict() {
+        // rusEFI pin lists often use "Zero" for unassigned (UI shows "None").
+        let opts = ["Zero", "PA0", "PD13", "PE1"];
+        let def = def_with(vec![
+            pin_const("fuelPumpPin", &opts),
+            pin_const("fanPin", &opts),
+            pin_const("gppwm1_pin", &opts),
+        ]);
+        let values = HashMap::from([
+            ("fuelPumpPin".to_string(), 0usize),
+            ("fanPin".to_string(), 0usize),
+            ("gppwm1_pin".to_string(), 0usize),
+        ]);
+        let report = detect_pin_conflicts(&def, |name, _| values.get(name).copied());
+        assert!(!report.has_conflicts(), "{}", report.summary());
+    }
+
+    #[test]
+    fn blend_and_axis_bitfields_are_not_pin_selectors() {
+        // Stock rusEFI tunes leave many blend/axis selectors on "Zero". They
+        // share a large option list that can look pin-like; they must not enter
+        // the pin-conflict scan.
+        let opts = [
+            "Zero",
+            "RPM",
+            "MAP",
+            "TPS",
+            "CLT",
+            "IAT",
+            "AFR",
+            "Battery Voltage",
+        ];
+        let blend = pin_const("veBlends1_blendParameter", &opts);
+        let axis = pin_const("userTables3_xAxis", &opts);
+        assert!(!is_pin_assignment_constant(&blend));
+        assert!(!is_pin_assignment_constant(&axis));
+
+        let def = def_with(vec![blend, axis]);
+        let values = HashMap::from([
+            ("veBlends1_blendParameter".to_string(), 0usize),
+            ("userTables3_xAxis".to_string(), 0usize),
+        ]);
+        let report = detect_pin_conflicts(&def, |name, _| values.get(name).copied());
+        assert!(!report.has_conflicts(), "{}", report.summary());
     }
 }

@@ -23,6 +23,11 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.ts-dashboard-container:has(.ts-dashboard-startup-host) {
+  overflow: hidden;
 }
 
 .ts-dashboard-header {

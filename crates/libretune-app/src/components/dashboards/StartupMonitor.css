@@ -15,9 +15,11 @@
   background: var(--sm-bg);
   color: var(--sm-value);
   padding: 8px 10px 10px;
-  gap: 10px;
+  gap: 8px;
   box-sizing: border-box;
-  overflow: auto;
+  /* Scrollbar appearing/disappearing was fighting the flex canvas height. */
+  overflow: hidden;
+  scrollbar-gutter: stable;
   font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Menlo, Consolas, monospace;
 }
 
@@ -26,6 +28,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 16px;
+  flex: 0 0 auto;
   min-height: 28px;
   padding: 2px 0 6px;
   border-bottom: 1px solid var(--sm-border);
@@ -57,7 +60,8 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0 28px;
-  padding: 4px 4px 8px;
+  flex: 0 0 auto;
+  padding: 4px 4px 4px;
 }
 
 .sm-column {
@@ -135,12 +139,13 @@
 }
 
 .sm-graph-panel {
-  flex: 1 1 auto;
-  min-height: 180px;
+  flex: 1 1 0;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--sm-border);
   background: transparent;
+  min-width: 0;
 }
 
 .sm-graph-toolbar {
@@ -148,7 +153,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  flex: 0 0 auto;
+  padding: 6px 0;
 }
 
 .sm-graph-title {
@@ -185,19 +191,62 @@
 }
 
 .sm-graph-canvas {
-  flex: 1;
+  flex: 1 1 auto;
   width: 100%;
-  min-height: 140px;
+  min-height: 100px;
   display: block;
   border: 1px solid var(--sm-border);
   background: #12151a;
+}
+
+.sm-graph-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 100px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sm-graph-stage .sm-graph-canvas {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 100px;
+}
+
+/* Spectrogram / Trigger overlays — only mounted when toggled on */
+.sm-graph-overlays {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 42%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  pointer-events: auto;
+  background: rgba(15, 17, 21, 0.92);
+  border-top: 1px solid var(--sm-border);
+  backdrop-filter: blur(2px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sm-overlay-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.sm-overlay-pane > * {
+  height: 100%;
 }
 
 .sm-leds {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
-  padding: 6px 0;
+  flex: 0 0 auto;
+  padding: 4px 0;
   border-top: 1px solid var(--sm-border);
 }
 
@@ -228,13 +277,22 @@
   opacity: 0.55;
 }
 
+/* Always reserve a band so warnings don't resize the graph and thrash the canvas. */
 .sm-warnings {
+  flex: 0 0 auto;
+  min-height: 28px;
   border-top: 1px solid rgba(239, 68, 68, 0.45);
   background: rgba(239, 68, 68, 0.08);
-  padding: 6px 4px;
+  padding: 4px 4px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+.sm-warnings.empty {
+  border-top-color: transparent;
+  background: transparent;
+  min-height: 0;
+  padding: 0;
 }
 .sm-warning-item {
   font-size: 12px;
@@ -257,5 +315,8 @@
   }
   .sm-colon-row {
     grid-template-columns: minmax(6rem, 40%) 1fr;
+  }
+  .sm-graph-overlays {
+    top: 35%;
   }
 }

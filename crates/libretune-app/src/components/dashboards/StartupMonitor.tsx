@@ -11,6 +11,7 @@ import {
   useIsReceivingData,
   useRealtimeStore,
 } from '../../stores/realtimeStore';
+import { KnockSpectrogramView } from '../diagnostics/KnockSpectrogramView';
 import './StartupMonitor.css';
 
 export interface StartupMonitorProps {
@@ -180,6 +181,7 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
   });
   const [paused, setPaused] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [showSpectrogram, setShowSpectrogram] = useState(false);
   const frozenRef = useRef<Record<string, number[]>>({});
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastTsRef = useRef(0);
@@ -219,7 +221,8 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     samples.push(1000 / dt);
     if (samples.length > 20) samples.shift();
     const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
-    setHz(avg);
+    // Avoid re-rendering the whole monitor on every OCH tick for ±1 Hz noise.
+    setHz((prevHz) => (Math.abs(prevHz - avg) < 0.75 ? prevHz : avg));
   }, [lastUpdateTime]);
 
   const warnings = useMemo(() => {
@@ -283,6 +286,17 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     let raf = 0;
+    let cssW = 0;
+    let cssH = 0;
+    const syncSize = () => {
+      const rect = canvas.getBoundingClientRect();
+      cssW = Math.max(1, Math.floor(rect.width));
+      cssH = Math.max(1, Math.floor(rect.height));
+    };
+    syncSize();
+    const ro = new ResizeObserver(() => syncSize());
+    ro.observe(canvas);
+
     const paint = () => {
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -290,9 +304,8 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
         return;
       }
       const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      const w = Math.max(1, Math.floor(rect.width * dpr));
-      const h = Math.max(1, Math.floor(rect.height * dpr));
+      const w = Math.max(1, Math.floor(cssW * dpr));
+      const h = Math.max(1, Math.floor(cssH * dpr));
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
@@ -340,7 +353,10 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
       raf = requestAnimationFrame(paint);
     };
     raf = requestAnimationFrame(paint);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
   }, [paused, visibleSeries, zoom]);
 
   const windowSec = Math.round(
@@ -381,6 +397,15 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
                 {s.label}
               </button>
             ))}
+            <button
+              type="button"
+              className={`sm-series-btn ${showSpectrogram ? 'on' : ''}`}
+              style={{ ['--series' as string]: '#4ade80' }}
+              onClick={() => setShowSpectrogram((v) => !v)}
+              title={isConnected ? 'Show knock spectrogram overlay' : 'Connect to ECU first'}
+            >
+              Spectrogram
+            </button>
           </div>
           <div className="sm-graph-actions">
             <button type="button" onClick={handlePause}>{paused ? 'Resume' : 'Pause'}</button>
@@ -388,7 +413,20 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
             <button type="button" onClick={() => setZoom((z) => Math.max(1, z - 1))} disabled={zoom <= 1}>Zoom −</button>
           </div>
         </div>
-        <canvas ref={canvasRef} className="sm-graph-canvas" />
+        <div className="sm-graph-stage">
+          <canvas ref={canvasRef} className="sm-graph-canvas" />
+          {showSpectrogram && (
+            <div className="sm-graph-overlays">
+              <div className="sm-overlay-pane">
+                <KnockSpectrogramView
+                  isConnected={isConnected}
+                  embedded
+                  active={showSpectrogram}
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="sm-leds">
@@ -403,13 +441,11 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
         })}
       </div>
 
-      {warnings.length > 0 ? (
-        <div className="sm-warnings">
-          {warnings.map((w) => (
-            <div key={w} className="sm-warning-item">{w}</div>
-          ))}
-        </div>
-      ) : null}
+      <div className={`sm-warnings${warnings.length ? '' : ' empty'}`} aria-live="polite">
+        {warnings.map((w) => (
+          <div key={w} className="sm-warning-item">{w}</div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -76,6 +76,8 @@ export function toEntries(records: LoggerRecord[]): CompositeLogEntry[] {
 
 interface CompositeLoggerViewProps {
   onClose?: () => void;
+  /** Compact chrome for embedding under Live Telemetry. */
+  embedded?: boolean;
 }
 
 /** Same format the manual Export button and the auto-save write to disk. */
@@ -89,7 +91,10 @@ function buildCsv(rows: CompositeLogEntry[]): string {
   return lines.join("\n");
 }
 
-export const CompositeLoggerView: React.FC<CompositeLoggerViewProps> = ({ onClose }) => {
+export const CompositeLoggerView: React.FC<CompositeLoggerViewProps> = ({
+  onClose,
+  embedded = false,
+}) => {
   const [logData, setLogData] = useState<CompositeLogEntry[]>([]);
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -427,83 +432,99 @@ export const CompositeLoggerView: React.FC<CompositeLoggerViewProps> = ({ onClos
   }, [logData]);
 
   return (
-    <div className="composite-logger-view">
-      <div className="composite-logger-header">
-        <h2>Composite Logger</h2>
-        <div className="composite-logger-controls">
+    <div className={`composite-logger-view${embedded ? " embedded" : ""}`}>
+      {!embedded && (
+        <div className="composite-logger-header">
+          <h2>Composite Logger</h2>
+          <div className="composite-logger-controls">
+            <button
+              className={`capture-btn ${isCapturing ? "capturing" : ""}`}
+              onClick={isCapturing ? handleStop : handleCapture}
+            >
+              {isCapturing ? <><Square size={14} fill="currentColor" /> Stop</> : <><Play size={14} fill="currentColor" /> Capture</>}
+            </button>
+            <div className="zoom-controls">
+              <label>Zoom:</label>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                step="0.5"
+                value={zoomLevel}
+                onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
+              />
+              <span>{zoomLevel.toFixed(1)}x</span>
+            </div>
+            <button
+              className="export-btn"
+              onClick={handleExport}
+              disabled={logData.length === 0}
+            >
+              <Download size={14} /> Export
+            </button>
+            {onClose && (
+              <button className="close-btn" onClick={onClose} aria-label="Close">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {embedded && (
+        <div className="composite-logger-header embedded-bar">
           <button
             className={`capture-btn ${isCapturing ? "capturing" : ""}`}
             onClick={isCapturing ? handleStop : handleCapture}
           >
             {isCapturing ? <><Square size={14} fill="currentColor" /> Stop</> : <><Play size={14} fill="currentColor" /> Capture</>}
           </button>
-          <div className="zoom-controls">
-            <label>Zoom:</label>
-            <input
-              type="range"
-              min="1"
-              max="10"
-              step="0.5"
-              value={zoomLevel}
-              onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
-            />
-            <span>{zoomLevel.toFixed(1)}x</span>
+          {error && <span className="composite-logger-inline-error">{error}</span>}
+        </div>
+      )}
+
+      {error && !embedded && <div className="composite-logger-error">{error}</div>}
+
+      {!embedded && (
+        <div className="composite-logger-stats">
+          <div className="stat">
+            <span className="stat-label">Sample Rate:</span>
+            <span className="stat-value">
+              {sampleRate === null ? "—" : `${(sampleRate / 1000).toFixed(1)} kHz`}
+            </span>
           </div>
-          <button
-            className="export-btn"
-            onClick={handleExport}
-            disabled={logData.length === 0}
-          >
-            <Download size={14} /> Export
-          </button>
-          {onClose && (
-            <button className="close-btn" onClick={onClose} aria-label="Close">
-              <X size={14} />
-            </button>
+          <div className="stat">
+            <span className="stat-label">Samples:</span>
+            <span className="stat-value">{logData.length.toLocaleString()}</span>
+          </div>
+          {stats && (
+            <>
+              <div className="stat">
+                <span className="stat-label">Duration:</span>
+                <span className="stat-value">{stats.duration.toFixed(1)} ms</span>
+              </div>
+              <div className="stat">
+                <span className="stat-label">Primary Pulses:</span>
+                <span className="stat-value">{stats.primaryPulses}</span>
+              </div>
+              <div className="stat">
+                <span className="stat-label">Secondary Pulses:</span>
+                <span className="stat-value">{stats.secondaryPulses}</span>
+              </div>
+              <div className="stat">
+                <span className="stat-label">Sync Status:</span>
+                <span className={`stat-value ${stats.syncAcquired ? "sync-ok" : "sync-lost"}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  {stats.syncAcquired ? <><Check size={14} /> Acquired</> : <><XCircle size={14} /> Not Acquired</>}
+                  {stats.syncLostCount > 0 && ` (Lost ${stats.syncLostCount}x)`}
+                </span>
+              </div>
+            </>
           )}
         </div>
-      </div>
-
-      {error && <div className="composite-logger-error">{error}</div>}
-
-      <div className="composite-logger-stats">
-        <div className="stat">
-          <span className="stat-label">Sample Rate:</span>
-          <span className="stat-value">
-            {sampleRate === null ? "—" : `${(sampleRate / 1000).toFixed(1)} kHz`}
-          </span>
-        </div>
-        <div className="stat">
-          <span className="stat-label">Samples:</span>
-          <span className="stat-value">{logData.length.toLocaleString()}</span>
-        </div>
-        {stats && (
-          <>
-            <div className="stat">
-              <span className="stat-label">Duration:</span>
-              <span className="stat-value">{stats.duration.toFixed(1)} ms</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Primary Pulses:</span>
-              <span className="stat-value">{stats.primaryPulses}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Secondary Pulses:</span>
-              <span className="stat-value">{stats.secondaryPulses}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Sync Status:</span>
-              <span className={`stat-value ${stats.syncAcquired ? "sync-ok" : "sync-lost"}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                {stats.syncAcquired ? <><Check size={14} /> Acquired</> : <><XCircle size={14} /> Not Acquired</>}
-                {stats.syncLostCount > 0 && ` (Lost ${stats.syncLostCount}x)`}
-              </span>
-            </div>
-          </>
-        )}
-      </div>
+      )}
 
       <div className="composite-logger-canvas-container">
-        {zoomLevel > 1 && (
+        {!embedded && zoomLevel > 1 && (
           <input
             type="range"
             className="scroll-slider"
@@ -516,37 +537,39 @@ export const CompositeLoggerView: React.FC<CompositeLoggerViewProps> = ({ onClos
         )}
         <canvas
           ref={canvasRef}
-          width={900}
-          height={400}
+          width={embedded ? 720 : 900}
+          height={embedded ? 160 : 400}
           className="composite-logger-canvas"
         />
       </div>
 
-      {logData.length === 0 && !isCapturing && (
+      {logData.length === 0 && !isCapturing && !embedded && (
         <div className="composite-logger-empty">
           <p>No composite data captured yet.</p>
           <p>Click "Capture" to start recording trigger patterns from the ECU.</p>
         </div>
       )}
 
-      <div className="composite-logger-legend">
-        <div className="legend-item">
-          <span className="legend-color" style={{ background: "#22c55e" }} />
-          <span>Primary (Crank)</span>
+      {!embedded && (
+        <div className="composite-logger-legend">
+          <div className="legend-item">
+            <span className="legend-color" style={{ background: "#22c55e" }} />
+            <span>Primary (Crank)</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-color" style={{ background: "#3b82f6" }} />
+            <span>Secondary (Cam)</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-color" style={{ background: "#a855f7" }} />
+            <span>Sync Status</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-color" style={{ background: "#f59e0b" }} />
+            <span>Voltage</span>
+          </div>
         </div>
-        <div className="legend-item">
-          <span className="legend-color" style={{ background: "#3b82f6" }} />
-          <span>Secondary (Cam)</span>
-        </div>
-        <div className="legend-item">
-          <span className="legend-color" style={{ background: "#a855f7" }} />
-          <span>Sync Status</span>
-        </div>
-        <div className="legend-item">
-          <span className="legend-color" style={{ background: "#f59e0b" }} />
-          <span>Voltage</span>
-        </div>
-      </div>
+      )}
     </div>
   );
 };

@@ -123,3 +123,37 @@
   color: var(--text-muted, #9aa4b2);
   line-height: 1.4;
 }
+
+.knock-spectrogram-view.embedded {
+  padding: 6px 8px;
+  gap: 6px;
+  background: transparent;
+}
+
+.knock-spectrogram-view.embedded .knock-spectrogram-header {
+  padding-bottom: 4px;
+}
+
+.knock-spectrogram-view.embedded .knock-spectrogram-title h2 {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #9aa4b2);
+}
+
+.knock-spectrogram-view.embedded .knock-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+.knock-spectrogram-view.embedded .knock-spectrogram-meta {
+  gap: 8px 12px;
+  font-size: 11px;
+}
+
+.knock-spectrogram-view.embedded .knock-spectrogram-canvas-wrap {
+  min-height: 0;
+  flex: 1;
+  border-radius: 4px;
+}

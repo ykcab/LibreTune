@@ -25,9 +25,21 @@ const MAX_COLUMNS = 480;
 interface Props {
   onClose?: () => void;
   isConnected?: boolean;
+  /** Compact chrome for embedding under Live Telemetry. */
+  embedded?: boolean;
+  /**
+   * When set (Live Telemetry toolbar), auto start/stop firmware streaming
+   * and hide the Start/Stop chrome — parent owns enable/disable.
+   */
+  active?: boolean;
 }
 
-export const KnockSpectrogramView: React.FC<Props> = ({ onClose, isConnected = false }) => {
+export const KnockSpectrogramView: React.FC<Props> = ({
+  onClose,
+  isConnected = false,
+  embedded = false,
+  active,
+}) => {
   const live = useChannels(KNOCK_SPECTRUM_CHANNELS);
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -36,6 +48,7 @@ export const KnockSpectrogramView: React.FC<Props> = ({ onClose, isConnected = f
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const magRef = useRef<HTMLCanvasElement>(null);
   const lastSig = useRef<string>("");
+  const controlled = active !== undefined;
 
   const frame = useMemo(() => frameFromOch(live), [live]);
 
@@ -70,6 +83,23 @@ export const KnockSpectrogramView: React.FC<Props> = ({ onClose, isConnected = f
     }
   }, []);
 
+  // Toolbar-driven: mount = stream on, unmount/active=false = stream off.
+  useEffect(() => {
+    if (!controlled) return;
+    if (active) {
+      void setSpectrogramEnabled(true);
+    } else {
+      void setSpectrogramEnabled(false);
+    }
+  }, [controlled, active, setSpectrogramEnabled]);
+
+  useEffect(() => {
+    if (!controlled) return;
+    return () => {
+      invoke("update_constant", { name: "enableKnockSpectrogram", value: 0 }).catch(() => {});
+    };
+  }, [controlled]);
+
   // Spectrogram heat map: x = time (columns), y = frequency bins (low → high upward)
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -87,15 +117,17 @@ export const KnockSpectrogramView: React.FC<Props> = ({ onClose, isConnected = f
     ctx.fillRect(0, 0, cssW, cssH);
 
     if (history.length === 0) {
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
-      ctx.font = "13px sans-serif";
-      ctx.fillText(
-        enabled
-          ? "Waiting for knock spectrum OCH…"
-          : "Press Start to enable firmware spectrogram streaming",
-        16,
-        cssH / 2,
-      );
+      if (!embedded) {
+        ctx.fillStyle = "rgba(255,255,255,0.35)";
+        ctx.font = "13px sans-serif";
+        ctx.fillText(
+          enabled
+            ? "Waiting for knock spectrum OCH…"
+            : "Press Start to enable firmware spectrogram streaming",
+          16,
+          cssH / 2,
+        );
+      }
       return;
     }
 
@@ -117,7 +149,7 @@ export const KnockSpectrogramView: React.FC<Props> = ({ onClose, isConnected = f
     ctx.fillText(`${latest.freqStartHz.toFixed(0)} Hz`, 6, cssH - 6);
     const topHz = frequencyHz(latest, SPECTRUM_BIN_COUNT - 1);
     ctx.fillText(`${topHz.toFixed(0)} Hz`, 6, 14);
-  }, [history, enabled]);
+  }, [history, enabled, embedded]);
 
   // Current-frame magnitude strip
   useEffect(() => {
@@ -147,72 +179,82 @@ export const KnockSpectrogramView: React.FC<Props> = ({ onClose, isConnected = f
   const peakHz = frame && peak ? frequencyHz(frame, peak.index) : null;
 
   return (
-    <div className="knock-spectrogram-view">
-      <div className="knock-spectrogram-header">
-        <div className="knock-spectrogram-title">
-          <Activity size={18} />
-          <h2>Knock Spectrogram</h2>
+    <div className={`knock-spectrogram-view${embedded ? " embedded" : ""}`}>
+      {!controlled && (
+        <div className="knock-spectrogram-header">
+          <div className="knock-spectrogram-title">
+            <Activity size={embedded ? 14 : 18} />
+            <h2>{embedded ? "Knock Sensing · Spectrogram" : "Knock Spectrogram"}</h2>
+          </div>
+          <div className="knock-spectrogram-controls">
+            {!enabled ? (
+              <button
+                type="button"
+                className="knock-btn start"
+                disabled={busy || !isConnected}
+                onClick={() => setSpectrogramEnabled(true)}
+                title={isConnected ? "Enable firmware spectrogram" : "Connect to ECU first"}
+              >
+                <Play size={14} /> Start
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="knock-btn stop"
+                disabled={busy}
+                onClick={() => setSpectrogramEnabled(false)}
+              >
+                <Square size={14} /> Stop
+              </button>
+            )}
+            {!embedded && onClose && (
+              <button type="button" className="knock-btn close" onClick={onClose}>
+                <X size={14} />
+              </button>
+            )}
+          </div>
         </div>
-        <div className="knock-spectrogram-controls">
-          {!enabled ? (
-            <button
-              type="button"
-              className="knock-btn start"
-              disabled={busy || !isConnected}
-              onClick={() => setSpectrogramEnabled(true)}
-              title={isConnected ? "Enable firmware spectrogram" : "Connect to ECU first"}
-            >
-              <Play size={14} /> Start
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="knock-btn stop"
-              disabled={busy}
-              onClick={() => setSpectrogramEnabled(false)}
-            >
-              <Square size={14} /> Stop
-            </button>
-          )}
-          {onClose && (
-            <button type="button" className="knock-btn close" onClick={onClose}>
-              <X size={14} />
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       {error && <div className="knock-spectrogram-error">{error}</div>}
 
       <div className="knock-spectrogram-meta">
-        <span>Sensor ch {frame?.channel ?? "—"}</span>
-        <span>Cyl {frame?.cylinder ?? "—"}</span>
+        <span>ch {frame?.channel ?? "—"}</span>
+        <span>cyl {frame?.cylinder ?? "—"}</span>
         <span>
-          Peak{" "}
+          peak{" "}
           {peakHz != null && peak
-            ? `${peakHz.toFixed(0)} Hz @ ${peak.amplitude}`
+            ? `${peakHz.toFixed(0)} Hz`
             : "—"}
         </span>
-        <span>Knock {(live.m_knockLevel ?? 0).toFixed(1)}</span>
-        <span>Retard {(live.m_knockRetard ?? 0).toFixed(1)}°</span>
-        <span>Count {Math.round(live.m_knockCount ?? 0)}</span>
-        <span>RPM {Math.round(live.rpm ?? 0)}</span>
-        <span>Cols {history.length}</span>
+        <span>knock {(live.m_knockLevel ?? 0).toFixed(1)}</span>
+        <span>ret {(live.m_knockRetard ?? 0).toFixed(1)}°</span>
+        {!embedded && (
+          <>
+            <span>Count {Math.round(live.m_knockCount ?? 0)}</span>
+            <span>RPM {Math.round(live.rpm ?? 0)}</span>
+            <span>Cols {history.length}</span>
+          </>
+        )}
       </div>
 
       <div className="knock-spectrogram-canvas-wrap">
         <canvas ref={canvasRef} className="knock-spectrogram-canvas" />
       </div>
-      <div className="knock-magnitude-wrap">
-        <div className="knock-magnitude-label">Current magnitude</div>
-        <canvas ref={magRef} className="knock-magnitude-canvas" />
-      </div>
+      {!embedded && (
+        <div className="knock-magnitude-wrap">
+          <div className="knock-magnitude-label">Current magnitude</div>
+          <canvas ref={magRef} className="knock-magnitude-canvas" />
+        </div>
+      )}
 
-      <p className="knock-spectrogram-hint">
-        Native LibreTune view of rusEFI / FOME / epicEFI packed FFT OCH
-        (m_knockSpectrum1…16). No TunerStudio plugin required. Requires firmware
-        built with knock spectrogram support and software knock enabled.
-      </p>
+      {!embedded && (
+        <p className="knock-spectrogram-hint">
+          Native LibreTune view of rusEFI / FOME / epicEFI packed FFT OCH
+          (m_knockSpectrum1…16). No TunerStudio plugin required. Requires firmware
+          built with knock spectrogram support and software knock enabled.
+        </p>
+      )}
     </div>
   );
 };
