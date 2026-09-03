@@ -41,13 +41,13 @@ Data logger with configurable sample rates, playback controls, CSV import/export
 Project-based workflow with restore points, Git-based tune versioning, CSV export/import, TunerStudio-compatible per-table `.table` import/export, TunerStudio project import, INI version tracking with automatic tune migration, and change annotations. Online INI search from Speeduino, rusEFI, and FOME GitHub repos, offered automatically on ECU signature mismatch.
 
 ### Additional
-- **AI Assistant**: Bring-your-own-LLM co-pilot (OpenAI / Anthropic / Google / local Ollama) that reads your tables, diagnoses problems, and *proposes* validated, authority-clamped changes for explicit review — nothing burns automatically. Docked side panel, pop-out-able.
+- **AI Assistant**: Bring-your-own-LLM co-pilot (OpenAI / Anthropic / Google / local Ollama or LM Studio, with one-click presets) that reads your tables, realtime data, and datalogs, diagnoses problems, and *proposes* validated, authority-clamped changes for explicit review — applied only after your approval (restore point first) and never burned automatically. OS-keychain API-key storage, capability tiers, pin-conflict warnings, and an "Ask AI" button on every table editor.
 - **Multi-monitor**: Pop out any tab to its own window with bidirectional sync
 - **Unit preferences**: Temperature (°C/°F/K), pressure (kPa/PSI/bar/inHg), AFR/Lambda
 - **Performance calculator**: Estimated HP/torque curves and acceleration times
 - **Action scripting**: Record and replay tuning actions across tunes, with INI-backed validation
 - **Extensible**: WASM plugin system with sandboxing and permission model
-- **Localization**: i18n scaffold with English and Brazilian Portuguese (`pt-BR`); add new locales under `crates/libretune-app/src/i18n/locales/`
+- **Localization**: i18n scaffold with English, Brazilian Portuguese (`pt-BR`), and Hungarian (`hu-HU`); add new locales under `crates/libretune-app/src/i18n/locales/`
 - **Demo mode**: Run the app without an ECU using the bundled simulator (Settings → Enable Demo Mode)
 
 For full documentation, see the [User Manual](https://rallypat.github.io/LibreTune/) or the [architecture overview](docs/architecture.md).
@@ -202,7 +202,7 @@ cd crates/libretune-app
 npm run typecheck
 ```
 
-The full pre-push pipeline (build + tests + clippy + fmt + frontend build/tests) is wrapped in [scripts/pre-push.sh](scripts/pre-push.sh) and runs automatically as a Git hook.
+The full pre-push pipeline (build + tests + clippy + fmt + frontend build/tests) is wrapped in [scripts/pre-push.sh](scripts/pre-push.sh). Both Git hooks are opt-in: `scripts/setup-git-hooks.ps1` (or `.sh`) enables the pre-commit format check, and `./scripts/pre-push.sh --install-hook` runs the full pipeline before every push.
 
 ## License
 

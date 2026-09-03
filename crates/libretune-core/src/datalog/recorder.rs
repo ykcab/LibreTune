@@ -53,6 +53,10 @@ pub struct DataLogger {
     stream_path: Option<PathBuf>,
     /// Rows written to the stream file (used to flush periodically).
     rows_written: u64,
+    /// Rows dropped because their column count did not match `channels` — a
+    /// torn/misaligned serial read. Nonzero means a few samples were skipped
+    /// (never written with wrong columns), surfaced rather than silent.
+    malformed: u64,
 }
 
 impl DataLogger {
@@ -70,6 +74,7 @@ impl DataLogger {
             stream: None,
             stream_path: None,
             rows_written: 0,
+            malformed: 0,
         }
     }
 
@@ -153,6 +158,24 @@ impl DataLogger {
     /// Record a sample
     pub fn record(&mut self, values: Vec<f64>) {
         if !self.is_recording {
+            return;
+        }
+
+        // Guard the append point against a torn/misaligned read. A row with the
+        // wrong column count would either desync every column after it (stream)
+        // or store a short/over-long entry (buffer); dropping it and counting
+        // is safer than persisting corrupt data. Empty `channels` = no schema
+        // to check against, so accept (keeps existing behaviour/tests).
+        if !self.channels.is_empty() && values.len() != self.channels.len() {
+            if self.malformed == 0 {
+                tracing::warn!(
+                    "Data log row had {} values but {} channels; dropping it (and any \
+                     further mismatched rows). Likely a partial serial read.",
+                    values.len(),
+                    self.channels.len()
+                );
+            }
+            self.malformed += 1;
             return;
         }
 
@@ -243,6 +266,11 @@ impl DataLogger {
         self.discarded
     }
 
+    /// Rows dropped for having the wrong column count (a torn serial read).
+    pub fn malformed_count(&self) -> u64 {
+        self.malformed
+    }
+
     /// Get the number of recorded entries
     pub fn entry_count(&self) -> usize {
         self.buffer.len()
@@ -296,6 +324,22 @@ mod tests {
 
         logger.stop();
         assert!(!logger.is_recording());
+    }
+
+    #[test]
+    fn test_malformed_row_is_dropped_not_stored() {
+        let mut logger = DataLogger::new(vec!["rpm".into(), "map".into()]);
+        logger.start();
+
+        logger.record(vec![1000.0, 100.0]); // ok
+        logger.record(vec![1000.0]); // short — torn read
+        logger.record(vec![1.0, 2.0, 3.0]); // long — misaligned
+
+        // Only the well-formed row is stored; the two mismatched rows are
+        // dropped and counted (the sample-rate limiter is downstream of the
+        // guard, so it never even sees them).
+        assert_eq!(logger.entry_count(), 1);
+        assert_eq!(logger.malformed_count(), 2);
     }
 
     #[test]

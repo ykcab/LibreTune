@@ -23,6 +23,14 @@ pub async fn connect_to_ecu(
 ) -> Result<ConnectResult, String> {
     use libretune_core::protocol::ConnectionType;
 
+    // Held until the new connection is installed, so a demo-mode transition
+    // cannot slip its simulator in between the handshake and the store — or
+    // tear this connection down having already decided demo mode was off.
+    let _transition = state.connection_transition.lock().await;
+    let generation = state
+        .connection_generation
+        .load(std::sync::atomic::Ordering::SeqCst);
+
     let conn_type = match connection_type.as_deref() {
         Some(t) if t.eq_ignore_ascii_case("tcp") => ConnectionType::Tcp,
         _ => ConnectionType::Serial,
@@ -62,6 +70,32 @@ pub async fn connect_to_ecu(
         config.tcp_port,
         config.timeout_ms
     );
+
+    // Re-read the project INI before reading protocol settings, so an on-disk
+    // edit (the classic one: uncommenting `messageEnvelopeFormat` to move a
+    // Speeduino onto the CRC protocol) is picked up on reconnect instead of
+    // only after a full app restart. This reuses the load_ini path verbatim —
+    // it rebuilds the definition and every dependent cache exactly as a fresh
+    // load does — so there is no duplicated parse/cache logic here. A bad
+    // on-disk edit just logs and leaves the previously cached definition in
+    // place rather than blocking the connection.
+    //
+    // ponytail: reloads the whole INI on every connect. If that ever shows up
+    // on a profile, gate it on the file's mtime; it is sub-ms next to the
+    // multi-second connect budget today.
+    if state.connection_factory.lock().await.is_none()
+        && state.current_project.lock().await.is_some()
+    {
+        if let Some(ini_path) = load_settings(&app).last_ini_path.clone() {
+            if let Err(e) =
+                crate::commands::load_ini::load_ini(app.clone(), state.clone(), ini_path).await
+            {
+                eprintln!(
+                    "[WARN] connect_to_ecu: INI re-read failed ({e}); using cached definition"
+                );
+            }
+        }
+    }
 
     // Get protocol settings from loaded definition if available
     let def_guard = state.definition.lock().await;
@@ -216,6 +250,18 @@ pub async fn connect_to_ecu(
             };
 
             let mut guard = state.connection.lock().await;
+            // A disconnect that ran past the transition budget while we were
+            // handshaking wins: installing now would leave the ECU connected
+            // after the user's disconnect reported success.
+            if state
+                .connection_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != generation
+            {
+                let mut conn = conn;
+                conn.disconnect();
+                return Err("Connection was cancelled by a disconnect".to_string());
+            }
             *guard = Some(conn);
 
             // Start periodic metrics emission task

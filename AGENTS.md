@@ -161,12 +161,18 @@ The project aims to provide professional ECU tuning workflow and functionality w
 - Frontend: Template picker in NewProjectDialog with 3-mode flow (select template → configure or scratch)
 
 ### 12. AI Assistant (Bring-Your-Own-LLM)
-- Core: `crates/libretune-core/src/agent/` (orchestrator, tools, context, summarize, safety, tiers)
+- Core: `crates/libretune-core/src/agent/` (orchestrator, tools, context, summarize, safety, tiers, apply)
 - LLM providers: `crates/libretune-core/src/llm/` (Provider trait + native OpenAI/Anthropic/Google impls over reqwest)
 - Backend commands: `crates/libretune-app/src-tauri/src/commands/agent.rs` (agent_status, agent_send_message, agent_apply_proposals)
 - Frontend: `crates/libretune-app/src/components/agent/` (AgentSidePanel, ChatPanel, ProposalQueue)
 - Features: docked side panel (resizable, pop-out-able), multi-turn read loop (ReadToolExecutor), per-item review queue with safety-tier badges, authority clamping, INI validation
-- Safety: the model only ever PROPOSES; nothing burns automatically. Gated by an "at your own risk" enablement (RiskAcknowledgement shared primitive). Settings reset risk-ack on provider/key change.
+- Read tools (8): list_tables, read_table, read_constant, list_features, summarize_tune_context, tune_health_check, get_realtime_snapshot, query_datalog — all live-wired in `LiveReadExecutor` (agent.rs)
+- Apply path (Aug 2026): `agent_apply_proposals` VALIDATES then APPLIES — table edits coalesced per table through `update_table_z_values_internal`, constants through `update_constant_internal`; pure grid math in core `agent::apply` (`apply_table_actions_to_grid`). Never burns; ECU RAM write only (same as manual edits).
+- Capability tiers: `ai_capability_tier` read ⊂ tune ⊂ config — filters the tool catalogue AND hard-rejects out-of-tier calls in `map_tool_call` (`CapabilityTier` in core tools.rs)
+- Trust & traceability: pre-apply restore point; git commit per `auto_commit_on_save` ("always" saves+commits, "ask" returns a prepared message); API key in the OS keychain (`ai_keychain.rs`, graceful plaintext fallback)
+- Proposals: pin-conflict warnings (post-processed in the command layer), batch drift warnings (>10% mean shift per table), unit-aware read results (per-request `unit_prefs`)
+- UX: `agent:progress` events (TurnObserver in core) drive live "reading X…" activity; "Ask AI" toolbar button on table editors (`agent:ask` event opens the panel with context + prefilled input); per-chat token counter; provider presets incl. local Ollama/LM Studio
+- Safety: the model only ever PROPOSES; nothing burns automatically. Gated by an "at your own risk" enablement (RiskAcknowledgement shared primitive). Settings reset risk-ack on provider/key change. `SendCommand`/`ExecuteLuaScript` remain unreachable by the model.
 - Gap closures motivated by this feature: extended validate_action_set (min/max, cell bounds, DataType range, bits enum); TableRole enum + infer_table_roles(); summarize_tune_context(); constant safety tiering.
 
 ## Development Commands
@@ -301,6 +307,38 @@ Based on analysis of common ECU tuning software patterns:
 
 Detailed session-by-session history has moved to [CHANGELOG.md](CHANGELOG.md).
 What follows is a high-level pointer to the most recent cleanup pass.
+
+### AutoTune second-table picker & table trace line (Aug 2026)
+
+- **Numbered-sibling role inference** — `EcuDefinition::infer_table_roles`
+  extends Ve/AfrTarget roles to digit-siblings of the `[VeAnalyze]`-labelled
+  table (`veTable1Tbl` → `veTable2Tbl`), so dual-fuel Speeduino tunes can pick
+  the second VE table in AutoTune again. The fuel-tune guard
+  (`fuel_tune_refusal`) is unchanged and stays authoritative for both the
+  picker list and `start_autotune`. See `is_digit_sibling` in
+  `crates/libretune-core/src/ini/mod.rs` (issue #132 follow-up).
+- **Trace line in the tab-view table editor** — `tuner-ui/TableEditor.tsx` now
+  draws the SVG trail overlay (measured grid geometry, `yAxisBottom`-aware,
+  layered under sticky headers) that the dialog-embedded `TableGrid` always
+  had; the dialog trail was bumped to 3 px stroke / 4 px dots with a
+  current-position halo.
+- **AutoTune current-cell highlight wired** — derived live from the table's
+  axis channels via `useChannels` (was dead state); tab-view tables fall back
+  to `rpm`/`map` when the INI declares no axis channels; the secondary-table
+  selector shows a "No other fuel tables" placeholder instead of echoing the
+  primary.
+- See the `2026-08-28` CHANGELOG block for details.
+
+### AI Assistant enhancement pass (Aug 2026)
+
+Four phases; see the `2026-08-26` "AI Assistant" CHANGELOG block for the
+full list. Headline: the apply path was a silent no-op (validate + flag
+modified, never write) and now really applies through the internal write
+paths; the two analysis read tools are live; the capability tier is
+enforced in core; proposals get pin-conflict + batch-drift warnings,
+applies get a pre-apply restore point and git traceability; the API key
+moved to the OS keychain; plus realtime/datalog read tools, live progress
+events, an "Ask AI" table button, token counter, and provider presets.
 
 ### Dialog fidelity, `.table` IO, pin gating & AutoTune sampling (Aug 2026)
 

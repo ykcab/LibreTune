@@ -186,6 +186,8 @@ function AppContent() {
       .catch(() => {});
   }, [newProjectDialogOpen, connectEcuWizardOpen]);
   const [baseMapDialogOpen, setBaseMapDialogOpen] = useState(false);
+  const [afrCalibrationOpen, setAfrCalibrationOpen] = useState(false);
+  const [tempCalibrationOpen, setTempCalibrationOpen] = useState(false);
 
   // Connection state
   const [status, setStatus] = useState<ConnectionStatus>({
@@ -1454,6 +1456,14 @@ function AppContent() {
         case "std_separator":
           // Separator - no action needed
           break;
+        case "std_ms2geno2":
+          // "Calibrate AFR Sensor" — Speeduino O2 calibration space
+          setAfrCalibrationOpen(true);
+          break;
+        case "std_ms2gentherm":
+          // "Calibrate Temperature Sensors" — CLT/IAT thermistor curves
+          setTempCalibrationOpen(true);
+          break;
         default:
           console.log("Unknown std target:", target);
           // Try to open as a dialog as fallback
@@ -1561,17 +1571,21 @@ function AppContent() {
 
   // Listen for the agent pop-out window's "dock back" signal: re-show the
   // docked side panel. (Mirrors the tab:dock handling in useTabPopout.)
+  // `agent:ask` (the table editors' "Ask AI" button) also opens the panel;
+  // the panel itself listens for the payload to pre-fill context.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenAsk: (() => void) | undefined;
     (async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
         unlisten = await listen('agent:dock', () => setAgentPanelVisible(true));
+        unlistenAsk = await listen('agent:ask', () => setAgentPanelVisible(true));
       } catch {
         // non-fatal
       }
     })();
-    return () => { unlisten?.(); };
+    return () => { unlisten?.(); unlistenAsk?.(); };
   }, []);
 
   // Toolbar items
@@ -1854,6 +1868,10 @@ function AppContent() {
         baseMapDialogOpen={baseMapDialogOpen}
         setBaseMapDialogOpen={setBaseMapDialogOpen}
         handleBaseMapApply={handleBaseMapApply}
+        afrCalibrationOpen={afrCalibrationOpen}
+        setAfrCalibrationOpen={setAfrCalibrationOpen}
+        tempCalibrationOpen={tempCalibrationOpen}
+        setTempCalibrationOpen={setTempCalibrationOpen}
         tuneComparisonOpen={tuneComparisonOpen}
         setTuneComparisonOpen={setTuneComparisonOpen}
         checkStatus={checkStatus}

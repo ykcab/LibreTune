@@ -147,6 +147,10 @@ use commands::restore_points::{
     create_restore_point, delete_restore_point, list_restore_points, load_restore_point,
 };
 use commands::save_tune::{save_tune, save_tune_as};
+use commands::sensor_calibration::{
+    build_thermistor_curve, get_temperature_calibration_bins, list_calibration_presets,
+    preview_afr_calibration, write_afr_calibration, write_temperature_calibration,
+};
 use commands::settings::{
     get_settings, update_heatmap_custom_stops, update_setting, update_settings,
 };
@@ -210,6 +214,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             connection: Mutex::new(None),
+            connection_transition: Mutex::new(()),
+            connection_generation: std::sync::atomic::AtomicU64::new(0),
             definition: Mutex::new(None),
             autotune_state: Mutex::new(AutoTuneState::new()),
             autotune_secondary_state: Mutex::new(AutoTuneState::new()),
@@ -379,6 +385,13 @@ pub fn run() {
             burn_to_ecu,
             check_pin_conflicts,
             execute_controller_command,
+            // Sensor calibration (Speeduino calibration space)
+            get_temperature_calibration_bins,
+            list_calibration_presets,
+            preview_afr_calibration,
+            build_thermistor_curve,
+            write_temperature_calibration,
+            write_afr_calibration,
             get_firmware_flasher_info,
             get_firmware_update_guidance,
             suggest_firmware_companion,

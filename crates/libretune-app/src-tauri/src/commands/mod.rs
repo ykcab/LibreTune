@@ -7,6 +7,7 @@
 pub mod adaptive_timing;
 pub mod afr_delay_test;
 pub mod agent;
+pub mod ai_keychain;
 pub mod analyse_log;
 pub mod analyze_filters;
 pub mod annotations;
@@ -63,6 +64,7 @@ pub mod realtime_stop;
 pub mod realtime_stream;
 pub mod restore_points;
 pub mod save_tune;
+pub mod sensor_calibration;
 pub mod settings;
 pub mod signature_helpers;
 pub mod start_autotune;

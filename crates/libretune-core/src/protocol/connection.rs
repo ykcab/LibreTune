@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
+use super::calibration::{self, CalibrationTable};
 use super::stream::{CommunicationChannel, SerialChannel, TcpChannel};
 use super::{
     commands::{BurnParams, ReadMemoryParams, WriteMemoryParams},
@@ -676,9 +677,34 @@ impl Connection {
         // Small additional delay after clearing
         std::thread::sleep(Duration::from_millis(20));
 
+        self.finish_connect(channel)
+    }
+
+    /// Connect over a channel that is already open.
+    ///
+    /// Demo mode uses this to reach the in-process simulator through the very
+    /// same handshake, page and realtime paths as real hardware, so the demo
+    /// exercises the protocol rather than side-stepping it. Skips the
+    /// port-open settling delay, which exists only for physical bootloaders.
+    pub fn connect_with_channel(
+        &mut self,
+        channel: Box<dyn CommunicationChannel>,
+    ) -> Result<(), ProtocolError> {
+        if self.state == ConnectionState::Connected {
+            return Err(ProtocolError::AlreadyConnected);
+        }
+        self.state = ConnectionState::Connecting;
+        self.finish_connect(channel)
+    }
+
+    /// Adopt `channel` and handshake over it. Shared tail of [`Self::connect`]
+    /// and [`Self::connect_with_channel`].
+    fn finish_connect(
+        &mut self,
+        channel: Box<dyn CommunicationChannel>,
+    ) -> Result<(), ProtocolError> {
         self.channel = Some(channel);
 
-        // Perform handshake
         match self.handshake() {
             Ok(signature) => {
                 self.signature = Some(signature);
@@ -1175,6 +1201,10 @@ impl Connection {
 
         // Send packet and wait for transmission
         let bytes = packet.to_bytes_ordered(self.envelope_order);
+        // Trace the actual bytes (capped) so a lost capture can be reconstructed
+        // from the session log — the framed path only counted bytes before, so
+        // tooth/composite payloads left no trace. Legacy path already does this.
+        tracing::trace!("send_packet: tx {} bytes: {:02x?}", bytes.len(), &bytes[..bytes.len().min(64)]);
         // Use write_and_wait which avoids the blocking tcdrain issue
         self.tx_bytes = self.tx_bytes.saturating_add(bytes.len() as u64);
         self.tx_packets = self.tx_packets.saturating_add(1);
@@ -1302,6 +1332,9 @@ impl Connection {
         // Track received bytes/packets for metrics display
         self.rx_bytes = self.rx_bytes.saturating_add(full_packet.len() as u64);
         self.rx_packets = self.rx_packets.saturating_add(1);
+        // Trace the raw response (capped) before CRC parsing, so it survives in
+        // the log even when CRC validation subsequently fails.
+        tracing::trace!("send_packet: rx {} bytes: {:02x?}", full_packet.len(), &full_packet[..full_packet.len().min(64)]);
 
         // If CRC parsing fails, the full packet was already consumed from the TCP
         // stream (exact bytes read = 2 + length + 4), so the stream IS aligned.
@@ -1872,7 +1905,90 @@ impl Connection {
             // would only double the cost of every bulk page write.
         }
 
+        // Confirm the ECU holds what was just sent. A bulk page write had no
+        // verification of any kind: write_memory is fire-and-forget on legacy,
+        // and write_memory_verified deliberately returns early on the modern
+        // protocol because each frame is acknowledged - but a frame ack says
+        // the bytes arrived, not that the page assembled into what was meant.
+        if let Err(e) = self.verify_page_crc(page, data) {
+            match e {
+                ProtocolError::PageCrcMismatch { .. } => return Err(e),
+                // No declared command, or the ECU would not answer: the write
+                // itself succeeded, so warn rather than failing it. Reporting a
+                // completed write as failed would be its own kind of wrong.
+                other => tracing::warn!(
+                    "write_page: page {} could not be CRC-verified: {}",
+                    page,
+                    other
+                ),
+            }
+        }
+
         Ok(())
+    }
+
+    /// Ask the ECU for a page's CRC32 and compare it with `expected`.
+    ///
+    /// The INI declares the command per page (`crc32CheckCommand = "d%2i"` on
+    /// Speeduino) and the firmware implements it, returning a return code
+    /// followed by a big-endian CRC32 of the page as the ECU currently holds
+    /// it. Nothing called it: `build_crc_command` had no callers anywhere in
+    /// the tree, so a bulk write went out entirely unchecked.
+    ///
+    /// One three-byte command per page against re-reading the page in full -
+    /// 2,592 bytes across fifteen pages on this ECU.
+    ///
+    /// Verified against a Speeduino 202501: the value it returns is a standard
+    /// reflected CRC-32 of exactly the bytes `read_page` gives back, matching
+    /// on every page tested.
+    pub fn verify_page_crc(&mut self, page: u8, expected: &[u8]) -> Result<(), ProtocolError> {
+        let Some(format) = self
+            .protocol_settings
+            .as_ref()
+            .and_then(|p| p.crc32_check_commands.get(page as usize).cloned())
+            .filter(|f| !f.is_empty())
+        else {
+            return Err(ProtocolError::ProtocolError(format!(
+                "no crc32CheckCommand declared for page {page}"
+            )));
+        };
+
+        // Take the identifier the same way the read and write paths do rather
+        // than deriving it. `get_page_identifier` decodes the INI's declared
+        // bytes little-endian and `build_command` re-encodes them the same way,
+        // so the two inversions cancel and the bytes leave in the order the
+        // firmware expects. Computing `page + 1` here instead produced
+        // `[64, 01, 00]` where the ECU wanted `[64, 00, 01]`, and it answered
+        // by not answering at all.
+        let page_id = self.get_page_identifier(page);
+        let cmd =
+            self.command_builder
+                .build_crc_command(&format, page_id, 0, expected.len() as u16)?;
+
+        self.clear_rx_buffer();
+        let reply = self.send_raw_bytes_with_response(&cmd, self.get_effective_timeout())?;
+        if reply.len() < 4 {
+            return Err(ProtocolError::ProtocolError(format!(
+                "page {page} CRC reply was {} bytes, expected at least 4",
+                reply.len()
+            )));
+        }
+        // Big-endian, like every other multi-byte value this firmware writes.
+        let reported = u32::from_be_bytes([reply[0], reply[1], reply[2], reply[3]]);
+
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(expected);
+        let local = hasher.finalize();
+
+        if reported == local {
+            Ok(())
+        } else {
+            Err(ProtocolError::PageCrcMismatch {
+                page,
+                expected: local,
+                actual: reported,
+            })
+        }
     }
 
     /// Write memory to ECU using INI-defined command format.
@@ -2192,6 +2308,212 @@ impl Connection {
     /// waiting in RAM that a power cycle would discard.
     pub fn dirty_pages(&self) -> Vec<u8> {
         self.dirty_pages.iter().copied().collect()
+    }
+
+    /// Write one Speeduino temperature calibration curve (CLT or IAT).
+    ///
+    /// `temps_c` are the sensor temperatures (°C) at the 32 ADC bins the
+    /// firmware assigns — sample your sensor curve at
+    /// [`calibration::temperature_calibration_bins`]`(self.is_modern_protocol())`.
+    ///
+    /// See the [`calibration`] module docs for the verified wire format.
+    pub fn write_temperature_calibration(
+        &mut self,
+        table: CalibrationTable,
+        temps_c: &[f64; calibration::TEMP_CALIBRATION_POINTS],
+    ) -> Result<(), ProtocolError> {
+        if table == CalibrationTable::O2 {
+            return Err(ProtocolError::ProtocolError(
+                "O2 table takes AFR data; use write_o2_calibration".to_string(),
+            ));
+        }
+        let wire = calibration::encode_temperature_calibration(temps_c);
+        self.write_calibration_wire(table, &wire)
+    }
+
+    /// Write the Speeduino O2/AFR sensor calibration curve.
+    ///
+    /// `afr` holds the AFR reading for each of the 1024 10-bit ADC counts
+    /// (0 V .. 5 V). Values are stored as AFR × 10 in one byte, so the
+    /// usable range is 0.0–25.5 AFR.
+    pub fn write_o2_calibration(
+        &mut self,
+        afr: &[f64; calibration::O2_CALIBRATION_WIRE_BYTES],
+    ) -> Result<(), ProtocolError> {
+        let wire = calibration::encode_o2_calibration(afr);
+        self.write_calibration_wire(CalibrationTable::O2, &wire)
+    }
+
+    /// Read the CRC32 the ECU stored for a calibration page (`k` command).
+    ///
+    /// Modern protocol only — the legacy command set has no calibration CRC
+    /// (or any calibration read-back at all), so legacy writes are
+    /// necessarily unverified, exactly as they are in TunerStudio.
+    pub fn read_calibration_crc(&mut self, table: CalibrationTable) -> Result<u32, ProtocolError> {
+        if !self.use_modern_protocol {
+            return Err(ProtocolError::ProtocolError(
+                "calibration CRC ('k') requires the CRC protocol; the legacy \
+                 command set has no calibration read-back"
+                    .to_string(),
+            ));
+        }
+        let payload = vec![b'k', 0x00, table.id()];
+        let response = self.send_packet(Packet::new(payload))?;
+        let data = &response.payload;
+        if data.len() < 5 || data[0] != 0 {
+            return Err(ProtocolError::ProtocolError(format!(
+                "calibration CRC read failed, response: {:02x?}",
+                data
+            )));
+        }
+        // Firmware sends reverse_bytes(crc) → big-endian on the wire.
+        Ok(u32::from_be_bytes([data[1], data[2], data[3], data[4]]))
+    }
+
+    /// Send pre-encoded calibration bytes to the ECU over whichever protocol
+    /// path is active, and verify where the protocol allows it.
+    fn write_calibration_wire(
+        &mut self,
+        table: CalibrationTable,
+        wire: &[u8],
+    ) -> Result<(), ProtocolError> {
+        // The `t` calibration command is Speeduino-specific (verified against
+        // firmware tag 202501). Refuse on ECUs known to speak something else
+        // rather than corrupt their command stream.
+        match self.ecu_type {
+            EcuType::Speeduino | EcuType::Unknown => {}
+            other => {
+                return Err(ProtocolError::ProtocolError(format!(
+                    "sensor calibration write is only implemented for \
+                     Speeduino (connected ECU type: {:?})",
+                    other
+                )));
+            }
+        }
+
+        let expected_len = match table {
+            CalibrationTable::O2 => calibration::O2_CALIBRATION_WIRE_BYTES,
+            _ => calibration::TEMP_CALIBRATION_WIRE_BYTES,
+        };
+        if wire.len() != expected_len {
+            return Err(ProtocolError::ProtocolError(format!(
+                "calibration table {:?} takes {} bytes, got {}",
+                table,
+                expected_len,
+                wire.len()
+            )));
+        }
+
+        if self.use_modern_protocol {
+            self.write_calibration_modern(table, wire)?;
+            // The modern path can verify: compare the ECU's stored CRC with
+            // the CRC of exactly the bytes we sent.
+            let expected = calibration::calibration_crc32(wire);
+            let stored = self.read_calibration_crc(table)?;
+            if stored != expected {
+                return Err(ProtocolError::ProtocolError(format!(
+                    "calibration verify failed for {:?}: ECU stored CRC \
+                     {:08x}, expected {:08x}",
+                    table, stored, expected
+                )));
+            }
+            Ok(())
+        } else {
+            self.write_calibration_legacy(table, wire)
+        }
+    }
+
+    /// Legacy path: `'t'`, table id, raw data stream. No ACK exists, so the
+    /// only failure modes visible here are serial-layer errors.
+    fn write_calibration_legacy(
+        &mut self,
+        table: CalibrationTable,
+        wire: &[u8],
+    ) -> Result<(), ProtocolError> {
+        tracing::info!(
+            "write_calibration_legacy: table {:?} ({} bytes)",
+            table,
+            wire.len()
+        );
+        // The legacy path has no ACK and no read-back, so this is the one
+        // calibration write whose success we cannot confirm. On firmware
+        // newer than 202501 it is worse than unverified: legacy comms were
+        // made read-only, and the firmware consumes the command and the whole
+        // data stream while writing nothing at all, reporting no error. There
+        // is nothing on the wire to distinguish that from success, so say so
+        // rather than let the UI report a clean write.
+        tracing::warn!(
+            "calibration written over the legacy protocol: the ECU sends no \
+             acknowledgement and offers no read-back, so this write is \
+             unverified. Firmware newer than 202501 ignores legacy \
+             calibration writes entirely. Connect with the CRC protocol to \
+             get a verified write."
+        );
+        self.send_raw_command_no_response(&[b't', table.id()])?;
+
+        // Pace the data out in small chunks. The firmware blocks inside
+        // receiveCalibration() actively draining, but the temperature path
+        // performs an EEPROM write per value pair *while receiving*, and the
+        // Mega's RX ring is only 257 bytes — the same buffer whose overflow
+        // corrupted VE tables via oversized `M` frames. Chunking + the
+        // inter-write delay keeps the ring comfortably below capacity.
+        let inter_chunk_ms = self.get_effective_min_wait().max(5);
+        for chunk in wire.chunks(128) {
+            self.send_raw_command_no_response(chunk)?;
+            std::thread::sleep(Duration::from_millis(inter_chunk_ms));
+        }
+
+        // writeCalibration() burns the table to EEPROM with no completion
+        // signal; give it time before the caller sends anything else.
+        // (EEPROM update of a full table is a few hundred ms on a Mega2560.)
+        let settle_ms = self
+            .protocol_settings
+            .as_ref()
+            .map(|p| p.page_activation_delay as u64)
+            .unwrap_or(0)
+            .max(500);
+        std::thread::sleep(Duration::from_millis(settle_ms));
+        Ok(())
+    }
+
+    /// Modern path: one `'t'` envelope per chunk, each ACKed. Header fields
+    /// are big-endian (unlike `'M'` — see the [`calibration`] module docs).
+    fn write_calibration_modern(
+        &mut self,
+        table: CalibrationTable,
+        wire: &[u8],
+    ) -> Result<(), ProtocolError> {
+        let chunk_size = match table {
+            // EEPROM burn triggers when offset reaches 1023, so the O2 table
+            // must arrive as 4 × 256.
+            CalibrationTable::O2 => calibration::O2_CALIBRATION_CHUNK,
+            // Any length other than 64 is rejected with RANGE_ERR.
+            _ => calibration::TEMP_CALIBRATION_WIRE_BYTES,
+        };
+
+        for (i, chunk) in wire.chunks(chunk_size).enumerate() {
+            let offset = i * chunk_size;
+            let mut payload = Vec::with_capacity(7 + chunk.len());
+            payload.push(b't');
+            payload.push(0x00); // canId slot; ignored by the firmware
+            payload.push(table.id());
+            payload.extend_from_slice(&(offset as u16).to_be_bytes());
+            payload.extend_from_slice(&(chunk.len() as u16).to_be_bytes());
+            payload.extend_from_slice(chunk);
+
+            let response = self.send_packet(Packet::new(payload))?;
+            let status = response.payload.first().copied().unwrap_or(0xFF);
+            if status != 0 {
+                let code = super::ResponseCode::from_byte(status);
+                return Err(ProtocolError::ProtocolError(format!(
+                    "calibration chunk at offset {} rejected: 0x{:02x} ({})",
+                    offset,
+                    status,
+                    code.message()
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Send raw bytes to ECU (for controller commands)
@@ -3564,8 +3886,6 @@ mod tests {
 
 #[cfg(test)]
 mod burn_page_tests {
-    use super::*;
-
     /// Speeduino's INI declares one `burnCommand` per page, each taking the page
     /// number. A burn that only ever sends page 0 therefore commits the main
     /// config page and leaves every table in RAM - where it reads back correctly
@@ -3613,6 +3933,63 @@ mod burn_page_tests {
         assert_eq!(
             dirty.iter().copied().collect::<Vec<_>>(),
             vec![0, 2, 3, 7, 15]
+        );
+    }
+}
+
+#[cfg(test)]
+mod page_crc_tests {
+    use super::*;
+
+    /// The ECU's `d` command returns a standard reflected CRC-32 of the page
+    /// bytes. Confirmed against a Speeduino 202501 on every page tested: the
+    /// value it reports equals a CRC of exactly what `read_page` gives back.
+    #[test]
+    fn the_local_crc_matches_the_convention_the_ecu_uses() {
+        // Values cross-checked against the firmware's calculatePageCRC32 on a
+        // real ECU, and against zlib.
+        let mut h = crc32fast::Hasher::new();
+        h.update(b"123456789");
+        assert_eq!(
+            h.finalize(),
+            0xCBF4_3926,
+            "not the standard CRC-32 check value"
+        );
+    }
+
+    /// A CRC catches what a per-frame acknowledgement cannot: every frame of a
+    /// chunked page write can be acked while the page still assembles into
+    /// something other than what was sent.
+    #[test]
+    fn one_flipped_bit_changes_the_crc() {
+        let page: Vec<u8> = (0..288u16).map(|i| (i % 251) as u8).collect();
+        let mut corrupt = page.clone();
+        corrupt[144] ^= 0x01;
+
+        let crc = |d: &[u8]| {
+            let mut h = crc32fast::Hasher::new();
+            h.update(d);
+            h.finalize()
+        };
+        assert_ne!(
+            crc(&page),
+            crc(&corrupt),
+            "a single bit flip must not collide"
+        );
+    }
+
+    /// A page with no declared command reports that, rather than silently
+    /// passing - "not checked" must never read as "checked and fine".
+    #[test]
+    fn an_undeclared_page_is_reported_not_skipped() {
+        let mut conn = Connection::new(ConnectionConfig::default());
+        let err = conn
+            .verify_page_crc(3, &[0u8; 8])
+            .expect_err("no protocol settings means no declared command");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("crc32CheckCommand") && msg.contains('3'),
+            "error should name the missing command and the page: {msg}"
         );
     }
 }

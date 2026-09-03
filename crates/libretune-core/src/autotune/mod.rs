@@ -1767,59 +1767,59 @@ mod tests {
     /// Captures `tracing` event messages into a shared Vec so a test can assert
     /// that a specific diagnostic actually fired (the whole point of D9: these
     /// drop paths used to be silent).
-    #[derive(Clone, Default)]
-    struct LogCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
-    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogCapture {
-        fn on_event(&self, e: &tracing::Event<'_>, _c: tracing_subscriber::layer::Context<'_, S>) {
-            struct V(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
-            impl tracing::field::Visit for V {
-                fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
-                    if f.name() == "message" {
-                        self.0.lock().unwrap().push(format!("{v:?}"));
-                    }
-                }
-            }
-            e.record(&mut V(self.0.clone()));
-        }
-    }
-
+    /// A sample the filters throw out must be visible afterwards, not vanish.
+    ///
+    /// Asserted on `rejection_counts` rather than on the `tracing` event the
+    /// same code emits. That is deliberate: `with_default` installs a
+    /// thread-local subscriber but mutates process-global tracing state to do
+    /// it, so in a parallel test binary the capture came back empty about one
+    /// run in eight - and the failure was never reproducible on its own. Three
+    /// attempts to stabilise it (pinning the level filter, rebuilding the
+    /// callsite interest cache before and then inside the dispatcher scope) all
+    /// looked fixed over twenty runs and still failed over forty-five.
+    ///
+    /// `rejection_counts` is the better assertion regardless: it is the same
+    /// information, it is what `autotune_misc` actually surfaces to the UI's
+    /// rejection indicator, and it is deterministic. The log line remains in
+    /// the code for the human reading a session log.
     #[test]
-    fn filter_rejected_sample_is_logged_not_silent() {
-        use tracing_subscriber::layer::SubscriberExt;
-        let cap = LogCapture::default();
-        let logs = cap.0.clone();
-        let sub = tracing_subscriber::registry().with(cap);
-        tracing::subscriber::with_default(sub, || {
-            let mut st = AutoTuneState::new();
-            st.start();
-            let s = AutoTuneSettings::default();
-            let f = AutoTuneFilters::default(); // min_clt = 160
-            let a = AutoTuneAuthorityLimits::default();
-            // clt=20 is far below min_clt: the sample must be rejected AND
-            // logged (before D9 this path returned silently). The throttle
-            // counts per session, so a fresh state logs its first rejection and
-            // one sample is enough. It used to count per process, which made
-            // this depend on what every other test in the binary had already
-            // rejected.
-            let p = VEDataPoint {
-                rpm: 2000.0,
-                load: 50.0,
-                afr: 14.0,
-                ve: 50.0,
-                clt: 20.0,
-                tps: 5.0,
-                tps_rate: 0.0,
-                timestamp_ms: 1000,
-                ..Default::default()
-            };
-            st.add_data_point(p, &[1000.0, 2000.0], &[40.0, 80.0], &s, &f, &a);
-        });
+    fn filter_rejected_sample_is_counted_not_silent() {
+        let mut st = AutoTuneState::new();
+        st.start();
+        let s = AutoTuneSettings::default();
+        let f = AutoTuneFilters::default(); // min_clt = 160
+        let a = AutoTuneAuthorityLimits::default();
+
         assert!(
-            logs.lock()
-                .unwrap()
-                .iter()
-                .any(|m| m.contains("rejected by filters")),
-            "a filtered-out sample must emit a diagnostic, not drop silently"
+            st.rejection_counts().is_empty(),
+            "a fresh session has rejected nothing"
+        );
+
+        // clt = 20 is far below min_clt, so this must be rejected AND recorded.
+        let p = VEDataPoint {
+            rpm: 2000.0,
+            load: 50.0,
+            afr: 14.0,
+            ve: 50.0,
+            clt: 20.0,
+            tps: 5.0,
+            tps_rate: 0.0,
+            timestamp_ms: 1000,
+            ..Default::default()
+        };
+        st.add_data_point(p, &[1000.0, 2000.0], &[40.0, 80.0], &s, &f, &a);
+
+        let counts = st.rejection_counts();
+        assert_eq!(
+            counts.len(),
+            1,
+            "one rejected sample should record exactly one reason, got {counts:?}"
+        );
+        let (reason, n) = counts[0];
+        assert_eq!(n, 1);
+        assert!(
+            reason.contains("clt"),
+            "the reason must name the filter that fired, got {reason:?}"
         );
     }
 
@@ -2214,6 +2214,43 @@ mod fuel_tunable_tests {
             assert!(fuel_tune_refusal(&def, &name).is_none());
         }
     }
+
+    /// The hand-stamped test above cannot catch an inference gap: it never
+    /// asks how the roles got there. This one parses a dual-table INI, so the
+    /// whole chain — parser, `[VeAnalyze]` config, `infer_table_roles`,
+    /// guard — runs as it does in the app. Before sibling inference, the
+    /// second VE table came out `Other` and vanished from the pickers
+    /// (issue #132: "the drop-down for selecting the second table isn't
+    /// opening" — an empty dropdown looks exactly like a broken one).
+    #[test]
+    fn a_parsed_dual_table_ini_offers_both_ve_tables() {
+        let ini = "[TableEditor]
+table = veTable1Tbl, veTable1, \"VE Table 1\", 2
+    xBins = rpmBins1, rpm
+    yBins = fuelLoadBins1, fuelLoad
+    zBins = veTable1
+table = veTable2Tbl, veTable2, \"VE Table 2\", 2
+    xBins = rpmBins2, rpm
+    yBins = fuelLoadBins2, fuelLoad
+    zBins = veTable2
+table = afrTable1Tbl, afrTable1, \"AFR Table 1\", 2
+    xBins = rpmBins1, rpm
+    yBins = fuelLoadBins1, fuelLoad
+    zBins = afrTable1
+table = sparkTbl, spark, \"Spark Table\", 2
+    xBins = rpmBins1, rpm
+    yBins = ignLoadBins, ignLoad
+    zBins = spark
+[VeAnalyze]
+veAnalyzeMap = veTable1Tbl, afrTable1Tbl, afr, egoCorrection
+";
+        let def = EcuDefinition::from_str(ini).expect("parses");
+        assert_eq!(
+            fuel_tunable_tables(&def),
+            vec!["veTable1Tbl", "veTable2Tbl"],
+            "both VE tables must be offered; spark and AFR tables must not"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2403,7 +2440,6 @@ mod hit_weighting_tests {
     fn the_weighted_mean_reduces_to_the_plain_mean_under_uniform() {
         let samples: [f64; 4] = [90.0, 100.0, 110.0, 95.0];
         let (mut cma, mut wtot) = (samples[0], 0.0);
-        cma = samples[0];
         for (i, x) in samples.iter().enumerate() {
             let w = 1.0;
             wtot += w;
