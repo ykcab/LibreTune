@@ -288,12 +288,18 @@ export function FirmwareUpdateDialog({
               </div>
             </div>
 
-            {!isConnected && (
+            {!isUpdating && !isConnected && (
               <div className="firmware-update-warning">
                 Connect to the ECU before updating.
               </div>
             )}
           </>
+        )}
+
+        {isUpdating && (
+          <div className="firmware-update-warning">
+            DO NOT disconnect the ECU, firmware update in progress.
+          </div>
         )}
 
         {toolMissing && (
