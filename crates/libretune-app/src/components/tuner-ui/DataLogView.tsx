@@ -353,7 +353,6 @@ export const DataLogView: React.FC = () => {
         // not connected / no logger yet
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
 
