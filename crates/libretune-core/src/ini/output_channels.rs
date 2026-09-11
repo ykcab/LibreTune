@@ -410,7 +410,8 @@ mod tests {
         let ch = parse_output_channel_line("isMapValid", "bits, U32, 0, [25:25]");
         assert!(ch.is_some());
         let ch = ch.unwrap();
-        assert_eq!(ch.data_type, DataType::U32);
+        assert_eq!(ch.data_type, DataType::Bits);
+        assert_eq!(ch.bit_storage, DataType::U32);
         assert_eq!(ch.offset, 0);
         assert_eq!(ch.bit_position, Some(25));
     }

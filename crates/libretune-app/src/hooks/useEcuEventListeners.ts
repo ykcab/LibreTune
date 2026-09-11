@@ -105,7 +105,7 @@ export function useEcuEventListeners(deps: UseEcuEventListenersDeps) {
         unlistenLost = await listen<string>("ecu:connection_lost", async (event) => {
           console.warn("ECU connection lost:", event.payload);
           useRealtimeStore.getState().clearChannels();
-          await checkStatus();
+          await checkStatusRef.current();
           if (currentProject) {
             requestReconnect({
               source: "ecu-disconnect",
@@ -122,7 +122,7 @@ export function useEcuEventListeners(deps: UseEcuEventListenersDeps) {
     return () => {
       if (unlistenLost) unlistenLost();
     };
-  }, [isTauri, checkStatus, currentProject]);
+  }, [isTauri, currentProject]);
 
   // Listen for demo:changed events
   useEffect(() => {

@@ -239,13 +239,13 @@ describe('lineGraphPainter', () => {
       spikeActive: false,
     });
 
-    // Geometry: padding=8, titleHeight=12, graphY=20, graphHeight=72.
-    // Raw position of 1.06 (pct 0.6 of the 0.7..1.3 range) would be y=48.8.
+    // Geometry: padding=8, titleHeight=12, axisHeight=14, graphY=20, graphHeight=58.
+    // Raw position of 1.06 (pct 0.6 of the 0.7..1.3 range) would be y=43.2.
     // The smoothed trace must lag the raw step, so the newest trace point
     // (last lineTo of the stroke path) sits lower (larger y) than raw.
     const lastY = lineToCalls[lineToCalls.length - 1].y;
-    expect(lastY).toBeGreaterThan(49.5); // raw would be 48.8
-    expect(lastY).toBeLessThan(60); // but it must have moved toward the step
+    expect(lastY).toBeGreaterThan(44); // raw would be 43.2
+    expect(lastY).toBeLessThan(49); // but it must have moved toward the step
   });
 
   it('draws spike dots for transient deviations and none for steady data', () => {
