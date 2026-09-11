@@ -35,7 +35,7 @@ export function DialogGauge({ gaugeName }: { gaugeName: string }) {
 
   return (
     <div className="dialog-gauge-widget">
-      <GaugeLiveReadout gaugeInfo={gaugeInfo} />
+      <GaugeLiveReadout gaugeInfo={gaugeInfo} variant="card" />
     </div>
   );
 }

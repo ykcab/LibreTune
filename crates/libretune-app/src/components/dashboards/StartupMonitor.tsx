@@ -45,6 +45,7 @@ const COL_ENGINE: TelemetryRow[] = [
 const COL_FUEL: TelemetryRow[] = [
   { key: 'afr', label: 'AFR', unit: ':1', digits: 2, alt: 'lambda', afrDisplay: true, warnLo: 11.5, warnHi: 16.5 },
   { key: 'lambda', label: 'Lambda', unit: 'λ', digits: 3, alt: 'afr', warnLo: 0.82, warnHi: 1.2 },
+  { key: 'flexPercent', label: 'Ethanol', unit: '%', digits: 1 },
   { key: 'dutyCycle', label: 'Inj Duty', unit: '%', digits: 1, warnHi: 85, critHi: 95 },
   { key: 'pulseWidth', label: 'Inj PW', unit: 'ms', digits: 2 },
   { key: 'lowFuelPressure', label: 'LPFP', unit: 'bar', digits: 1, alt: 'fuelPressure' },
@@ -167,7 +168,7 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
   const channels = useChannels([
     'rpm', 'tps', 'map', 'lambda', 'afr', 'battery', 'coolant', 'iat', 'egt', 'egt1',
     'oilPressure', 'oilTemp', 'fuelPressure', 'lowFuelPressure', 'highFuelPressure', 'rawHighFuelPressure', 'boost', 'advance',
-    'pulseWidth', 'dutyCycle', 'closedLoop', 'fuelPump', 'fan', 'knock',
+    'pulseWidth', 'dutyCycle', 'flexPercent', 'closedLoop', 'fuelPump', 'fan', 'knock',
     'softLimit', 'hardLimit', 'launch', 'ase',
   ]);
   const isReceiving = useIsReceivingData();
