@@ -196,6 +196,19 @@ npm run test:run    # Vitest (frontend tests)
 npm run typecheck  # TypeScript checking
 ```
 
+### Local Windows portable (when asked to build)
+
+Build locally for Windows only (`x86_64-pc-windows-msvc`, `--no-bundle`). Do not build Linux/macOS or NSIS/MSI unless asked.
+
+```powershell
+cd crates/libretune-app
+npx tauri build --target x86_64-pc-windows-msvc --no-bundle
+New-Item -ItemType Directory -Force -Path artifacts/windows | Out-Null
+Copy-Item -Force ../../target/x86_64-pc-windows-msvc/release/libretune-app.exe artifacts/windows/LibreTune-portable.exe
+```
+
+Always clean up after: restore `crates/libretune-app/public/manual/toc.json` if `docs:sync` dirtied it; delete `crates/libretune-app/dist`. Do not `cargo clean`. Do not commit `artifacts/`, `dist/`, or `target/`.
+
 ## INI File Format
 LibreTune uses standard ECU INI definition files. Structure:
 - `[MegaTune]` - Version info, signature, query command
