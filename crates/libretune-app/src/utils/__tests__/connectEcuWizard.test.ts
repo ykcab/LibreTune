@@ -4,6 +4,7 @@ import {
   nextStep,
   prevStep,
   isLastStep,
+  isPortBusyError,
   transportLabel,
   stepTitle,
   isSerialTransport,
@@ -70,7 +71,7 @@ describe("isSerialTransport", () => {
 });
 
 describe("paramsComplete", () => {
-  const base = { port: "", baud: 115200, host: "", tcpPort: 29000 };
+  const base = { port: "", baud: 115200, host: "", tcpPort: 29001 };
 
   it("requires a port for serial transports", () => {
     expect(paramsComplete("usb", base)).toBe(false);
@@ -174,7 +175,16 @@ describe("deriveSpeeduinoIniUrl", () => {
 describe("labels", () => {
   it("labels transports and steps", () => {
     expect(transportLabel("usb")).toMatch(/USB/);
+    expect(transportLabel("wifi")).toMatch(/ts_shim/);
     expect(transportLabel("offline")).toMatch(/No connection/);
     expect(stepTitle("resolveIni")).toMatch(/definition/i);
+  });
+});
+
+describe("isPortBusyError", () => {
+  it("recognizes exclusive-port failures", () => {
+    expect(isPortBusyError("Access is denied.")).toBe(true);
+    expect(isPortBusyError("Device or resource busy")).toBe(true);
+    expect(isPortBusyError("The system cannot find the file specified.")).toBe(false);
   });
 });

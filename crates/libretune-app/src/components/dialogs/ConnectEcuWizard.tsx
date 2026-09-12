@@ -14,6 +14,7 @@ import {
   stepTitle,
   isSerialTransport,
   paramsComplete,
+  isPortBusyError,
   bestLocalMatch,
   deriveOnlineIniUrl,
   deriveSpeeduinoIniUrl,
@@ -82,8 +83,9 @@ export default function ConnectEcuWizard({ isOpen, onClose, inis, onCreateProjec
   const [scanningPorts, setScanningPorts] = useState(false);
   const [port, setPort] = useState("");
   const [baud, setBaud] = useState(115200);
-  const [host, setHost] = useState("");
-  const [tcpPort, setTcpPort] = useState(29000);
+  const [host, setHost] = useState("127.0.0.1");
+  const [tcpPort, setTcpPort] = useState(29001);
+  const [localTcp, setLocalTcp] = useState<{ host: string; port: number; label: string }[]>([]);
 
   const params = { port, baud, host, tcpPort };
 
@@ -121,9 +123,26 @@ export default function ConnectEcuWizard({ isOpen, onClose, inis, onCreateProjec
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  function useLocalTcp(nextHost: string, nextPort: number) {
+    setTransport("wifi");
+    setHost(nextHost);
+    setTcpPort(nextPort);
+    setStep("connect");
+  }
+
+  async function scanLocalTcp() {
+    try {
+      const found = await invoke<{ host: string; port: number; label: string }[]>("list_local_tcp_ecus");
+      setLocalTcp(Array.isArray(found) ? found : []);
+    } catch {
+      setLocalTcp([]);
+    }
+  }
+
   // Scan serial ports when entering the params step for a serial transport.
   useEffect(() => {
     if (step === "params" && isSerialTransport(transport)) void scanPorts();
+    if (step === "params") void scanLocalTcp();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, transport]);
 
@@ -306,7 +325,9 @@ export default function ConnectEcuWizard({ isOpen, onClose, inis, onCreateProjec
     setProjectName("");
     setPorts([]);
     setPort("");
-    setHost("");
+    setHost("127.0.0.1");
+    setTcpPort(29001);
+    setLocalTcp([]);
     setConnecting(false);
     setSignature(null);
     setConnectError(null);
@@ -426,6 +447,21 @@ export default function ConnectEcuWizard({ isOpen, onClose, inis, onCreateProjec
                   {scanningPorts ? "Scanning…" : "Refresh"}
                 </Button>
               </div>
+              {ports.length === 0 && (
+                <p style={{ opacity: 0.7, fontSize: 12, margin: "0.5rem 0 0" }}>
+                  No free serial ports. If ts_shim owns the COM port, use WiFi / TCP on 127.0.0.1:29001.
+                </p>
+              )}
+              {localTcp.map((ecu) => (
+                <Button
+                  key={`${ecu.host}:${ecu.port}`}
+                  variant="secondary"
+                  onClick={() => useLocalTcp(ecu.host, ecu.port)}
+                  style={{ marginTop: "0.5rem" }}
+                >
+                  Use {ecu.label} ({ecu.host}:{ecu.port})
+                </Button>
+              ))}
             </div>
             <div>
               <label style={{ display: "block", marginBottom: "0.25rem" }}>Baud rate</label>
@@ -443,14 +479,26 @@ export default function ConnectEcuWizard({ isOpen, onClose, inis, onCreateProjec
         {step === "params" && transport === "wifi" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             <p style={{ opacity: 0.7, fontSize: 12, margin: 0 }}>
-              For a networked ECU (e.g. rusEFI over WiFi), enter its host/IP and TCP port.
+              For a networked ECU or a local ts_shim, enter its host/IP and TCP port (default 29001).
             </p>
+            {localTcp.map((ecu) => (
+              <Button
+                key={`${ecu.host}:${ecu.port}`}
+                variant="secondary"
+                onClick={() => {
+                  setHost(ecu.host);
+                  setTcpPort(ecu.port);
+                }}
+              >
+                Use {ecu.label} ({ecu.host}:{ecu.port})
+              </Button>
+            ))}
             <div>
               <label style={{ display: "block", marginBottom: "0.25rem" }}>Host / IP</label>
               <input
                 type="text"
                 value={host}
-                placeholder="192.168.4.1"
+                placeholder="127.0.0.1"
                 onChange={(e) => setHost(e.target.value)}
                 style={{ width: "100%" }}
               />
@@ -481,6 +529,15 @@ export default function ConnectEcuWizard({ isOpen, onClose, inis, onCreateProjec
                 <Button variant="secondary" onClick={connectAndDetect} style={{ marginTop: "0.5rem" }}>
                   Retry
                 </Button>
+                {isPortBusyError(connectError) && (
+                  <Button
+                    variant="primary"
+                    onClick={() => useLocalTcp("127.0.0.1", 29001)}
+                    style={{ marginTop: "0.5rem", marginLeft: "0.5rem" }}
+                  >
+                    Connect via TCP 127.0.0.1:29001
+                  </Button>
+                )}
               </div>
             )}
           </div>

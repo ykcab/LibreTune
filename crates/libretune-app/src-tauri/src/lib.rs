@@ -157,7 +157,7 @@ use commands::start_autotune::start_autotune;
 use commands::sync_ecu_data::{
     get_tune_mismatch_page_diff, get_tune_mismatch_page_readable_diff, sync_ecu_data,
 };
-use commands::system::{get_build_info, get_serial_ports};
+use commands::system::{get_build_info, get_serial_ports, list_local_tcp_ecus};
 use commands::table_compare::compare_tables;
 use commands::table_file_io::{export_table_to_file, import_table_from_file};
 use commands::table_ops::{
@@ -250,6 +250,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_serial_ports,
+            list_local_tcp_ecus,
             get_available_inis,
             connect_to_ecu,
             sync_ecu_data,

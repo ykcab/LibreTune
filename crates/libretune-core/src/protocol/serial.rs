@@ -142,7 +142,23 @@ pub fn open_port(name: &str, baud_rate: Option<u32>) -> Result<Box<dyn SerialPor
     serialport::new(name, baud)
         .timeout(Duration::from_millis(100))
         .open()
-        .map_err(|e| ProtocolError::SerialError(e.to_string()))
+        .map_err(|e| ProtocolError::SerialError(annotate_serial_open_error(name, &e.to_string())))
+}
+
+fn annotate_serial_open_error(name: &str, err: &str) -> String {
+    let busy = err.to_ascii_lowercase();
+    if busy.contains("access")
+        || busy.contains("denied")
+        || busy.contains("busy")
+        || busy.contains("in use")
+    {
+        format!(
+            "{err} Port {name} is held by another program (often ts_shim or TunerStudio). \
+             Connect via TCP to 127.0.0.1:29001 instead."
+        )
+    } else {
+        err.to_string()
+    }
 }
 
 /// Configure a serial port for ECU communication
@@ -236,6 +252,21 @@ mod tests {
                 "/dev/ttyUSB1",
                 "/dev/someport",
             ]
+        );
+    }
+
+    #[test]
+    fn busy_open_error_points_at_ts_shim_tcp() {
+        let msg = annotate_serial_open_error("COM31", "Access is denied.");
+        assert!(msg.contains("127.0.0.1:29001"), "{msg}");
+        assert!(msg.contains("COM31"), "{msg}");
+    }
+
+    #[test]
+    fn other_open_errors_are_unchanged() {
+        assert_eq!(
+            annotate_serial_open_error("COM31", "The system cannot find the file specified."),
+            "The system cannot find the file specified."
         );
     }
 }

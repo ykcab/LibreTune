@@ -61,6 +61,11 @@ export function paramsComplete(
   return true;
 }
 
+export function isPortBusyError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return m.includes("access") || m.includes("denied") || m.includes("busy") || m.includes("in use");
+}
+
 /** A local INI candidate matched against the ECU signature. */
 export interface WizardIniMatch {
   /** Repository ID, usable directly with `create_project`. */
@@ -166,7 +171,7 @@ export function transportLabel(t: WizardTransport): string {
     case "bluetooth":
       return "Bluetooth";
     case "wifi":
-      return "WiFi / Network (TCP)";
+      return "WiFi / Network / ts_shim (TCP)";
     case "offline":
       return "No connection right now";
   }

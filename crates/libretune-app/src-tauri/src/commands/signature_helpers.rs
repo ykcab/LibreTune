@@ -73,28 +73,30 @@ pub(crate) fn compare_signatures_with_prefix(
     // Check for common suffixes (hashes)
     // RusEFI signatures often end with a hash or unique ID (e.g. "rusEFI master 2024.02.24.simulator.12345678")
     // If both end with the same alphanumeric string > 6 chars, treat as Exact.
-    if let (Some(ecu_suffix), Some(ini_suffix)) = (
-        ecu_normalized.split('.').next_back(),
-        ini_normalized.split('.').next_back(),
-    ) {
-        if ecu_suffix.len() > 6
-            && ecu_suffix.chars().all(|c| c.is_alphanumeric())
-            && ecu_suffix == ini_suffix
-        {
-            return SignatureMatchType::Exact;
+    // Same-hash must not collapse rusEFI vs epicEFI — bundles ship both INIs.
+    if same_signature_family(&ecu_normalized, &ini_normalized) {
+        if let (Some(ecu_suffix), Some(ini_suffix)) = (
+            ecu_normalized.split('.').next_back(),
+            ini_normalized.split('.').next_back(),
+        ) {
+            if ecu_suffix.len() > 6
+                && ecu_suffix.chars().all(|c| c.is_alphanumeric())
+                && ecu_suffix == ini_suffix
+            {
+                return SignatureMatchType::Exact;
+            }
         }
-    }
 
-    // Also check split by whitespace just in case hash is separated by space
-    if let (Some(ecu_suffix), Some(ini_suffix)) = (
-        ecu_normalized.split_whitespace().last(),
-        ini_normalized.split_whitespace().last(),
-    ) {
-        if ecu_suffix.len() > 6
-            && ecu_suffix.chars().all(|c| c.is_alphanumeric())
-            && ecu_suffix == ini_suffix
-        {
-            return SignatureMatchType::Exact;
+        if let (Some(ecu_suffix), Some(ini_suffix)) = (
+            ecu_normalized.split_whitespace().last(),
+            ini_normalized.split_whitespace().last(),
+        ) {
+            if ecu_suffix.len() > 6
+                && ecu_suffix.chars().all(|c| c.is_alphanumeric())
+                && ecu_suffix == ini_suffix
+            {
+                return SignatureMatchType::Exact;
+            }
         }
     }
 
@@ -139,6 +141,13 @@ pub(crate) fn compare_signatures_with_prefix(
     }
 
     SignatureMatchType::Mismatch
+}
+
+fn same_signature_family(a: &str, b: &str) -> bool {
+    matches!(
+        (a.split_whitespace().next(), b.split_whitespace().next()),
+        (Some(left), Some(right)) if left == right
+    )
 }
 
 /// True when the longer signature is the shorter one plus a trailing build/hash token.

@@ -565,6 +565,15 @@ mod signature_tests {
             compare_signatures("unrelated device", "another device"),
             SignatureMatchType::Mismatch
         );
+
+        // Bundles ship rusEFI + epicEFI INIs; only the live prefix is Exact.
+        assert_eq!(
+            compare_signatures(
+                "epicEFI master.2026.09.11.proteus_f7.1234567890",
+                "rusEFI master.2026.09.11.proteus_f7.1234567890"
+            ),
+            SignatureMatchType::Mismatch
+        );
     }
 
     #[test]

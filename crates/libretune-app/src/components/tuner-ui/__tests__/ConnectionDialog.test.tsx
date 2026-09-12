@@ -156,6 +156,32 @@ describe('ConnectionDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('enables Connect on TCP without a serial port', () => {
+    render(
+      <ConnectionDialog
+        isOpen={true}
+        onClose={() => {}}
+        ports={[]}
+        selectedPort={''}
+        baudRate={115200}
+        timeoutMs={2000}
+        connectionType={'Tcp'}
+        tcpHost={'127.0.0.1'}
+        tcpPort={29001}
+        connected={false}
+        connecting={false}
+        onPortChange={() => {}}
+        onBaudChange={() => {}}
+        onTimeoutChange={() => {}}
+        onConnect={() => {}}
+        onDisconnect={() => {}}
+        onRefreshPorts={() => {}}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled();
+  });
+
   it('stays open when connection does not succeed', () => {
     const onClose = vi.fn();
     const { rerender } = render(

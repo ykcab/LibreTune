@@ -972,31 +972,36 @@ function AppContent() {
         setTcpPort(options.tcpPort);
       }
 
-      // Sanity-check selected port is still available; refresh list if necessary
-      let availablePorts = ports;
-      if (!availablePorts.includes(targetPort)) {
-        availablePorts = await refreshPorts();
-      }
-
-      if (!availablePorts.includes(targetPort)) {
-        if (options?.strictPort) {
-          return;
+      let portToUse = targetPort;
+      if (effectiveConnectionType !== "Tcp") {
+        // Sanity-check selected port is still available; refresh list if necessary
+        let availablePorts = ports;
+        if (!availablePorts.includes(targetPort)) {
+          availablePorts = await refreshPorts();
         }
-        if (availablePorts.length > 0) {
-          const fallback = availablePorts[0];
-          setSelectedPort(fallback);
-          showToast(
-            `Selected port '${targetPort}' is not available; using '${fallback}' instead.`,
-            "warning",
-          );
-        } else {
-          throw new Error('No serial ports available');
-        }
-      }
 
-      const portToUse = availablePorts.includes(targetPort)
-        ? targetPort
-        : availablePorts[0];
+        if (!availablePorts.includes(targetPort)) {
+          if (options?.strictPort) {
+            return;
+          }
+          if (availablePorts.length > 0) {
+            const fallback = availablePorts[0];
+            setSelectedPort(fallback);
+            showToast(
+              `Selected port '${targetPort}' is not available; using '${fallback}' instead.`,
+              "warning",
+            );
+          } else {
+            throw new Error(
+              "No serial ports available. If ts_shim is holding the COM port, connect via TCP to 127.0.0.1:29001.",
+            );
+          }
+        }
+
+        portToUse = availablePorts.includes(targetPort)
+          ? targetPort
+          : availablePorts[0];
+      }
 
       // Connect and get mismatch info directly (no async race)
       // Issue #71 follow-up: the backend's choose_runtime_command already
@@ -1050,14 +1055,16 @@ function AppContent() {
           }
         }
 
-        try {
-          await invoke("update_setting", {
-            key: "last_serial_port",
-            value: portToUse,
-          });
-          setLastSerialPort(portToUse);
-        } catch (saveError) {
-          console.error("Failed to save last serial port:", saveError);
+        if (effectiveConnectionType !== "Tcp") {
+          try {
+            await invoke("update_setting", {
+              key: "last_serial_port",
+              value: portToUse,
+            });
+            setLastSerialPort(portToUse);
+          } catch (saveError) {
+            console.error("Failed to save last serial port:", saveError);
+          }
         }
 
         if (options?.silent) {
@@ -1077,8 +1084,9 @@ function AppContent() {
             // best-effort cleanup
           }
           showToast(
-            "COM port is blocked (often leftover BootCommander from a firmware update). " +
-              "Unplug the ECU USB cable, wait 5 seconds, plug back in, then connect again.",
+            "COM port is blocked (leftover BootCommander, ts_shim, or TunerStudio). " +
+              "If you just flashed, unplug USB, wait 5 seconds, and reconnect. " +
+              "If ts_shim is running, connect via TCP to 127.0.0.1:29001.",
             "warning",
           );
         } else {

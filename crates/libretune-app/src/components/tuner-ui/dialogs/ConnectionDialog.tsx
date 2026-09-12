@@ -1,7 +1,14 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { RotateCw } from 'lucide-react';
 import { Dialog, Button } from '../../common';
 import '../Dialogs.css';
+
+interface LocalTcpEcu {
+  host: string;
+  port: number;
+  label: string;
+}
 
 interface DialogProps {
   isOpen: boolean;
@@ -76,8 +83,24 @@ export function ConnectionDialog({
   rememberedPort,
   connectionPhase,
 }: ConnectionDialogProps) {
-  // Track previous connected state to detect connection transitions
+  const [localTcp, setLocalTcp] = useState<LocalTcpEcu[]>([]);
   const prevConnectedRef = useRef<boolean>(connected);
+
+  const refreshLocalTcp = () => {
+    void (async () => {
+      try {
+        const found = await invoke<LocalTcpEcu[]>('list_local_tcp_ecus');
+        setLocalTcp(Array.isArray(found) ? found : []);
+      } catch {
+        setLocalTcp([]);
+      }
+    })();
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    refreshLocalTcp();
+  }, [isOpen]);
 
   // Auto-close only after a successful connect while the dialog is open.
   // Leave it open on failure so the user can retry / adjust settings.
@@ -120,7 +143,7 @@ export function ConnectionDialog({
                     onChange={() => onConnectionTypeChange?.('Tcp')}
                     disabled={connected}
                   />
-                  <span>TCP / WiFi (Sim)</span>
+                  <span>TCP / WiFi / ts_shim</span>
                 </label>
             </div>
           </div>
@@ -143,10 +166,38 @@ export function ConnectionDialog({
                       ))
                     )}
                   </select>
-                  <button onClick={onRefreshPorts} disabled={connected}>
+                  <button
+                    onClick={() => {
+                      onRefreshPorts();
+                      refreshLocalTcp();
+                    }}
+                    disabled={connected}
+                  >
                     <RotateCw size={14} /> Refresh
                   </button>
                 </div>
+                {ports.length === 0 && (
+                  <p className="field-help">
+                    No free serial ports. If ts_shim owns the COM port, use TCP on 127.0.0.1:29001.
+                  </p>
+                )}
+                {localTcp.length > 0 && !connected && (
+                  <div className="field-help" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                    {localTcp.map((ecu) => (
+                      <Button
+                        key={`${ecu.host}:${ecu.port}`}
+                        variant="secondary"
+                        onClick={() => {
+                          onConnectionTypeChange?.('Tcp');
+                          onTcpHostChange?.(ecu.host);
+                          onTcpPortChange?.(ecu.port);
+                        }}
+                      >
+                        Use {ecu.label} ({ecu.host}:{ecu.port})
+                      </Button>
+                    ))}
+                  </div>
+                )}
                 {rememberedPort && (
                   <p className="field-help">
                     Last successful port: <code>{rememberedPort}</code>
@@ -198,6 +249,22 @@ export function ConnectionDialog({
                   placeholder="29001"
                 />
               </div>
+              {localTcp.length > 0 && !connected && (
+                <div className="field-help" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {localTcp.map((ecu) => (
+                    <Button
+                      key={`${ecu.host}:${ecu.port}`}
+                      variant="secondary"
+                      onClick={() => {
+                        onTcpHostChange?.(ecu.host);
+                        onTcpPortChange?.(ecu.port);
+                      }}
+                    >
+                      Use {ecu.label} ({ecu.host}:{ecu.port})
+                    </Button>
+                  ))}
+                </div>
+              )}
             </>
           )}
 
@@ -275,7 +342,10 @@ export function ConnectionDialog({
           <Button
             variant="primary"
             onClick={onConnect}
-            disabled={connecting || !selectedPort}
+            disabled={
+              connecting ||
+              (connectionType === 'Serial' ? !selectedPort : !tcpHost || !tcpPort)
+            }
           >
             {connecting ? 'Connecting...' : 'Connect'}
           </Button>
