@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Dialog, Button } from '../common';
+import DialogRenderer from './DialogRenderer';
+import { DialogValueSourceProvider, type DialogValueSource } from './DialogValueSource';
+import type { DialogDefinition, BackendTableData, CurveData } from './types';
 import './TuneMismatchDialog.css';
 
 export interface TuneMismatchInfo {
@@ -17,22 +20,39 @@ interface TuneMismatchDialogProps {
   onUseECU: () => void;
 }
 
-interface TuneMismatchReadableEntry {
+interface DialogIndexEntry {
   name: string;
-  label: string;
-  kind: string;
-  context?: string;
-  project_value: string;
-  ecu_value: string;
-  units: string;
-  changed_bytes: number;
+  title: string;
+  changed_count: number;
 }
 
-interface TuneMismatchReadablePageDiff {
-  page: number;
-  total_entries: number;
-  returned_entries: number;
-  entries: TuneMismatchReadableEntry[];
+interface DialogView {
+  name: string;
+  title: string;
+  definition: DialogDefinition;
+  changed_names: string[];
+  project_numbers: Record<string, number>;
+  ecu_numbers: Record<string, number>;
+  project_strings: Record<string, string>;
+  ecu_strings: Record<string, string>;
+  project_tables: Record<string, BackendTableData>;
+  ecu_tables: Record<string, BackendTableData>;
+  project_curves: Record<string, CurveData>;
+  ecu_curves: Record<string, CurveData>;
+}
+
+function toSource(
+  view: DialogView,
+  side: 'project' | 'ecu',
+): DialogValueSource {
+  return {
+    readOnly: true,
+    changedNames: new Set(view.changed_names),
+    numbers: side === 'project' ? view.project_numbers : view.ecu_numbers,
+    strings: side === 'project' ? view.project_strings : view.ecu_strings,
+    tables: side === 'project' ? view.project_tables : view.ecu_tables,
+    curves: side === 'project' ? view.project_curves : view.ecu_curves,
+  };
 }
 
 export default function TuneMismatchDialog({
@@ -43,197 +63,168 @@ export default function TuneMismatchDialog({
   onUseECU,
 }: TuneMismatchDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedPage, setSelectedPage] = useState<number | null>(null);
-  const [pageDiff, setPageDiff] = useState<TuneMismatchReadablePageDiff | null>(null);
-  const [isDiffLoading, setIsDiffLoading] = useState(false);
-  const [diffError, setDiffError] = useState<string | null>(null);
-
-  const sortedDiffPages = useMemo(
-    () => [...(mismatchInfo?.diff_pages ?? [])].sort((a, b) => a - b),
-    [mismatchInfo]
-  );
+  const [index, setIndex] = useState<DialogIndexEntry[]>([]);
+  const [page, setPage] = useState(0);
+  const [view, setView] = useState<DialogView | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
-    setSelectedPage(sortedDiffPages.length > 0 ? sortedDiffPages[0] : null);
-  }, [isOpen, sortedDiffPages]);
+    setPage(0);
+    setView(null);
+    setViewError(null);
+    setApplyError(null);
+    invoke<DialogIndexEntry[]>('get_tune_mismatch_dialog_index')
+      .then(setIndex)
+      .catch((err) => setViewError(String(err)));
+  }, [isOpen]);
+
+  const current = index[page] ?? null;
 
   useEffect(() => {
-    if (!isOpen || selectedPage === null) return;
+    if (!isOpen || !current) {
+      setView(null);
+      return;
+    }
     let cancelled = false;
-    setIsDiffLoading(true);
-    setDiffError(null);
-
-    invoke<TuneMismatchReadablePageDiff>('get_tune_mismatch_page_readable_diff', {
-      page: selectedPage,
-      startIndex: 0,
-      maxRows: 500,
-    })
+    setViewError(null);
+    invoke<DialogView>('get_tune_mismatch_dialog_view', { name: current.name })
       .then((result) => {
-        if (!cancelled) setPageDiff(result);
+        if (!cancelled) setView(result);
       })
       .catch((err) => {
         if (!cancelled) {
-          setPageDiff(null);
-          setDiffError(String(err));
+          setView(null);
+          setViewError(String(err));
         }
-      })
-      .finally(() => {
-        if (!cancelled) setIsDiffLoading(false);
       });
-
     return () => {
       cancelled = true;
     };
-  }, [isOpen, selectedPage]);
+  }, [isOpen, current]);
+
+  useEffect(() => {
+    if (!isOpen || page + 1 >= index.length) return;
+    const next = index[page + 1];
+    if (!next) return;
+    invoke('get_tune_mismatch_dialog_view', { name: next.name }).catch(() => {});
+  }, [isOpen, page, index]);
+
+  const projectSource = useMemo(() => (view ? toSource(view, 'project') : null), [view]);
+  const ecuSource = useMemo(() => (view ? toSource(view, 'ecu') : null), [view]);
 
   if (!isOpen || !mismatchInfo) return null;
 
-  const handleUseProject = async () => {
+  const apply = async (cmd: 'use_project_tune' | 'use_ecu_tune', after: () => void) => {
     setIsLoading(true);
+    setApplyError(null);
     try {
-      await invoke('use_project_tune');
-      onUseProject();
+      await invoke(cmd);
+      after();
       onClose();
     } catch (err) {
-      console.error('Failed to apply LibreTune settings:', err);
-      alert(`Failed to apply LibreTune settings: ${err}`);
+      setApplyError(String(err));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleUseECU = async () => {
-    setIsLoading(true);
-    try {
-      await invoke('use_ecu_tune');
-      onUseECU();
-      onClose();
-    } catch (err) {
-      console.error('Failed to apply ECU settings:', err);
-      alert(`Failed to apply ECU settings: ${err}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const pageCount = Math.max(index.length, 1);
 
   return (
     <Dialog
       open={isOpen}
       onClose={onClose}
-      title="Tune Mismatch Detected"
-      size="md"
+      title="Difference Report"
+      size="xl"
       className="tune-mismatch-dialog"
       closeOnBackdrop={!isLoading}
       closeOnEscape={!isLoading}
     >
-      <Dialog.Body>
-        <div className="tune-mismatch-warning">
-          <p>
-            <strong>The tune on the ECU differs from the tune in your project.</strong>
-          </p>
-          <p>
-            Detected external ECU changes are possible (for example, edits made in TunerStudio or
-            another tool while LibreTune was not writing changes).
-          </p>
-          <p>
-            The ECU has {mismatchInfo.ecu_pages.length} page(s) loaded, while your project has{' '}
-            {mismatchInfo.project_pages.length} page(s).
-            {mismatchInfo.diff_pages.length > 0 && (
-              <> {mismatchInfo.diff_pages.length} page(s) have differences.</>
+      <Dialog.Body className="tune-mismatch-body">
+        <p className="tune-mismatch-lead">
+          There are differences between the settings currently in LibreTune and the settings
+          found in the ECU. Review each page, then choose which settings to keep.
+        </p>
+
+        <div className="tune-diff-columns">
+          <section className="tune-diff-pane">
+            <h3>Current LibreTune Settings</h3>
+            {view && projectSource && (
+              <DialogValueSourceProvider value={projectSource}>
+                <DialogRenderer
+                  definition={view.definition}
+                  onBack={() => {}}
+                  openTable={() => {}}
+                  context={view.project_numbers}
+                />
+              </DialogValueSourceProvider>
             )}
-          </p>
+          </section>
+          <section className="tune-diff-pane">
+            <h3>Settings in ECU</h3>
+            {view && ecuSource && (
+              <DialogValueSourceProvider value={ecuSource}>
+                <DialogRenderer
+                  definition={view.definition}
+                  onBack={() => {}}
+                  openTable={() => {}}
+                  context={view.ecu_numbers}
+                />
+              </DialogValueSourceProvider>
+            )}
+          </section>
         </div>
 
-        <div className="tune-mismatch-diff">
-          <div className="tune-mismatch-diff-header">
-            <h3>Tune Diff (Project vs ECU)</h3>
-            <p>Review changed settings before accepting which tune to keep.</p>
-          </div>
-
-          <div className="tune-mismatch-page-list">
-            {sortedDiffPages.map((page) => (
-              <button
-                key={page}
-                type="button"
-                className={`tune-mismatch-page-chip ${selectedPage === page ? 'active' : ''}`}
-                onClick={() => setSelectedPage(page)}
-                disabled={isLoading}
-              >
-                Page {page}
-              </button>
-            ))}
-          </div>
-
-          <div className="tune-mismatch-diff-table-wrap">
-            {isDiffLoading && <p className="tune-mismatch-diff-status">Loading diff...</p>}
-            {!isDiffLoading && diffError && (
-              <p className="tune-mismatch-diff-status error">{diffError}</p>
-            )}
-            {!isDiffLoading && !diffError && pageDiff && (
-              <>
-                <p className="tune-mismatch-diff-status">
-                  Showing {pageDiff.returned_entries} of {pageDiff.total_entries} changed item(s)
-                  on page {pageDiff.page}.
-                </p>
-                <table className="tune-mismatch-diff-table">
-                  <thead>
-                    <tr>
-                      <th>Setting</th>
-                      <th>Type</th>
-                      <th>Project</th>
-                      <th>ECU</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageDiff.entries.map((row) => (
-                      <tr key={row.name}>
-                        <td className="tune-mismatch-setting-cell">
-                          <div className="tune-mismatch-setting-label">{row.label}</div>
-                          <div className="tune-mismatch-setting-name">{row.name}</div>
-                          {row.context && (
-                            <div className="tune-mismatch-setting-context">{row.context}</div>
-                          )}
-                        </td>
-                        <td>{row.kind}</td>
-                        <td>{row.units ? `${row.project_value} ${row.units}` : row.project_value}</td>
-                        <td>{row.units ? `${row.ecu_value} ${row.units}` : row.ecu_value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="tune-mismatch-options">
-          <div className="tune-option">
-            <h3>Use LibreTune Settings</h3>
-            <p>
-              Apply your loaded tune&apos;s settings onto the ECU (keeps other ECU fields intact),
-              save <code>CurrentTune.msq</code>, write, and burn.
-            </p>
-            <Button variant="primary" onClick={handleUseProject} disabled={isLoading}>
-              {isLoading ? 'Loading...' : 'Use LibreTune Settings'}
-            </Button>
-          </div>
-
-          <div className="tune-option">
-            <h3>Use ECU Settings</h3>
-            <p>
-              Keep the ECU tune and overwrite <code>CurrentTune.msq</code> on disk to match.
-            </p>
-            <Button variant="secondary" onClick={handleUseECU} disabled={isLoading}>
-              {isLoading ? 'Loading...' : 'Use ECU Settings'}
-            </Button>
-          </div>
-        </div>
+        {!view && !viewError && current && (
+          <p className="tune-mismatch-diff-status">Loading dialog…</p>
+        )}
+        {!current && !viewError && (
+          <p className="tune-mismatch-diff-status">
+            No named INI settings differ. Unused page bytes may still differ; Use LibreTune
+            Settings will not invent those bytes.
+          </p>
+        )}
+        {viewError && <p className="tune-mismatch-diff-status error">{viewError}</p>}
+        {applyError && <p className="tune-mismatch-diff-status error">{applyError}</p>}
       </Dialog.Body>
 
       <Dialog.Footer>
-        <Button variant="secondary" onClick={onClose} disabled={isLoading}>
-          Cancel
+        <Button
+          variant="secondary"
+          disabled={isLoading || page <= 0}
+          onClick={() => setPage((p) => Math.max(0, p - 1))}
+        >
+          Previous
+        </Button>
+        <span className="tune-diff-page">
+          Page {index.length === 0 ? 0 : page + 1} of {index.length}
+        </span>
+        <Button
+          variant="secondary"
+          disabled={isLoading || page + 1 >= index.length}
+          onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+        >
+          Next
+        </Button>
+        <span className="tune-diff-footer-spacer" />
+        <Button
+          variant="primary"
+          disabled={isLoading}
+          onClick={() => apply('use_project_tune', onUseProject)}
+        >
+          {isLoading ? 'Working…' : 'Use LibreTune Settings'}
+        </Button>
+        <Button variant="secondary" disabled={isLoading} onClick={onClose}>
+          Ignore
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={isLoading}
+          onClick={() => apply('use_ecu_tune', onUseECU)}
+        >
+          Use ECU Settings
         </Button>
       </Dialog.Footer>
     </Dialog>

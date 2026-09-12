@@ -380,7 +380,7 @@ pub async fn sync_ecu_data(
                 diff_pages: diff_pages.clone(),
             });
         }
-        // Keep UI on project tune until user resolves Use ECU / Use Project.
+        // Keep UI on the project tune until the user resolves the wizard.
         {
             let mut cache_guard = state.tune_cache.lock().await;
             if let Some(cache) = cache_guard.as_mut() {

@@ -1,161 +1,91 @@
-/* TuneMismatchDialog — only the bits the shared Dialog/Button primitives don't cover. */
-
-.tune-mismatch-warning {
-  background: var(--bg-elevated);
-  border: 1px solid var(--state-warning, var(--accent-primary));
-  border-left-width: 3px;
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
-  margin-bottom: var(--space-4);
-  color: var(--text-primary);
+.lt-dialog.tune-mismatch-dialog {
+  height: min(620px, 78vh);
 }
 
-.tune-mismatch-warning p {
-  margin: 0 0 var(--space-2) 0;
+.tune-mismatch-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tune-mismatch-lead {
+  margin: 0 0 var(--space-3);
   font-size: var(--font-size-sm);
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
-.tune-mismatch-warning p:last-child {
-  margin-bottom: 0;
-}
-
-.tune-mismatch-options {
+.tune-diff-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
+  min-height: 0;
+  flex: 1;
 }
 
-.tune-mismatch-diff {
-  background: var(--bg-elevated);
+.tune-diff-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: var(--space-3);
-  margin-bottom: var(--space-4);
+  background: var(--bg-elevated);
+  overflow: hidden;
 }
 
-.tune-mismatch-diff-header h3 {
-  margin: 0 0 var(--space-1) 0;
+.tune-diff-pane h3 {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
   font-size: var(--font-size-sm);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.tune-mismatch-diff-header p {
-  margin: 0 0 var(--space-2) 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.tune-mismatch-page-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-bottom: var(--space-2);
-}
-
-.tune-mismatch-page-chip {
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.tune-mismatch-page-chip.active {
-  border-color: var(--accent-primary);
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
-}
-
-.tune-mismatch-diff-table-wrap {
-  max-height: 280px;
+.tune-diff-pane .dialog-view {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
+}
+
+.tune-diff-pane .editor-header,
+.tune-diff-pane .dialog-description-panel {
+  display: none;
 }
 
 .tune-mismatch-diff-status {
-  margin: 0;
-  padding: var(--space-2);
-  font-size: var(--font-size-xs);
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
 .tune-mismatch-diff-status.error {
-  color: var(--state-danger, #ef4444);
+  color: var(--state-danger, #e66);
 }
 
-.tune-mismatch-diff-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono, monospace);
-}
-
-.tune-mismatch-diff-table th,
-.tune-mismatch-diff-table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border-subtle);
-  text-align: left;
-  white-space: nowrap;
-}
-
-.tune-mismatch-diff-table th {
-  position: sticky;
-  top: 0;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.tune-mismatch-setting-cell {
-  min-width: 260px;
-}
-
-.tune-mismatch-setting-label {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.tune-mismatch-setting-name {
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.tune-mismatch-setting-context {
-  color: var(--accent-primary);
-  font-size: 11px;
-}
-
-.tune-option {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
-}
-
-.tune-option h3 {
-  margin: 0;
+.tune-diff-page {
+  min-width: 8rem;
+  text-align: center;
   font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.tune-option p {
-  margin: 0;
-  flex: 1;
-  font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  line-height: 1.5;
 }
 
-@media (max-width: 600px) {
-  .tune-mismatch-options {
+.tune-diff-footer-spacer {
+  flex: 1;
+}
+
+.dialog-field.tune-diff-changed,
+.settings-field.tune-diff-changed {
+  outline: 1px solid var(--state-warning, var(--accent-primary));
+  background: color-mix(in srgb, var(--state-warning, #c90) 12%, transparent);
+}
+
+.table-editor-2d.is-readonly .table-grid {
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .tune-diff-columns {
     grid-template-columns: 1fr;
   }
 }

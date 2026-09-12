@@ -250,8 +250,6 @@ pub async fn use_ecu_tune(
         (def.signature.clone(), def.page_sizes.clone())
     };
 
-    // Exact INI page lengths so next sync treats pageData as authoritative
-    // (skips re-applying any leftover named constants).
     let mut normalized = std::collections::HashMap::new();
     for (page_num, mut page_data) in ecu_pages {
         let expected = page_sizes
@@ -286,14 +284,11 @@ pub async fn use_ecu_tune(
         let mut tune = TuneFile::new(&ini_signature);
         tune.pages = normalized;
         tune.pc_variables = pc_variables;
-        // Drop project named constants — save_tune rebuilds them from ECU pages.
         *tune_guard = Some(tune);
     }
 
     *state.tune_mismatch_snapshot.lock().await = None;
 
-    // Rebuild constants from page bytes and write CurrentTune.msq (not the
-    // page-only save_tune_to_project helper, which keeps stale constant XML).
     crate::commands::save_tune::save_tune(
         state.clone(),
         Some(tune_path.to_string_lossy().to_string()),

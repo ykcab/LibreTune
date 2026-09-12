@@ -307,10 +307,7 @@ function AppContent() {
   // Tune mismatch dialog state
   const [tuneMismatchOpen, setTuneMismatchOpen] = useState(false);
   const [tuneMismatchInfo, setTuneMismatchInfo] = useState<TuneMismatchInfo | null>(null);
-  
-  // Tune comparison dialog state
-  const [tuneComparisonOpen, setTuneComparisonOpen] = useState(false);
-  
+
   // Table comparison dialog state
   const [tableComparisonOpen, setTableComparisonOpen] = useState(false);
   
@@ -933,19 +930,6 @@ function AppContent() {
         console.warn(`Partial sync: ${result.pages_synced}/${result.total_pages} pages succeeded`);
         result.errors.forEach(err => console.warn("Sync error:", err));
       }
-      
-      // Compare tunes after successful sync
-      // if (result.pages_synced > 0) {
-      //   try {
-      //     const differs = await invoke<boolean>("compare_project_and_ecu_tunes");
-      //     if (differs) {
-      //       setTuneComparisonOpen(true);
-      //     }
-      //   } catch (e) {
-      //     console.error("Failed to compare tunes:", e);
-      //     // Don't block on comparison failure
-      //   }
-      // }
       
       return result;
     } catch (e) {
@@ -1872,9 +1856,6 @@ function AppContent() {
         setAfrCalibrationOpen={setAfrCalibrationOpen}
         tempCalibrationOpen={tempCalibrationOpen}
         setTempCalibrationOpen={setTempCalibrationOpen}
-        tuneComparisonOpen={tuneComparisonOpen}
-        setTuneComparisonOpen={setTuneComparisonOpen}
-        checkStatus={checkStatus}
         tableComparisonOpen={tableComparisonOpen}
         setTableComparisonOpen={setTableComparisonOpen}
         tuneFileDiffOpen={tuneFileDiffOpen}

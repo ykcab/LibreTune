@@ -388,6 +388,7 @@ impl AppState {
 
 #[derive(Clone, Debug)]
 pub struct TuneMismatchSnapshot {
+    /// Materialized project pages (ECU base + MSQ constants) at mismatch time.
     pub project_pages: HashMap<u8, Vec<u8>>,
     /// ECU page images captured at mismatch time (base for safe project merge).
     pub ecu_pages: HashMap<u8, Vec<u8>>,
