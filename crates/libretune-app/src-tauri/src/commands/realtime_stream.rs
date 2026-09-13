@@ -86,9 +86,53 @@ const REALTIME_CHANNEL_ALIASES: &[(&str, &[&str])] = &[
     ),
     (
         "speed",
-        &["vehicleSpeedKph", "speed", "Speed", "wheelSpeed"],
+        &[
+            "vehicleSpeedKph",
+            "speed",
+            "Speed",
+            "wheelSpeed",
+            "gpsSpeed",
+            "groundSpeed",
+        ],
+    ),
+    (
+        "gear",
+        &[
+            "currentGear",
+            "requestedGear",
+            "gear",
+            "Gear",
+            "gearboxGear",
+        ],
+    ),
+    (
+        "flexPercent",
+        &[
+            "flexPercent",
+            "ethanol",
+            "ethanolPercent",
+            "flexFuel",
+            "flex",
+        ],
     ),
     ("oilPressure", &["oilPressure", "OilPressure", "oilpress"]),
+    ("oilTemp", &["oilTemp", "OilTemp", "oilTemperature"]),
+    (
+        "wmiArmed",
+        &["isWmiEnabled", "wmiState", "wmiArmed", "wmiEnabled", "wmi"],
+    ),
+    (
+        "wmiDuty",
+        &["wmiPumpDuty", "wmiDuty", "wmiPump", "methDuty"],
+    ),
+    (
+        "gLat",
+        &["gLat", "accelY", "accY", "lateralG", "latG", "imuY"],
+    ),
+    (
+        "gLong",
+        &["gLong", "accelX", "accX", "longG", "longitudinalG", "imuX"],
+    ),
     (
         "fuelLevel",
         &["fuelLevel", "FuelLevel", "fuel", "fuelTankLevel"],

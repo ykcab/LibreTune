@@ -2,8 +2,8 @@
 
 use crate::paths::get_dashboards_dir;
 use libretune_core::dash::{
-    self, create_startup_dashboard, create_telemetry_live_dashboard, create_tuning_dashboard,
-    STARTUP_TEMPLATE_VERSION,
+    self, create_race_dashboard, create_startup_dashboard, create_telemetry_live_dashboard,
+    create_tuning_dashboard, RACE_TEMPLATE_VERSION, STARTUP_TEMPLATE_VERSION,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -295,6 +295,7 @@ type DefaultDashBuilder = fn() -> dash::DashFile;
 fn default_dashboard_specs() -> Vec<(&'static str, DefaultDashBuilder)> {
     vec![
         ("Startup.ltdash.xml", create_startup_dashboard),
+        ("Race.ltdash.xml", create_race_dashboard),
         ("Tuning.ltdash.xml", create_tuning_dashboard),
         ("Telemetry Live.ltdash.xml", create_telemetry_live_dashboard),
     ]
@@ -383,6 +384,7 @@ pub(crate) fn ensure_missing_default_dashboards(dir: &Path) -> Result<(), String
 fn built_in_dashboard_needs_refresh(file_name: &str, path: &Path) -> bool {
     let expected = match file_name {
         "Startup.ltdash.xml" => Some(STARTUP_TEMPLATE_VERSION),
+        "Race.ltdash.xml" => Some(RACE_TEMPLATE_VERSION),
         _ => None,
     };
     let Some(version) = expected else {
@@ -411,6 +413,12 @@ pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, Str
             description:
                 "Fixed live telemetry monitor: 3 colon columns (engine / fuel / critical), strip chart, status LEDs"
                     .to_string(),
+        },
+        DashboardTemplateInfo {
+            id: "race".to_string(),
+            name: "Race".to_string(),
+            description: "F1 steering-wheel LCD: shift lights, gear, speed, RPM, race + engine pages"
+                .to_string(),
         },
         DashboardTemplateInfo {
             id: "tuning".to_string(),

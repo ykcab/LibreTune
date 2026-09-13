@@ -13,6 +13,19 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-09-13 — Race F1 steering-wheel display
+
+Race is a composed driver LCD (`RaceMonitor`), not a gauge grid. 16:9 face
+with shift lights, giant gear, speed/RPM, WMI OFF/ARMED/ON, and an engine
+page. Missing channels show "—".
+
+G-lat/G-long and GPS speed aliases are ready for the IMU; those slots stay
+hidden until the channels exist.
+
+**Come back:** track timing (last / running / best / ±delta) needs a clock —
+GPS, a lap beacon, or a button. Accelerometer-only cannot do laps. Wait for
+the IMU model and whether it has GPS.
+
 ### 2026-08-28 — AutoTune second-table picker & table trace line (issue #132 follow-ups)
 
 Two reports from the issue #132 thread after the Aug 20 fixes: a

@@ -30,6 +30,7 @@ import { useDashboardValidation } from './hooks/useDashboardValidation';
 import { useDashboardCRUD } from './hooks/useDashboardCRUD';
 import { useGaugeRangeSync } from './hooks/useGaugeRangeSync';
 import StartupMonitor, { isStartupMonitorPath } from './StartupMonitor';
+import RaceMonitor, { isRaceMonitorPath } from './RaceMonitor';
 import './TsDashboard.css';
 
 /**
@@ -383,6 +384,7 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
   }
 
   const isStartupMonitor = isStartupMonitorPath(selectedPath);
+  const isRaceMonitor = isRaceMonitorPath(selectedPath);
 
   const cluster = dashFile.gauge_cluster;
   const bgColor = tsColorToRgba(cluster.cluster_background_color);
@@ -483,9 +485,13 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
         onDeleteConfirm={handleDeleteDashboard}
       />
 
-      {isStartupMonitor ? (
+      {isStartupMonitor || isRaceMonitor ? (
         <div className="ts-dashboard-startup-host">
-          <StartupMonitor isConnected={isConnected} />
+          {isStartupMonitor ? (
+            <StartupMonitor isConnected={isConnected} />
+          ) : (
+            <RaceMonitor isConnected={isConnected} />
+          )}
         </div>
       ) : designerMode && dashFile ? (
         <DashboardDesigner
