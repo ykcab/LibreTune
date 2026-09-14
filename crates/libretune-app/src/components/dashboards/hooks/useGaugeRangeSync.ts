@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { subscribeTauri } from '../../../utils/subscribeTauri';
 import { DashFile, isGauge } from '../dashTypes';
 
 interface GaugeInfo {
@@ -124,50 +124,25 @@ export function useGaugeRangeSync(
       .catch((e) => console.warn('[useGaugeRangeSync] get_settings failed:', e));
   }, []);
 
-  // Listen for INI / definition / settings changes
   useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-
-    const setup = async () => {
-      const subscribe = async (event: string) => {
-        try {
-          const u = await listen(event, () => setSyncToken((v) => v + 1));
-          if (typeof u === 'function') unlisteners.push(u);
-        } catch (e) {
-          console.warn(`[useGaugeRangeSync] Failed to listen for ${event}:`, e);
-        }
-      };
-
-      await Promise.all([
-        subscribe('ini:changed'),
-        subscribe('definition:loaded'),
-        subscribe('definition:changed'),
-      ]);
-
-      try {
-        const u = await listen<string>('settings:changed', (event) => {
-          if (event.payload === 'auto_sync_gauge_ranges') {
-            invoke<{ auto_sync_gauge_ranges?: boolean }>('get_settings')
-              .then((settings) => {
-                if (settings.auto_sync_gauge_ranges !== undefined) {
-                  setAutoSyncEnabled(!!settings.auto_sync_gauge_ranges);
-                }
-              })
-              .catch((e) => console.warn('[useGaugeRangeSync] get_settings failed:', e));
-          }
-        });
-        if (typeof u === 'function') unlisteners.push(u);
-      } catch (e) {
-        console.warn('[useGaugeRangeSync] Failed to listen for settings:changed:', e);
-      }
-    };
-
-    setup();
-
+    const bump = () => setSyncToken((v) => v + 1);
+    const stop = [
+      subscribeTauri('ini:changed', bump),
+      subscribeTauri('definition:loaded', bump),
+      subscribeTauri('definition:changed', bump),
+      subscribeTauri<string>('settings:changed', (event) => {
+        if (event.payload !== 'auto_sync_gauge_ranges') return;
+        invoke<{ auto_sync_gauge_ranges?: boolean }>('get_settings')
+          .then((settings) => {
+            if (settings.auto_sync_gauge_ranges !== undefined) {
+              setAutoSyncEnabled(!!settings.auto_sync_gauge_ranges);
+            }
+          })
+          .catch((e) => console.warn('[useGaugeRangeSync] get_settings failed:', e));
+      }),
+    ];
     return () => {
-      unlisteners.forEach((u) => {
-        if (typeof u === 'function') u();
-      });
+      for (const un of stop) un();
     };
   }, []);
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { subscribeTauri } from "../utils/subscribeTauri";
 import {
   type BackendTableData,
   type BackendCurveData,
@@ -48,69 +48,57 @@ export function useTableCurveRefresh(deps: UseTableCurveRefreshDeps) {
   // via refs, so table/curve edits don't tear down and re-subscribe
   // this Tauri IPC listener.
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
+    return subscribeTauri<string>("tune:loaded", async (event) => {
+      console.log("Tune loaded from:", event.payload);
+      await new Promise(resolve => setTimeout(resolve, 50));
 
-    (async () => {
-      try {
-        unlisten = await listen<string>("tune:loaded", async (event) => {
-          console.log("Tune loaded from:", event.payload);
-          await new Promise(resolve => setTimeout(resolve, 50));
+      const tabs = tabsRef.current;
+      const tabContents = tabContentsRef.current;
 
-          const tabs = tabsRef.current;
-          const tabContents = tabContentsRef.current;
+      const tablesToRefresh: string[] = [];
+      const curvesToRefresh: string[] = [];
 
-          const tablesToRefresh: string[] = [];
-          const curvesToRefresh: string[] = [];
-
-          for (const tab of tabs) {
-            const tabContent = tabContents[tab.id];
-            if (tabContent && tabContent.type === "table") {
-              tablesToRefresh.push(tab.id);
-            } else if (tabContent && tabContent.type === "curve") {
-              curvesToRefresh.push(tab.id);
-            }
-          }
-
-          const totalToRefresh = tablesToRefresh.length + curvesToRefresh.length;
-          if (totalToRefresh > 0) {
-            console.log(`[tune:loaded] Refreshing ${tablesToRefresh.length} table(s) and ${curvesToRefresh.length} curve(s)`);
-            const updatedTabs = { ...tabContents };
-
-            await Promise.all([
-              ...tablesToRefresh.map(async (tabId) => {
-                try {
-                  const data = await invoke<BackendTableData>("get_table_data", { tableName: tabId });
-                  updatedTabs[tabId] = { type: "table", data: toTunerTableData(data) };
-                  console.log(`[tune:loaded] ✓ Refreshed table '${tabId}': ${data.z_values.length} values`);
-                } catch (e) {
-                  console.error(`[tune:loaded] ✗ Failed to refresh table '${tabId}':`, e);
-                }
-              }),
-              ...curvesToRefresh.map(async (tabId) => {
-                try {
-                  const data = await invoke<BackendCurveData>("get_curve_data", { curveName: tabId });
-                  updatedTabs[tabId] = { type: "curve", data: toCurveData(data) };
-                  console.log(`[tune:loaded] ✓ Refreshed curve '${tabId}': ${data.x_bins.length} points`);
-                } catch (e) {
-                  console.error(`[tune:loaded] ✗ Failed to refresh curve '${tabId}':`, e);
-                }
-              })
-            ]);
-
-            setTabContentsRef.current(updatedTabs);
-            console.log(`[tune:loaded] ✓ Completed refreshing ${totalToRefresh} item(s)`);
-          } else {
-            console.log("[tune:loaded] No open tables or curves to refresh");
-          }
-        });
-      } catch (e) {
-        console.error("Failed to listen for tune:loaded events:", e);
+      for (const tab of tabs) {
+        const tabContent = tabContents[tab.id];
+        if (tabContent && tabContent.type === "table") {
+          tablesToRefresh.push(tab.id);
+        } else if (tabContent && tabContent.type === "curve") {
+          curvesToRefresh.push(tab.id);
+        }
       }
-    })();
 
-    return () => {
-      if (unlisten) unlisten();
-    };
+      const totalToRefresh = tablesToRefresh.length + curvesToRefresh.length;
+      if (totalToRefresh > 0) {
+        console.log(`[tune:loaded] Refreshing ${tablesToRefresh.length} table(s) and ${curvesToRefresh.length} curve(s)`);
+        const updatedTabs = { ...tabContents };
+
+        await Promise.all([
+          ...tablesToRefresh.map(async (tabId) => {
+            try {
+              const data = await invoke<BackendTableData>("get_table_data", { tableName: tabId });
+              updatedTabs[tabId] = { type: "table", data: toTunerTableData(data) };
+              console.log(`[tune:loaded] ✓ Refreshed table '${tabId}': ${data.z_values.length} values`);
+            } catch (e) {
+              console.error(`[tune:loaded] ✗ Failed to refresh table '${tabId}':`, e);
+            }
+          }),
+          ...curvesToRefresh.map(async (tabId) => {
+            try {
+              const data = await invoke<BackendCurveData>("get_curve_data", { curveName: tabId });
+              updatedTabs[tabId] = { type: "curve", data: toCurveData(data) };
+              console.log(`[tune:loaded] ✓ Refreshed curve '${tabId}': ${data.x_bins.length} points`);
+            } catch (e) {
+              console.error(`[tune:loaded] ✗ Failed to refresh curve '${tabId}':`, e);
+            }
+          })
+        ]);
+
+        setTabContentsRef.current(updatedTabs);
+        console.log(`[tune:loaded] ✓ Completed refreshing ${totalToRefresh} item(s)`);
+      } else {
+        console.log("[tune:loaded] No open tables or curves to refresh");
+      }
+    });
   }, []);
 
   // Refresh table/curve data when its tab is activated

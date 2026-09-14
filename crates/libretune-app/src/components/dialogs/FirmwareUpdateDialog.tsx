@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { subscribeTauri } from '../../utils/subscribeTauri';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Cpu } from 'lucide-react';
 import { Dialog, Button } from '../common';
@@ -65,12 +65,12 @@ export function FirmwareUpdateDialog({
 
   useEffect(() => {
     if (!isOpen) return undefined;
-    const unlisten = listen<{ line: string }>('firmware-update:log', (event) => {
-      setLog((prev) => [...prev, event.payload.line]);
+    return subscribeTauri<{ line: string }>('firmware-update:log', (event) => {
+      setLog((prev) => {
+        const next = [...prev, event.payload.line];
+        return next.length > 500 ? next.slice(-500) : next;
+      });
     });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
   }, [isOpen]);
 
   const browseFirmware = useCallback(async () => {

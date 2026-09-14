@@ -32,7 +32,9 @@ export function useRealtimeStream(
           const maxInterval = 2000;
 
           const startPolling = () => {
+            if (cancelled) return;
             pollIntervalHandle = setInterval(async () => {
+              if (cancelled) return;
               try {
                 await fetchRealtimeData();
                 if (pollInterval > 100) {
@@ -55,6 +57,8 @@ export function useRealtimeStream(
 
           startPolling();
         }
+
+        if (cancelled) return;
 
         let lastRestartTime = 0;
         let streamStartedAt = Date.now();

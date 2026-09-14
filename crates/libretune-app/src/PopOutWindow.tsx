@@ -9,7 +9,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, emit, UnlistenFn } from '@tauri-apps/api/event';
+import { emit } from '@tauri-apps/api/event';
+import { subscribeTauri } from './utils/subscribeTauri';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ThemeProvider } from './themes';
 import { TableEditor, TableData as TunerTableData, AutoTune, DataLogView } from './components/tuner-ui';
@@ -142,21 +143,9 @@ export default function PopOutWindow() {
 
   // Listen for realtime updates and update Zustand store
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-
-    (async () => {
-      try {
-        unlisten = await listen<Record<string, number>>('realtime:update', (event) => {
-          useRealtimeStore.getState().updateChannels(event.payload);
-        });
-      } catch (e) {
-        console.error('Failed to listen for realtime updates:', e);
-      }
-    })();
-
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri<Record<string, number>>('realtime:update', (event) => {
+      useRealtimeStore.getState().updateChannels(event.payload);
+    });
   }, []);
 
   // Fetch dialog definition if type is dialog and data is missing
@@ -232,23 +221,12 @@ export default function PopOutWindow() {
   useEffect(() => {
     if (!popOutData) return;
 
-    let unlisten: UnlistenFn | null = null;
-
-    (async () => {
-      try {
-        unlisten = await listen<{ tabId: string; data: unknown }>('table:updated', (event) => {
-          if (event.payload.tabId === popOutData.tabId) {
-            setPopOutData(prev => prev ? { ...prev, data: event.payload.data as TunerTableData } : null);
-          }
-        });
-      } catch (e) {
-        console.error('Failed to listen for table updates:', e);
+    const tabId = popOutData.tabId;
+    return subscribeTauri<{ tabId: string; data: unknown }>('table:updated', (event) => {
+      if (event.payload.tabId === tabId) {
+        setPopOutData(prev => prev ? { ...prev, data: event.payload.data as TunerTableData } : null);
       }
-    })();
-
-    return () => {
-      if (unlisten) unlisten();
-    };
+    });
   }, [popOutData?.tabId]);
 
   // Fetch constants for dialog context

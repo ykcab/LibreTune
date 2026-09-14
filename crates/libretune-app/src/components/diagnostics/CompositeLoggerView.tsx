@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Square, Play, Download, X, Check, XCircle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauri } from "../../utils/subscribeTauri";
 import { useToast } from "../../contexts/ToastContext";
 import type { CurrentProject } from "../../types/app";
 import "./CompositeLoggerView.css";
@@ -112,28 +112,15 @@ export const CompositeLoggerView: React.FC<CompositeLoggerViewProps> = ({
 
   // Listen for real-time composite data
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
-
-    const setupListener = async () => {
-      // `tooth-log-records` streams batches while a capture runs, decoded
-      // against the record layout the INI declares. Append rather than
-      // replace: batches arrive throughout the capture.
-      unlisten = await listen<LoggerRecord[]>("tooth-log-records", (event) => {
-        const mapped = toEntries(event.payload);
-        setLogData((prev) => {
-          const next = prev.concat(mapped);
-          const capped = next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
-          logDataRef.current = capped;
-          return capped;
-        });
+    return subscribeTauri<LoggerRecord[]>("tooth-log-records", (event) => {
+      const mapped = toEntries(event.payload);
+      setLogData((prev) => {
+        const next = prev.concat(mapped);
+        const capped = next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
+        logDataRef.current = capped;
+        return capped;
       });
-    };
-
-    setupListener();
-
-    return () => {
-      if (unlisten) unlisten();
-    };
+    });
   }, []);
 
   // Draw composite waveform

@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { subscribeTauri } from "../utils/subscribeTauri";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { Tab } from "../components/tuner-ui";
 import type { TabContent } from "../types/app";
@@ -86,68 +86,44 @@ export function useTabPopout(deps: UseTabPopoutDeps): {
     [tabs, tabContents, handleTabClose, showToast],
   );
 
-  // Listen for dock events from pop-out windows
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<{
-          tabId: string;
-          type: TabContent["type"];
-          title: string;
-          data: TabContent["data"];
-        }>("tab:dock", (event) => {
-          const { tabId, type, title, data } = event.payload;
-          console.log("Tab docking back:", tabId);
-
-          setTabs((prev) => {
-            if (prev.find((t) => t.id === tabId)) return prev;
-            return [
-              ...prev,
-              { id: tabId, title, icon: type === "table" || type === "curve" ? "table" : type },
-            ];
-          });
-          setTabContents((prev) => ({
-            ...prev,
-            [tabId]: { type, data } as TabContent,
-          }));
-          setActiveTabId(tabId);
-        });
-      } catch (e) {
-        console.error("Failed to listen for tab:dock events:", e);
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri<{
+      tabId: string;
+      type: TabContent["type"];
+      title: string;
+      data: TabContent["data"];
+    }>("tab:dock", (event) => {
+      const { tabId, type, title, data } = event.payload;
+      setTabs((prev) => {
+        if (prev.find((t) => t.id === tabId)) return prev;
+        return [
+          ...prev,
+          { id: tabId, title, icon: type === "table" || type === "curve" ? "table" : type },
+        ];
+      });
+      setTabContents((prev) => ({
+        ...prev,
+        [tabId]: { type, data } as TabContent,
+      }));
+      setActiveTabId(tabId);
+    });
   }, [setTabs, setTabContents, setActiveTabId]);
 
-  // Listen for table updates from pop-out windows
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<{
-          tabId: string;
-          type: TabContent["type"];
-          data: TabContent["data"];
-        }>("table:updated", (event) => {
-          const { tabId, type, data } = event.payload;
-          setTabContents((prev) => {
-            if (!prev[tabId]) return prev;
-            return {
-              ...prev,
-              [tabId]: { type, data } as TabContent,
-            };
-          });
-        });
-      } catch (e) {
-        console.error("Failed to listen for table:updated events:", e);
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri<{
+      tabId: string;
+      type: TabContent["type"];
+      data: TabContent["data"];
+    }>("table:updated", (event) => {
+      const { tabId, type, data } = event.payload;
+      setTabContents((prev) => {
+        if (!prev[tabId]) return prev;
+        return {
+          ...prev,
+          [tabId]: { type, data } as TabContent,
+        };
+      });
+    });
   }, [setTabContents]);
 
   return { handleTabPopout };

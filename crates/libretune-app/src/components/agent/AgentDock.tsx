@@ -5,8 +5,9 @@
  * current enable/config state, and renders the ChatPanel + ProposalQueue side
  * by side. Mounted in App.tsx, gated on the assistant being enabled.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { subscribeTauri } from '../../utils/subscribeTauri';
 import { ChatPanel, type TranscriptEntry } from './ChatPanel';
 import { ProposalQueue } from './ProposalQueue';
 import type { AgentStatus, ApplyProposalsResponse, ProposedAction } from '../../types/agent';
@@ -28,6 +29,7 @@ export function AgentDock({ buildSystemPrompt }: AgentDockProps) {
   const [queue, setQueue] = useState<ProposedAction[]>([]);
   const [appliedNote, setAppliedNote] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const appliedNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Poll status on mount and when settings change (settings:changed event).
   const refreshStatus = async () => {
@@ -41,18 +43,10 @@ export function AgentDock({ buildSystemPrompt }: AgentDockProps) {
 
   useEffect(() => {
     void refreshStatus();
-    let unlisten: (() => void) | undefined;
-    // Listen for settings changes so enabling/config updates the panels live.
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen('settings:changed', () => void refreshStatus());
-      } catch {
-        // non-fatal
-      }
-    })();
+    const stop = subscribeTauri('settings:changed', () => void refreshStatus());
     return () => {
-      unlisten?.();
+      stop();
+      if (appliedNoteTimer.current) clearTimeout(appliedNoteTimer.current);
     };
   }, []);
 
@@ -71,7 +65,8 @@ export function AgentDock({ buildSystemPrompt }: AgentDockProps) {
       parts.push(`Committed ${response.auto_committed.slice(0, 7)}`);
     }
     setAppliedNote(parts.join(' — '));
-    window.setTimeout(() => setAppliedNote(null), 6000);
+    if (appliedNoteTimer.current) clearTimeout(appliedNoteTimer.current);
+    appliedNoteTimer.current = setTimeout(() => setAppliedNote(null), 6000);
   };
 
   const systemPrompt = buildSystemPrompt?.() ?? DEFAULT_SYSTEM_PROMPT;

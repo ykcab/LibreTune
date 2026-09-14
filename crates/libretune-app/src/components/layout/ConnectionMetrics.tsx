@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { subscribeTauri } from '../../utils/subscribeTauri';
 
 interface Metrics {
   tx_bps: number;
@@ -21,7 +21,6 @@ export default function ConnectionMetrics({ compact }: { compact?: boolean }) {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
 
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
     // Add a test hook for Playwright / E2E tests synchronously so it's available
     // even when Tauri's `listen` isn't present in the browser environment.
     const pwHandler = (ev: any) => {
@@ -46,33 +45,25 @@ export default function ConnectionMetrics({ compact }: { compact?: boolean }) {
 
     window.addEventListener('playwright:connection:metrics', pwHandler as EventListener);
 
-    (async () => {
+    const stop = subscribeTauri('connection:metrics', (event) => {
       try {
-        unlisten = await listen('connection:metrics', (event) => {
-          try {
-            const payload = event.payload as any;
-            // Debug log to help diagnose missing metrics at runtime
-            console.debug('[ConnectionMetrics] event payload:', payload);
-            setMetrics({
-              tx_bps: Number(payload.tx_bps) || 0,
-              rx_bps: Number(payload.rx_bps) || 0,
-              tx_pkts_s: Number(payload.tx_pkts_s) || 0,
-              rx_pkts_s: Number(payload.rx_pkts_s) || 0,
-              tx_total: Number(payload.tx_total) || 0,
-              rx_total: Number(payload.rx_total) || 0,
-              timestamp_ms: Number(payload.timestamp_ms) || Date.now(),
-            });
-          } catch (e) {
-            console.error('[ConnectionMetrics] Failed to parse payload:', e);
-          }
+        const payload = event.payload as any;
+        setMetrics({
+          tx_bps: Number(payload.tx_bps) || 0,
+          rx_bps: Number(payload.rx_bps) || 0,
+          tx_pkts_s: Number(payload.tx_pkts_s) || 0,
+          rx_pkts_s: Number(payload.rx_pkts_s) || 0,
+          tx_total: Number(payload.tx_total) || 0,
+          rx_total: Number(payload.rx_total) || 0,
+          timestamp_ms: Number(payload.timestamp_ms) || Date.now(),
         });
       } catch (e) {
-        // If listen isn't available (non-Tauri environment), ignore - Playwright uses the window hook
+        console.error('[ConnectionMetrics] Failed to parse payload:', e);
       }
-    })();
+    });
 
     return () => {
-      if (unlisten) unlisten();
+      stop();
       window.removeEventListener('playwright:connection:metrics', pwHandler as EventListener);
     };
   }, []);

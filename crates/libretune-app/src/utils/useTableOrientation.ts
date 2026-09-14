@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { subscribeTauri } from './subscribeTauri';
 
 /** Apply user cursor/trail colors as root CSS vars (call once in App).
  *  Empty settings leave the theme defaults untouched. */
@@ -27,19 +27,9 @@ export function useTableAccentColorVars(): void {
         .catch(() => {});
     };
     load();
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<string>('settings:changed', (e) => {
-          if (e.payload === 'table_cursor_color' || e.payload === 'table_trail_color') load();
-        });
-      } catch {
-        // Not running under Tauri
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri<string>('settings:changed', (e) => {
+      if (e.payload === 'table_cursor_color' || e.payload === 'table_trail_color') load();
+    });
   }, []);
 }
 
@@ -53,19 +43,9 @@ export function useTrailFadeSec(): number {
         .catch(() => {});
     };
     load();
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<string>('settings:changed', (e) => {
-          if (e.payload === 'table_trail_fade_sec') load();
-        });
-      } catch {
-        // Not running under Tauri
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri<string>('settings:changed', (e) => {
+      if (e.payload === 'table_trail_fade_sec') load();
+    });
   }, []);
   return sec;
 }
@@ -75,7 +55,6 @@ export function useTableYAxisBottom(): boolean {
 
   useEffect(() => {
     let mounted = true;
-    let unlisten: UnlistenFn | null = null;
 
     const load = () => {
       invoke<{ table_y_axis_bottom?: boolean }>('get_settings')
@@ -86,20 +65,13 @@ export function useTableYAxisBottom(): boolean {
     };
 
     load();
-
-    (async () => {
-      try {
-        unlisten = await listen<string>('settings:changed', (event) => {
-          if (event.payload === 'table_y_axis_bottom') load();
-        });
-      } catch {
-        // Not running under Tauri (tests) — setting stays at its default.
-      }
-    })();
+    const stop = subscribeTauri<string>('settings:changed', (event) => {
+      if (event.payload === 'table_y_axis_bottom') load();
+    });
 
     return () => {
       mounted = false;
-      if (unlisten) unlisten();
+      stop();
     };
   }, []);
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { subscribeTauri } from "../utils/subscribeTauri";
 import type { SignatureMismatchInfo } from "../components/dialogs/SignatureMismatchDialog";
 import type { TuneMismatchInfo } from "../components/dialogs/TuneMismatchDialog";
 
@@ -34,89 +34,30 @@ export function useBackendEventListeners(deps: BackendEventListenerDeps): void {
   const checkStatusRef = useRef(checkStatus);
   checkStatusRef.current = checkStatus;
 
-  // Listen for signature mismatch events
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<SignatureMismatchInfo>("signature:mismatch", (event) => {
-          // Partial matches are advisory only (toast in connect flow). Only full
-          // mismatches should reopen this dialog — otherwise every reconnect after
-          // a successful INI update re-prompts the user.
-          if (event.payload.match_type !== "mismatch") {
-            return;
-          }
-          console.log("Signature mismatch detected:", event.payload);
-          setSignatureMismatchInfo(event.payload);
-          setSignatureMismatchOpen(true);
-        });
-      } catch (e) {
-        console.error("Failed to listen for signature:mismatch events:", e);
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri<SignatureMismatchInfo>("signature:mismatch", (event) => {
+      if (event.payload.match_type !== "mismatch") return;
+      setSignatureMismatchInfo(event.payload);
+      setSignatureMismatchOpen(true);
+    });
   }, [setSignatureMismatchInfo, setSignatureMismatchOpen]);
 
-  // Listen for migration needed events from backend
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen("tune:migration_needed", () => {
-          console.log("Tune migration needed - opening dialog");
-          setMigrationReportOpen(true);
-        });
-      } catch (e) {
-        console.error("Failed to listen for tune:migration_needed events:", e);
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri("tune:migration_needed", () => {
+      setMigrationReportOpen(true);
+    });
   }, [setMigrationReportOpen]);
 
-  // Listen for definition:loaded event to ensure INI is ready before table operations
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<{
-          signature: string;
-          tables: number;
-          curves: number;
-          dialogs: number;
-          constants: number;
-        }>("definition:loaded", (event) => {
-          console.log("[App] definition:loaded event:", event.payload);
-          checkStatusRef.current();
-        });
-      } catch (e) {
-        console.error("Failed to listen for definition:loaded events:", e);
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri("definition:loaded", () => {
+      checkStatusRef.current();
+    });
   }, []);
 
-  // Listen for tune mismatch events (after ECU sync)
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<TuneMismatchInfo>("tune:mismatch", (event) => {
-          console.log("Tune mismatch detected:", event.payload);
-          setTuneMismatchInfo(event.payload);
-          setTuneMismatchOpen(true);
-        });
-      } catch (e) {
-        console.error("Failed to listen for tune:mismatch events:", e);
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri<TuneMismatchInfo>("tune:mismatch", (event) => {
+      setTuneMismatchInfo(event.payload);
+      setTuneMismatchOpen(true);
+    });
   }, [setTuneMismatchInfo, setTuneMismatchOpen]);
 }

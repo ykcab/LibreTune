@@ -149,6 +149,10 @@ export const VirtualDynoView: React.FC = () => {
   const startTimeRef = useRef(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const recordIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const liveRef = useRef(live);
+  const speedRef = useRef(speedKph);
+  liveRef.current = live;
+  speedRef.current = speedKph;
 
   const vssReady = vssStatus === 'ready';
 
@@ -244,17 +248,18 @@ export const VirtualDynoView: React.FC = () => {
     if (!recording) return;
 
     recordIntervalRef.current = setInterval(() => {
-      const rpm = live.rpm ?? 0;
-      const speed = speedKph;
+      if (samplesRef.current.length >= 12000) return;
+      const rpm = liveRef.current.rpm ?? 0;
+      const speed = speedRef.current;
       const elapsed = (performance.now() - startTimeRef.current) / 1000;
 
       samplesRef.current.push({
         time_secs: elapsed,
         rpm,
         speed_kph: speed,
-        tps: live.tps,
-        afr: live.afr,
-        map_kpa: live.map ?? live.boost,
+        tps: liveRef.current.tps,
+        afr: liveRef.current.afr,
+        map_kpa: liveRef.current.map ?? liveRef.current.boost,
       });
     }, 100);
 
@@ -264,7 +269,7 @@ export const VirtualDynoView: React.FC = () => {
         recordIntervalRef.current = null;
       }
     };
-  }, [recording, live, speedKph]);
+  }, [recording]);
 
   // Chart rendering
   useEffect(() => {

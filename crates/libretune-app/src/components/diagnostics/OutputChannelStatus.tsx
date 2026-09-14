@@ -14,7 +14,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { subscribeTauri } from "../../utils/subscribeTauri";
 import "./OutputChannelStatus.css";
 
 interface StreamStats {
@@ -127,29 +127,19 @@ export function OutputChannelStatus() {
 
   // Listen for connection:metrics events for live rate data
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<MetricsPayload>("connection:metrics", (event) => {
-          const p = event.payload as MetricsPayload;
-          setMetrics({
-            tx_bps: Number(p.tx_bps) || 0,
-            rx_bps: Number(p.rx_bps) || 0,
-            tx_pkts_s: Number(p.tx_pkts_s) || 0,
-            rx_pkts_s: Number(p.rx_pkts_s) || 0,
-            tx_total: Number(p.tx_total) || 0,
-            rx_total: Number(p.rx_total) || 0,
-            timestamp_ms: Number(p.timestamp_ms) || Date.now(),
-            stream: p.stream,
-          });
-        });
-      } catch {
-        // Non-Tauri environment
-      }
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
+    return subscribeTauri<MetricsPayload>("connection:metrics", (event) => {
+      const p = event.payload;
+      setMetrics({
+        tx_bps: Number(p.tx_bps) || 0,
+        rx_bps: Number(p.rx_bps) || 0,
+        tx_pkts_s: Number(p.tx_pkts_s) || 0,
+        rx_pkts_s: Number(p.rx_pkts_s) || 0,
+        tx_total: Number(p.tx_total) || 0,
+        rx_total: Number(p.rx_total) || 0,
+        timestamp_ms: Number(p.timestamp_ms) || Date.now(),
+        stream: p.stream,
+      });
+    });
   }, []);
 
   if (loading) {

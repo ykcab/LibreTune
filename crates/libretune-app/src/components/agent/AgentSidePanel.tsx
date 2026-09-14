@@ -12,6 +12,7 @@
  */
 import { useCallback, useRef, useState, useEffect, MouseEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { subscribeTauri } from '../../utils/subscribeTauri';
 import { ChatPanel, type TranscriptEntry } from './ChatPanel';
 import { ProposalQueue } from './ProposalQueue';
 import type {
@@ -53,6 +54,7 @@ export function AgentSidePanel({ width, onResize, onCollapse, onPopOut }: AgentS
   // used to pre-fill the input so the user starts from "About <table>: ".
   const [askContext, setAskContext] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const appliedNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cumulative token usage for this chat (cost transparency).
   const [tokensUsed, setTokensUsed] = useState(0);
@@ -61,36 +63,27 @@ export function AgentSidePanel({ width, onResize, onCollapse, onPopOut }: AgentS
   }, []);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        type AskPayload = {
-          table: string;
-          title: string;
-          cells?: number[][];
-          axes?: { x: string; y: string };
-        };
-        unlisten = await listen<AskPayload>('agent:ask', (event) => {
-          const p = event.payload;
-          const parts = [
-            `The user is asking about table "${p.table}" ("${p.title}")`,
-            p.axes ? `axes: x=${p.axes.x}, y=${p.axes.y}` : null,
-            p.cells && p.cells.length === 2
-              ? `current cell selection: (${p.cells[0][0]},${p.cells[0][1]}) to (${p.cells[1][0]},${p.cells[1][1]})`
-              : null,
-          ];
-          setAskContext(parts.filter(Boolean).join('; '));
-          setPrefill({
-            text: `About ${p.title || p.table}: `,
-            nonce: Date.now(),
-          });
-        });
-      } catch {
-        // non-fatal
-      }
-    })();
-    return () => unlisten?.();
+    type AskPayload = {
+      table: string;
+      title: string;
+      cells?: number[][];
+      axes?: { x: string; y: string };
+    };
+    return subscribeTauri<AskPayload>('agent:ask', (event) => {
+      const p = event.payload;
+      const parts = [
+        `The user is asking about table "${p.table}" ("${p.title}")`,
+        p.axes ? `axes: x=${p.axes.x}, y=${p.axes.y}` : null,
+        p.cells && p.cells.length === 2
+          ? `current cell selection: (${p.cells[0][0]},${p.cells[0][1]}) to (${p.cells[1][0]},${p.cells[1][1]})`
+          : null,
+      ];
+      setAskContext(parts.filter(Boolean).join('; '));
+      setPrefill({
+        text: `About ${p.title || p.table}: `,
+        nonce: Date.now(),
+      });
+    });
   }, []);
 
   // --- Chat history state (owned here so it can be saved/switched) ---
@@ -184,18 +177,7 @@ export function AgentSidePanel({ width, onResize, onCollapse, onPopOut }: AgentS
         // non-fatal (no project loaded yet)
       }
     })();
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen('settings:changed', () => void refreshStatus());
-      } catch {
-        // non-fatal
-      }
-    })();
-    return () => {
-      unlisten?.();
-    };
+    return subscribeTauri('settings:changed', () => void refreshStatus());
   }, []);
 
   // Left-edge resize handle: dragging right grows the panel, left shrinks it
@@ -241,8 +223,13 @@ export function AgentSidePanel({ width, onResize, onCollapse, onPopOut }: AgentS
       parts.push('Save the tune, then commit from Tune History to keep this batch in git');
     }
     setAppliedNote(parts.join(' — '));
-    window.setTimeout(() => setAppliedNote(null), 8000);
+    if (appliedNoteTimer.current) clearTimeout(appliedNoteTimer.current);
+    appliedNoteTimer.current = setTimeout(() => setAppliedNote(null), 8000);
   };
+
+  useEffect(() => () => {
+    if (appliedNoteTimer.current) clearTimeout(appliedNoteTimer.current);
+  }, []);
 
   return (
     <div className="agent-panel" style={{ width }}>

@@ -12,7 +12,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { subscribeTauri } from '../../utils/subscribeTauri';
 import { AlertTriangle, Play, Square } from 'lucide-react';
 import './AfrDelayTestDialog.css';
 import DelayTraceOverlay, { DelayTrace, TracePoint } from './DelayTraceOverlay';
@@ -85,7 +85,7 @@ export const AfrDelayTestDialog: React.FC<Props> = ({ isOpen, onClose }) => {
   }, []);
 
   useEffect(() => {
-    const un = listen<Progress>('afr_delay_test:progress', (e) => {
+    return subscribeTauri<Progress>('afr_delay_test:progress', (e) => {
       setProgress(e.payload);
       if (e.payload.trace?.length) {
         setTraces((prev) => [
@@ -94,13 +94,10 @@ export const AfrDelayTestDialog: React.FC<Props> = ({ isOpen, onClose }) => {
             unusable: Boolean(e.payload.unusable) },
         ]);
       }
-      // A settling event carries this step's measurement (or rejection) —
-      // refresh the aggregate table so the grid fills in live.
       if (e.payload.phase === 'settling' || e.payload.phase === 'complete') {
         refreshTable();
       }
     });
-    return () => { un.then((f) => f()); };
   }, [refreshTable]);
 
   useEffect(() => {

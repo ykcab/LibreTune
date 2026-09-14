@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CurrentProject, ConnectionStatus } from "../types/app";
 import { requestReconnect } from "../utils/connectionWorkflow";
+import { subscribeTauri } from "../utils/subscribeTauri";
 import { useRealtimeStore } from "../stores/realtimeStore";
 
 export interface UseEcuEventListenersDeps {
@@ -51,6 +51,14 @@ export function useEcuEventListeners(deps: UseEcuEventListenersDeps) {
   fetchConstantsRef.current = fetchConstants;
   const fetchMenuTreeRef = useRef(fetchMenuTree);
   fetchMenuTreeRef.current = fetchMenuTree;
+  const showLoadingRef = useRef(showLoading);
+  showLoadingRef.current = showLoading;
+  const hideLoadingRef = useRef(hideLoading);
+  hideLoadingRef.current = hideLoading;
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const currentProjectRef = useRef(currentProject);
+  currentProjectRef.current = currentProject;
 
   // Update window title with project name
   useEffect(() => {
@@ -73,82 +81,54 @@ export function useEcuEventListeners(deps: UseEcuEventListenersDeps) {
     }
   }, [activeTabId, currentProject]);
 
-  // Listen for INI change events (requires re-sync)
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlisten = await listen<string>("ini:changed", async (event) => {
-          console.log("INI changed:", event.payload);
-          if (event.payload === "resync_required" && status.state === "Connected") {
-            showLoading("Syncing with ECU...");
-            try {
-              await doSyncRef.current();
-            } finally {
-              hideLoading();
-            }
-          }
-        });
-      } catch (e) {
-        console.error("Failed to listen for ini:changed events:", e);
-      }
-    })();
-    return () => { if (unlisten) unlisten(); };
-  }, [status.state, showLoading, hideLoading]);
-
-  // Listen for unexpected ECU disconnect while streaming.
   useEffect(() => {
     if (!isTauri) return;
-    let unlistenLost: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlistenLost = await listen<string>("ecu:connection_lost", async (event) => {
-          console.warn("ECU connection lost:", event.payload);
-          useRealtimeStore.getState().clearChannels();
-          await checkStatusRef.current();
-          if (currentProject) {
-            requestReconnect({
-              source: "ecu-disconnect",
-              delayMs: 1200,
-              retries: 20,
-              port: currentProject.connection.port ?? undefined,
-            });
-          }
-        });
-      } catch (e) {
-        console.error("Failed to listen for ecu:connection_lost", e);
+    return subscribeTauri<string>("ini:changed", async (event) => {
+      if (event.payload === "resync_required" && statusRef.current.state === "Connected") {
+        showLoadingRef.current("Syncing with ECU...");
+        try {
+          await doSyncRef.current();
+        } finally {
+          hideLoadingRef.current();
+        }
       }
-    })();
-    return () => {
-      if (unlistenLost) unlistenLost();
-    };
-  }, [isTauri, currentProject]);
+    });
+  }, [isTauri]);
 
-  // Listen for demo:changed events
   useEffect(() => {
     if (!isTauri) return;
-    let unlistenDemo: UnlistenFn | null = null;
-    (async () => {
-      try {
-        unlistenDemo = await listen('demo:changed', async (event) => {
-          try {
-            await checkStatusRef.current();
-            const values = await fetchConstantsRef.current();
-            await fetchMenuTreeRef.current(values);
-            const demoEnabled = Boolean(event.payload as unknown as boolean);
-            if (demoEnabled) {
-              try { await invoke('start_realtime_stream', { intervalMs: 50 }); } catch (e) { /* ignore */ }
-            } else {
-              try { await invoke('stop_realtime_stream'); } catch (e) { /* ignore */ }
-            }
-          } catch (e) {
-            console.error('Error handling demo:changed event', e);
-          }
+    return subscribeTauri<string>("ecu:connection_lost", async (event) => {
+      console.warn("ECU connection lost:", event.payload);
+      useRealtimeStore.getState().clearChannels();
+      await checkStatusRef.current();
+      const project = currentProjectRef.current;
+      if (project) {
+        requestReconnect({
+          source: "ecu-disconnect",
+          delayMs: 1200,
+          retries: 20,
+          port: project.connection.port ?? undefined,
         });
-      } catch (e) {
-        console.error('Failed to listen for demo events', e);
       }
-    })();
-    return () => { if (unlistenDemo) unlistenDemo(); };
+    });
+  }, [isTauri]);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    return subscribeTauri("demo:changed", async (event) => {
+      try {
+        await checkStatusRef.current();
+        const values = await fetchConstantsRef.current();
+        await fetchMenuTreeRef.current(values);
+        const demoEnabled = Boolean(event.payload as unknown as boolean);
+        if (demoEnabled) {
+          try { await invoke('start_realtime_stream', { intervalMs: 50 }); } catch { /* ignore */ }
+        } else {
+          try { await invoke('stop_realtime_stream'); } catch { /* ignore */ }
+        }
+      } catch (e) {
+        console.error('Error handling demo:changed event', e);
+      }
+    });
   }, [isTauri]);
 }

@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauri } from "../../utils/subscribeTauri";
 import {
   AlertTriangle,
   Info,
@@ -64,21 +64,10 @@ export default function MigrationReportDialog({
     new Set(["critical"])
   );
 
-  // Listen for migration events
   useEffect(() => {
-    const unlisten = listen<MigrationReport>("tune:migration_needed", (event) => {
+    return subscribeTauri<MigrationReport>("tune:migration_needed", (event) => {
       setReport(event.payload);
     });
-
-    return () => {
-      // Listen may return either a Promise<UnlistenFn> or an UnlistenFn directly depending
-      // on the test/mock environment; support both to avoid unhandled TypeErrors.
-      if (unlisten && typeof (unlisten as any).then === 'function') {
-        (unlisten as any).then((fn: any) => fn && fn());
-      } else if (typeof unlisten === 'function') {
-        (unlisten as any)();
-      }
-    };
   }, []);
 
   // Load report when dialog opens

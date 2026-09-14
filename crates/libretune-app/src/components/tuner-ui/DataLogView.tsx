@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { BarChart3, Circle, FolderOpen, Key, Square, CircleDot, Trash2, Save, Pause, Play, LayoutList, LineChart as LineChartIcon, FileUp, FileDown } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { subscribeTauri } from '../../utils/subscribeTauri';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { useChannels, useRealtimeStore } from '../../stores/realtimeStore';
 import { useGraphLogStore, exportGraphLogSetup, importGraphLogSetup } from '../../stores/graphLogStore';
@@ -225,6 +225,12 @@ export const DataLogView: React.FC = () => {
   const [chartMode, setChartMode] = useState<'graphlog' | 'overlay'>('graphlog');
   const [selectedStatsChannel, setSelectedStatsChannel] = useState<string | null>(null);
   const playbackIntervalRef = useRef<number | null>(null);
+  const isRecordingRef = useRef(isRecording);
+  const viewModeRef = useRef(viewMode);
+  const sampleRateRef = useRef(sampleRate);
+  isRecordingRef.current = isRecording;
+  viewModeRef.current = viewMode;
+  sampleRateRef.current = sampleRate;
   
   // Update chart size based on container
   useEffect(() => {
@@ -390,36 +396,22 @@ export const DataLogView: React.FC = () => {
     return () => window.clearInterval(interval);
   }, [availableChannels.length]);
 
-  // Listen for key-state changes and auto-record if enabled
   useEffect(() => {
     if (!autoRecordEnabled) return;
-
-    const unlisten = listen<string>('realtime:key_state_changed', (event) => {
+    return subscribeTauri<string>('realtime:key_state_changed', (event) => {
       const newState = event.payload as 'on' | 'off';
       setKeyState(newState);
-
-      // Auto-start recording on key-on
-      if (newState === 'on' && !isRecording && viewMode === 'live') {
-        invoke('start_logging', { sampleRate })
-          .then(() => {
-            setIsRecording(true);
-          })
+      if (newState === 'on' && !isRecordingRef.current && viewModeRef.current === 'live') {
+        invoke('start_logging', { sampleRate: sampleRateRef.current })
+          .then(() => setIsRecording(true))
           .catch((err) => console.error('Failed to auto-start logging:', err));
-      }
-      // Auto-stop recording on key-off
-      else if (newState === 'off' && isRecording && viewMode === 'live') {
+      } else if (newState === 'off' && isRecordingRef.current && viewModeRef.current === 'live') {
         invoke('stop_logging')
-          .then(() => {
-            setIsRecording(false);
-          })
+          .then(() => setIsRecording(false))
           .catch((err) => console.error('Failed to auto-stop logging:', err));
       }
     });
-
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [autoRecordEnabled, isRecording, viewMode, sampleRate]);
+  }, [autoRecordEnabled]);
   
   const handleStartLogging = useCallback(async () => {
     try {

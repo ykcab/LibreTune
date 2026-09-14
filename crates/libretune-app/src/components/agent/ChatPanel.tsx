@@ -9,6 +9,7 @@
  */
 import { useState, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { subscribeTauri } from '../../utils/subscribeTauri';
 import { Button } from '../common';
 import { useUnitPreferences } from '../../contexts/useUnitPreferences';
 import type {
@@ -66,28 +67,19 @@ export function ChatPanel({
   // bubble shows live activity — "reading veTable1…" — instead of silence
   // through multi-second read rounds.
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen<{ phase: string; round?: number; tool?: string }>(
-          'agent:progress',
-          (event) => {
-            const p = event.payload;
-            if (p.phase === 'thinking') {
-              setActivity(
-                p.round && p.round > 0 ? `thinking (round ${p.round + 1})…` : 'thinking…'
-              );
-            } else if (p.phase === 'reading_tool') {
-              setActivity(`reading ${p.tool}…`);
-            }
-          }
-        );
-      } catch {
-        // Non-fatal: events are a nicety, the turn still works without them.
-      }
-    })();
-    return () => unlisten?.();
+    return subscribeTauri<{ phase: string; round?: number; tool?: string }>(
+      'agent:progress',
+      (event) => {
+        const p = event.payload;
+        if (p.phase === 'thinking') {
+          setActivity(
+            p.round && p.round > 0 ? `thinking (round ${p.round + 1})…` : 'thinking…'
+          );
+        } else if (p.phase === 'reading_tool') {
+          setActivity(`reading ${p.tool}…`);
+        }
+      },
+    );
   }, []);
 
   // Auto-scroll to the latest message.

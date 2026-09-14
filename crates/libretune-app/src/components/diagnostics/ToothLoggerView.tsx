@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Square, Play, Download, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeTauri } from "../../utils/subscribeTauri";
 import { useToast } from "../../contexts/ToastContext";
 import type { CurrentProject } from "../../types/app";
 import { minMax } from "../../utils/minMax";
@@ -101,32 +101,15 @@ export const ToothLoggerView: React.FC<ToothLoggerViewProps> = ({ onClose }) => 
 
   // Listen for real-time tooth data
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
-
-    const setupListener = async () => {
-      // `tooth-log-records` streams batches while a capture runs. Records
-      // carry the field names the INI declares (`toothTime` on Speeduino,
-      // `time` on rusEFI), so the mapping is by name rather than by position.
-      unlisten = await listen<LoggerRecord[]>("tooth-log-records", (event) => {
-        const mapped = toEntries(event.payload);
-        // APPEND. Batches arrive throughout the capture; replacing would show
-        // only the last 256 records and hide everything that came before.
-        setLogData((prev) => {
-          const next = prev.concat(mapped);
-          // Cap the view. A minute at 4500 rpm is on the order of a hundred
-          // thousand teeth, which no canvas needs and no browser enjoys.
-          const capped = next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
-          logDataRef.current = capped;
-          return capped;
-        });
+    return subscribeTauri<LoggerRecord[]>("tooth-log-records", (event) => {
+      const mapped = toEntries(event.payload);
+      setLogData((prev) => {
+        const next = prev.concat(mapped);
+        const capped = next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
+        logDataRef.current = capped;
+        return capped;
       });
-    };
-
-    setupListener();
-
-    return () => {
-      if (unlisten) unlisten();
-    };
+    });
   }, []);
 
   // RPM from the teeth themselves. The old code took it from the single-shot

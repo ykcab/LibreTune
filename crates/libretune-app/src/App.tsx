@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { subscribeTauri } from "./utils/subscribeTauri";
 import { ThemeProvider, useTheme } from "./themes";
 import { initializeHotkeyManager } from "./services/hotkeyService";
 import { useRealtimeStore } from "./stores/realtimeStore";
@@ -1248,11 +1249,7 @@ function AppContent() {
   refreshOpenTabsRef.current = refreshOpenTabs;
   useEffect(() => {
     if (!isTauri) return;
-    let unlisten: (() => void) | null = null;
-    listen("tune:loaded", () => { refreshOpenTabsRef.current(); })
-      .then((un) => { unlisten = un; })
-      .catch(() => {});
-    return () => { if (unlisten) unlisten(); };
+    return subscribeTauri("tune:loaded", () => { refreshOpenTabsRef.current(); });
   }, []);
 
   /** Re-fetch open table/curve tabs so they reflect the current tune */
@@ -1567,18 +1564,10 @@ function AppContent() {
   // `agent:ask` (the table editors' "Ask AI" button) also opens the panel;
   // the panel itself listens for the payload to pre-fill context.
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let unlistenAsk: (() => void) | undefined;
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen('agent:dock', () => setAgentPanelVisible(true));
-        unlistenAsk = await listen('agent:ask', () => setAgentPanelVisible(true));
-      } catch {
-        // non-fatal
-      }
-    })();
-    return () => { unlisten?.(); unlistenAsk?.(); };
+    const show = () => setAgentPanelVisible(true);
+    const stopDock = subscribeTauri('agent:dock', show);
+    const stopAsk = subscribeTauri('agent:ask', show);
+    return () => { stopDock(); stopAsk(); };
   }, []);
 
   // Toolbar items
