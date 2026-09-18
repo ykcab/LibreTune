@@ -15,7 +15,6 @@ async-trait = { workspace = true }
 
 # Serial communication
 serialport = { workspace = true }
-tokio-serial = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

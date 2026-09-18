@@ -57,8 +57,6 @@ Public modules (post-Phase 7):
 - `plugin_api`, `plugin_system` — WASM plugin host + plugin-facing API.
   (The legacy Java plugin host has been removed; see Phase 3 in the
   changelog.)
-- `port_editor` — Port/pin assignment model behind the hardware
-  configuration UI.
 - `project` — Project model, repository, online-INI repository.
 - `protocol` — `Connection`, `ConnectionState`, transport abstractions
   (Serial, TCP, in-process simulator).

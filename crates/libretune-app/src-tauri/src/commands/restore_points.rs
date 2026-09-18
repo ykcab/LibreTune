@@ -120,11 +120,9 @@ pub async fn load_restore_point(
         let project = proj_guard
             .as_ref()
             .ok_or_else(|| "No project open".to_string())?;
-        let path = project.restore_points_dir().join(&filename);
-        if !path.exists() {
-            return Err(format!("Restore point not found: {}", filename));
-        }
-        path
+        project
+            .restore_point_path(&filename)
+            .map_err(|e| e.to_string())?
     };
 
     crate::commands::load_tune::load_tune(

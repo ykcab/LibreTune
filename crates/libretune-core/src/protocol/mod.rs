@@ -22,7 +22,7 @@ pub use discovery::{
 
 pub use calibration::CalibrationTable;
 pub use command_builder::CommandBuilder;
-pub use commands::{Command, ConsoleCommand};
+pub use commands::ConsoleCommand;
 pub use connection::{
     Connection, ConnectionConfig, ConnectionState, ConnectionType, RuntimeFetch, RuntimePacketMode,
 };

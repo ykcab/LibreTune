@@ -56,7 +56,6 @@ pub mod lua;
 pub mod pin_conflict;
 pub mod plugin_api;
 pub mod plugin_system;
-pub mod port_editor;
 pub mod project;
 pub mod protocol;
 pub mod realtime;

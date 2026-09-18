@@ -2,7 +2,6 @@
 //!
 //! Provides typed access to ECU constants with scale/translate.
 
-use crate::ini::{Constant, DataType};
 use serde::{Deserialize, Serialize};
 
 /// A typed value from ECU memory
@@ -63,75 +62,6 @@ impl Value {
             _ => None,
         }
     }
-}
-
-/// Read a value from raw bytes using a constant definition
-#[allow(dead_code)]
-pub fn read_value(constant: &Constant, bytes: &[u8]) -> Option<Value> {
-    use byteorder::{BigEndian, ByteOrder};
-
-    let raw_value = match constant.data_type {
-        DataType::U08 => bytes.first().map(|b| *b as f64)?,
-        DataType::S08 => bytes.first().map(|b| *b as i8 as f64)?,
-        DataType::U16 => {
-            if bytes.len() >= 2 {
-                BigEndian::read_u16(bytes) as f64
-            } else {
-                return None;
-            }
-        }
-        DataType::S16 => {
-            if bytes.len() >= 2 {
-                BigEndian::read_i16(bytes) as f64
-            } else {
-                return None;
-            }
-        }
-        DataType::U32 => {
-            if bytes.len() >= 4 {
-                BigEndian::read_u32(bytes) as f64
-            } else {
-                return None;
-            }
-        }
-        DataType::S32 => {
-            if bytes.len() >= 4 {
-                BigEndian::read_i32(bytes) as f64
-            } else {
-                return None;
-            }
-        }
-        DataType::F32 => {
-            if bytes.len() >= 4 {
-                BigEndian::read_f32(bytes) as f64
-            } else {
-                return None;
-            }
-        }
-        DataType::F64 => {
-            if bytes.len() >= 8 {
-                BigEndian::read_f64(bytes)
-            } else {
-                return None;
-            }
-        }
-        DataType::Bits => {
-            let byte = bytes.first()?;
-            let bit = constant.bit_position.unwrap_or(0);
-            let value = (byte >> bit) & 1;
-            return Some(Value::Bool(value != 0));
-        }
-        DataType::String => {
-            let s = String::from_utf8_lossy(bytes)
-                .trim_end_matches('\0')
-                .to_string();
-            return Some(Value::String(s));
-        }
-    };
-
-    // Apply scale and translate
-    let display_value = constant.raw_to_display(raw_value);
-    Some(Value::Scalar(display_value))
 }
 
 #[cfg(test)]

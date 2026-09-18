@@ -4,7 +4,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::properties::Properties;
 use crate::tune::TuneFile;
@@ -488,16 +488,58 @@ impl Project {
         Ok(points)
     }
 
-    /// Load a restore point as the current tune
-    pub fn load_restore_point(&mut self, filename: &str) -> io::Result<()> {
-        let restore_path = self.restore_points_dir().join(filename);
+    /// Resolve a restore-point filename received from the UI to the file it
+    /// names inside `restorePoints/`.
+    ///
+    /// The filename crosses the webview boundary unvalidated, and
+    /// `Path::join` happily follows `..`, nested segments and absolute paths
+    /// (an absolute argument replaces the base outright), so the raw join is
+    /// enough to read or delete any file the process can reach. Only a bare
+    /// filename is accepted, and the resolved file must really live in the
+    /// restore directory (this also catches a symlink planted there).
+    pub fn restore_point_path(&self, filename: &str) -> io::Result<PathBuf> {
+        let mut components = Path::new(filename).components();
+        let single_plain_name = matches!(
+            (components.next(), components.next()),
+            (Some(Component::Normal(_)), None)
+        );
+        // On Unix a backslash is an ordinary filename byte, so `..\x` would
+        // count as one Normal component there; refuse both separators
+        // explicitly so the rule is identical on every host.
+        if !single_plain_name || filename.contains(['/', '\\']) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Invalid restore point name: {:?}", filename),
+            ));
+        }
 
-        if !restore_path.exists() {
+        let restore_dir = self.restore_points_dir();
+        let restore_path = restore_dir.join(filename);
+        if !restore_path.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("Restore point not found: {}", filename),
             ));
         }
+
+        let canonical_file = fs::canonicalize(&restore_path)?;
+        let canonical_dir = fs::canonicalize(&restore_dir)?;
+        if canonical_file.parent() != Some(canonical_dir.as_path()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Restore point {} resolves outside the restore directory",
+                    filename
+                ),
+            ));
+        }
+
+        Ok(restore_path)
+    }
+
+    /// Load a restore point as the current tune
+    pub fn load_restore_point(&mut self, filename: &str) -> io::Result<()> {
+        let restore_path = self.restore_point_path(filename)?;
 
         self.current_tune = Some(TuneFile::load(&restore_path)?);
         self.dirty = true;
@@ -507,14 +549,7 @@ impl Project {
 
     /// Delete a restore point
     pub fn delete_restore_point(&self, filename: &str) -> io::Result<()> {
-        let restore_path = self.restore_points_dir().join(filename);
-
-        if !restore_path.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("Restore point not found: {}", filename),
-            ));
-        }
+        let restore_path = self.restore_point_path(filename)?;
 
         fs::remove_file(restore_path)
     }
@@ -756,5 +791,71 @@ mod tests {
 
         // Cleanup
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_restore_point_filename_cannot_escape_restore_dir() {
+        // Fixture: restorePoints/ holds one real point and a second file sits
+        // one level up, standing in for CurrentTune.msq. The filename comes
+        // verbatim from the webview, and `Path::join` lets `..`, separators
+        // and absolute paths (which *replace* the base) straight through, so
+        // without the fence "delete" could remove any file on disk.
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project {
+            path: dir.path().to_path_buf(),
+            config: ProjectConfig::default(),
+            current_tune: None,
+            dirty: false,
+        };
+        let restore_dir = project.restore_points_dir();
+        fs::create_dir_all(&restore_dir).unwrap();
+        let inside = restore_dir.join("Proj_2026-08-09_10.00.00.msq");
+        fs::write(&inside, b"<msq/>").unwrap();
+        let outside = dir.path().join("CurrentTune.msq");
+        fs::write(&outside, b"<msq/>").unwrap();
+        let absolute = outside.to_str().unwrap();
+
+        // Every escape form is refused as InvalidInput — not NotFound, not an
+        // OS error — and touches nothing. Backslash forms are listed as well:
+        // on Unix they parse as a single component, so the fence has to reject
+        // the separator itself rather than rely on `components()`.
+        for bad in [
+            absolute,
+            "../CurrentTune.msq",
+            "..\\CurrentTune.msq",
+            "sub/x.msq",
+            "sub\\x.msq",
+            "..",
+            ".",
+            "",
+        ] {
+            let err = project.delete_restore_point(bad).unwrap_err();
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::InvalidInput,
+                "{bad:?} must be refused, got: {err}"
+            );
+            assert!(outside.exists(), "{bad:?} must not delete the outside file");
+            assert!(inside.exists(), "{bad:?} must not delete the real point");
+        }
+
+        // The load side shares the fence: an existing file outside the
+        // directory is refused before anything is parsed or loaded.
+        let err = project.load_restore_point(absolute).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(project.current_tune.is_none());
+
+        // A well-formed but missing name is a plain NotFound, not a panic from
+        // canonicalizing a path that does not exist.
+        let err = project.delete_restore_point("missing.msq").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+
+        // A genuine restore-point name (what list_restore_points hands back)
+        // still deletes exactly that file.
+        project
+            .delete_restore_point("Proj_2026-08-09_10.00.00.msq")
+            .unwrap();
+        assert!(!inside.exists());
+        assert!(outside.exists());
     }
 }

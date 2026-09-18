@@ -12,8 +12,7 @@ use super::stream::{CommunicationChannel, SerialChannel, TcpChannel};
 use super::{
     commands::{BurnParams, ReadMemoryParams, WriteMemoryParams},
     serial::{clear_buffers, configure_port, list_ports, open_port, PortInfo},
-    Command, CommandBuilder, EnvelopeOrder, Packet, ProtocolError, DEFAULT_BAUD_RATE,
-    DEFAULT_TIMEOUT_MS,
+    CommandBuilder, EnvelopeOrder, Packet, ProtocolError, DEFAULT_BAUD_RATE, DEFAULT_TIMEOUT_MS,
 };
 use crate::ini::{AdaptiveTiming, AdaptiveTimingConfig, EcuType, Endianness, ProtocolSettings};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1184,63 +1183,6 @@ impl Connection {
         tracing::debug!("send_packet_no_response: packet sent, not waiting for response");
 
         Ok(())
-    }
-
-    /// Send a legacy (ASCII) command and get response
-    #[allow(dead_code)]
-    fn send_legacy_command(&mut self, cmd: Command) -> Result<Vec<u8>, ProtocolError> {
-        let channel = self.channel.as_mut().ok_or(ProtocolError::NotConnected)?;
-
-        // Send single command byte
-        let legacy_bytes = [cmd.legacy_byte()];
-        self.tx_bytes = self.tx_bytes.saturating_add(legacy_bytes.len() as u64);
-        self.tx_packets = self.tx_packets.saturating_add(1);
-        channel
-            .write_all(&legacy_bytes)
-            .map_err(|e| ProtocolError::SerialError(e.to_string()))?;
-        channel
-            .flush()
-            .map_err(|e| ProtocolError::SerialError(e.to_string()))?;
-
-        // Read response with timeout
-        let mut response = Vec::new();
-        let mut buffer = [0u8; 256];
-        let start = Instant::now();
-        let timeout = Duration::from_millis(cmd.timeout_ms());
-
-        loop {
-            match channel.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(n) => {
-                    response.extend_from_slice(&buffer[..n]);
-                    // Give a brief moment for more data
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    if response.is_empty() && start.elapsed() < timeout {
-                        continue;
-                    }
-                    break;
-                }
-                Err(e) => return Err(ProtocolError::SerialError(e.to_string())),
-            }
-
-            if start.elapsed() > timeout {
-                break;
-            }
-        }
-
-        if response.is_empty() && cmd.expects_response() {
-            return Err(ProtocolError::Timeout);
-        }
-
-        // Record rx metrics
-        self.rx_bytes = self.rx_bytes.saturating_add(response.len() as u64);
-        if !response.is_empty() {
-            self.rx_packets = self.rx_packets.saturating_add(1);
-        }
-
-        Ok(response)
     }
 
     /// Send a modern protocol packet and get response
