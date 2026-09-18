@@ -72,7 +72,8 @@ impl LogPlayer {
     /// Advance to the next entry
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<&LogEntry> {
-        if self.position < self.entries.len() - 1 {
+        // `len() - 1` underflows on an empty log; add on the other side instead.
+        if self.position + 1 < self.entries.len() {
             self.position += 1;
             self.current()
         } else {
@@ -158,5 +159,53 @@ mod tests {
         let player = make_test_player();
         let rpm_values = player.channel_values("rpm");
         assert_eq!(rpm_values, vec![1000.0, 2000.0, 3000.0]);
+    }
+
+    /// Empty log: every navigation call must be a no-op that reports "nothing here".
+    /// `next()` used to compute `len() - 1` and underflow on this fixture.
+    #[test]
+    fn test_empty_player_navigation_does_not_panic() {
+        let mut player = LogPlayer::new(vec!["rpm".into()], Vec::new());
+
+        assert!(player.is_empty());
+        assert!(player.current().is_none());
+        assert!(player.next().is_none());
+        assert!(player.previous().is_none());
+        // Position must stay pinned at 0, the same neutral value seek/seek_to_time land on.
+        assert_eq!(player.position(), 0);
+
+        player.seek(5);
+        assert_eq!(player.position(), 0);
+        player.seek_to_time(Duration::from_secs(1));
+        assert_eq!(player.position(), 0);
+        assert!(player.next().is_none());
+        assert_eq!(player.position(), 0);
+    }
+
+    /// Single-entry log: the only entry is also the last one, so `next()` has
+    /// nowhere to go and must leave the cursor on it.
+    #[test]
+    fn test_single_entry_player_next_stays_at_end() {
+        let mut player = LogPlayer::new(
+            vec!["rpm".into()],
+            vec![LogEntry::new(Duration::from_secs(0), vec![1000.0])],
+        );
+
+        assert!(player.next().is_none());
+        assert_eq!(player.position(), 0);
+        assert_eq!(player.current().unwrap().values[0], 1000.0);
+    }
+
+    /// Multi-entry log at end of run: `next()` reports None without moving the
+    /// cursor past the last entry, so a UI stepping forward stays on valid data.
+    #[test]
+    fn test_next_at_end_of_log_keeps_last_entry() {
+        let mut player = make_test_player();
+        player.seek(usize::MAX);
+
+        assert_eq!(player.position(), 2);
+        assert!(player.next().is_none());
+        assert_eq!(player.position(), 2);
+        assert_eq!(player.current().unwrap().values[0], 3000.0);
     }
 }

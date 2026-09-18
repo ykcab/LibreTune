@@ -42,10 +42,7 @@ impl EcuType {
             return EcuType::FOME;
         }
 
-        // epicEFI signatures look like "epicEFI dev.2026.08.25.alphax-…" and
-        // older INI filenames used "epicECU". Compare against the lowercased
-        // forms only — a prior check for "epicECU" on a lowercased string never
-        // matched, so live epicEFI boards were misclassified as Unknown.
+        // epicEFI signatures look like "epicEFI …"; older INI filenames used epicECU.
         if sig_lower.contains("epicefi")
             || sig_lower.contains("epicecu")
             || filename_lower
@@ -1166,6 +1163,19 @@ impl ProtocolSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detect_epicefi_from_lowercased_signature() {
+        assert_eq!(
+            EcuType::detect("epicEFI dev.2026.09.12.alphax-8chan_f7.134812558", None),
+            EcuType::EpicEFI
+        );
+        assert_eq!(
+            EcuType::detect("epicECU test", Some("rusEFI2025.epicECU.ini")),
+            EcuType::EpicEFI
+        );
+        assert!(EcuType::EpicEFI.supports_console());
+    }
 
     #[test]
     fn test_data_type_parsing() {
