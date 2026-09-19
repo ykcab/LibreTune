@@ -816,7 +816,6 @@ function AppContent() {
     connecting,
     syncing,
     connect,
-    refreshPorts,
   });
 
   useReconnectHandler({
@@ -826,7 +825,6 @@ function AppContent() {
     projectPort: currentProject?.connection.port ?? null,
     lastSerialPort,
     connect,
-    refreshPorts,
     showToast,
   });
 
