@@ -126,7 +126,7 @@ async fn only_read_tools_are_advertised() {
         .map(|t| t.name.to_string())
         .collect();
 
-    assert_eq!(names.len(), 8, "the eight read tools, no more: {names:?}");
+    assert_eq!(names.len(), 9, "the nine read tools, no more: {names:?}");
     for name in &names {
         assert!(tools::is_read_tool(name), "{name} is not a read tool");
     }

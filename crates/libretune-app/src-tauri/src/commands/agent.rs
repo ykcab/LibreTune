@@ -287,6 +287,7 @@ impl ReadToolExecutor for LiveReadExecutor {
                 | tools::tool_names::SUMMARIZE_TUNE
                 | tools::tool_names::TUNE_HEALTH
                 | tools::tool_names::REALTIME_SNAPSHOT
+                | tools::tool_names::LIVE_WINDOW
                 | tools::tool_names::QUERY_DATALOG
         )
     }
@@ -324,6 +325,7 @@ impl ReadToolExecutor for LiveReadExecutor {
                 }
             }
             tools::tool_names::REALTIME_SNAPSHOT => self.exec_realtime_snapshot().await,
+            tools::tool_names::LIVE_WINDOW => self.exec_live_window(arguments),
             tools::tool_names::QUERY_DATALOG => self.exec_query_datalog(arguments).await,
             _ => json_err(&format!("unhandled read tool '{tool_name}'")),
         }
@@ -651,6 +653,18 @@ impl LiveReadExecutor {
             }
             Err(e) => json_err(&format!("no realtime data ({e})")),
         }
+    }
+
+    fn exec_live_window(&self, arguments: &str) -> String {
+        let seconds = serde_json::from_str::<serde_json::Value>(arguments)
+            .ok()
+            .and_then(|v| {
+                v.get("seconds")
+                    .and_then(|s| s.as_f64().or_else(|| s.as_u64().map(|n| n as f64)))
+            })
+            .unwrap_or(15.0);
+        serde_json::to_string(&crate::live_window::summarize(seconds))
+            .unwrap_or_else(|_| json_err("serialize failed"))
     }
 
     /// `query_datalog`: summary stats or tail rows over a saved log (by

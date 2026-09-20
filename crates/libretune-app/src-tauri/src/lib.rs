@@ -11,6 +11,7 @@ use libretune_core::project::OnlineIniRepository;
 use tokio::sync::Mutex;
 
 mod commands;
+mod live_window;
 mod mcp;
 mod paths;
 mod port_editor; // used by commands/ini_dialogs.rs

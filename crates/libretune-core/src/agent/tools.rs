@@ -22,6 +22,7 @@ pub mod tool_names {
     pub const SUMMARIZE_TUNE: &str = "summarize_tune_context";
     pub const TUNE_HEALTH: &str = "tune_health_check";
     pub const REALTIME_SNAPSHOT: &str = "get_realtime_snapshot";
+    pub const LIVE_WINDOW: &str = "get_live_window";
     pub const QUERY_DATALOG: &str = "query_datalog";
 
     // Propose tools (write, staged for approval — never applied directly)
@@ -100,6 +101,24 @@ pub fn catalogue() -> Vec<ToolDef> {
                           connection."
                 .into(),
             parameters: json!({"type": "object", "properties": {}}),
+        },
+        ToolDef {
+            name: tool_names::LIVE_WINDOW.into(),
+            description: "Min/max/mean/last for drive-pack channels (RPM, MAP, \
+                          TPS, CLT, IAT, AFR, ...) over the recent live stream. \
+                          Does not require a recorded datalog. Use this to see \
+                          what the engine has been doing, not just the current \
+                          tick."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "seconds": {
+                        "type": "number",
+                        "description": "Window length in seconds (2–30, default 15)"
+                    }
+                }
+            }),
         },
         ToolDef {
             name: tool_names::QUERY_DATALOG.into(),
@@ -186,6 +205,7 @@ pub fn is_read_tool(name: &str) -> bool {
             | tool_names::SUMMARIZE_TUNE
             | tool_names::TUNE_HEALTH
             | tool_names::REALTIME_SNAPSHOT
+            | tool_names::LIVE_WINDOW
             | tool_names::QUERY_DATALOG
     )
 }

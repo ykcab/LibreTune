@@ -642,6 +642,7 @@ pub async fn start_realtime_stream(
     let app_handle = app.clone();
 
     let handle = tokio::spawn(async move {
+        crate::live_window::clear();
         let app_state = app_handle.state::<AppState>();
         let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(interval));
 
@@ -848,6 +849,7 @@ pub async fn start_realtime_stream(
                     if let Err(e) = app_handle.emit("realtime:update", &data) {
                         stream_log(&format!("emit FAILED (demo): {}", e));
                     }
+                    crate::live_window::push(current_time_ms, &data);
 
                     // Check for RPM state transitions (key-on/off detection)
                     {
@@ -1069,6 +1071,7 @@ pub async fn start_realtime_stream(
                         if let Err(e) = app_handle.emit("realtime:update", &data) {
                             stream_log(&format!("emit FAILED (real): {}", e));
                         }
+                        crate::live_window::push(current_time_ms, &data);
 
                         // Log parsed channel count — every tick for the first 30, then every 20th (~1/sec)
                         {
