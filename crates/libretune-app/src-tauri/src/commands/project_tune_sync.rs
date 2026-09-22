@@ -12,7 +12,7 @@ pub async fn mark_tune_modified(state: tauri::State<'_, AppState>) -> Result<(),
 
 /// Pause realtime streaming so bulk page writes don't race the OCH poller.
 /// The stream treats write responses as bad realtime frames and disconnects after 3 errors.
-async fn pause_realtime_stream(state: &tauri::State<'_, AppState>) {
+pub(crate) async fn pause_realtime_stream(state: &tauri::State<'_, AppState>) {
     let mut task_guard = state.streaming_task.lock().await;
     if let Some(handle) = task_guard.take() {
         handle.abort();

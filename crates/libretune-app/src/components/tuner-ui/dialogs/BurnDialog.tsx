@@ -93,7 +93,7 @@ export function BurnDialog({ isOpen, onClose, connected, onBurned }: BurnDialogP
           </div>
         ) : (
           <div className="dialog-info">
-            <p>This will write all changes from ECU RAM to flash memory.</p>
+            <p>This will write the current tune to the ECU and burn it to flash memory.</p>
             <p><strong>Warning:</strong> This operation cannot be undone.</p>
             <p>Make sure your tune is tested before burning.</p>
           </div>

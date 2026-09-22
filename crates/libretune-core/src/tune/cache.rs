@@ -121,6 +121,52 @@ impl TuneCache {
         self.page_states.insert(page, PageState::Clean);
     }
 
+    /// Mark a whole loaded page dirty (file content not yet sent to the ECU).
+    ///
+    /// No-op unless the page already holds a real image — same guard as
+    /// `write_bytes`, so a missing page can never become a zero page here.
+    /// File imports (`load_msq_pages_into_cache`) land via `load_page`,
+    /// which marks Clean; without this the Burn step cannot tell an
+    /// MSQ-loaded page from an ECU-synced one and the file never reaches
+    /// the ECU.
+    pub fn mark_page_dirty(&mut self, page: u8) {
+        let len = match self.pages.get(&page) {
+            Some(data) => data.len(),
+            None => return,
+        };
+        match self.page_state(page) {
+            PageState::Clean | PageState::Dirty | PageState::Pending => {}
+            _ => return,
+        }
+        let len = len.min(u16::MAX as usize) as u16;
+        self.shadow.mark_dirty(page, 0, len);
+        self.page_states.insert(page, PageState::Dirty);
+    }
+
+    /// Full-size dirty pages with real content, ready to write to ECU RAM.
+    ///
+    /// Clean pages already match the ECU; zero-filled or short pages are
+    /// never returned — writing those is what bricks tunes.
+    pub fn dirty_page_images(&self) -> Vec<(u8, Vec<u8>)> {
+        let mut pages: Vec<(u8, Vec<u8>)> = self
+            .shadow
+            .dirty_pages()
+            .into_iter()
+            .filter(|page| self.page_state(*page) == PageState::Dirty)
+            .filter_map(|page| {
+                let data = self.pages.get(&page)?;
+                let expected = self.page_size(page)? as usize;
+                if data.len() == expected && data.iter().any(|&b| b != 0) {
+                    Some((page, data.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        pages.sort_by_key(|(p, _)| *p);
+        pages
+    }
+
     /// Read raw bytes from a page (returns None if page not loaded)
     pub fn read_bytes(&self, page: u8, offset: u16, length: u16) -> Option<&[u8]> {
         // Check page is loaded
@@ -358,5 +404,55 @@ mod tests {
         cache.mark_burned();
         assert!(!cache.has_pending_burn());
         assert_eq!(cache.page_state(0), PageState::Clean);
+    }
+
+    #[test]
+    fn mark_page_dirty_needs_a_real_image() {
+        let mut cache = create_test_cache();
+
+        // Clean page with an image becomes dirty.
+        cache.pages.insert(0, vec![7u8; 256]);
+        cache.mark_page_dirty(0);
+        assert_eq!(cache.page_state(0), PageState::Dirty);
+        assert!(cache.has_dirty_data());
+
+        // Missing page: no-op, never invents a zero image.
+        cache.mark_page_dirty(9);
+        assert!(cache.get_page(9).is_none());
+        assert!(!cache.dirty_pages().contains(&9));
+
+        // NotLoaded page with a stray buffer: no-op.
+        cache.pages.insert(1, vec![7u8; 512]);
+        cache.page_states.insert(1, PageState::NotLoaded);
+        cache.mark_page_dirty(1);
+        assert_eq!(cache.page_state(1), PageState::NotLoaded);
+    }
+
+    #[test]
+    fn dirty_page_images_only_full_content_pages() {
+        let mut cache = create_test_cache();
+
+        // Clean pages are skipped: they already match the ECU.
+        assert!(cache.dirty_page_images().is_empty());
+
+        // Full-size page with content, marked dirty like an MSQ import.
+        cache.pages.insert(0, vec![7u8; 256]);
+        cache.mark_page_dirty(0);
+        let images = cache.dirty_page_images();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].0, 0);
+        assert_eq!(images[0].1, vec![7u8; 256]);
+
+        // Zero-filled dirty page is never returned.
+        cache.pages.insert(1, vec![0u8; 512]);
+        cache.page_states.insert(1, PageState::Dirty);
+        cache.shadow.mark_dirty(1, 0, 512);
+        let images = cache.dirty_page_images();
+        assert_eq!(images.len(), 1);
+
+        // Short image is never returned.
+        cache.pages.insert(1, vec![7u8; 100]);
+        let images = cache.dirty_page_images();
+        assert_eq!(images.len(), 1);
     }
 }

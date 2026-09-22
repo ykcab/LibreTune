@@ -56,6 +56,16 @@ pub async fn list_tune_files() -> Result<Vec<String>, String> {
 /// after the fact as a Settings Error).
 ///
 /// Returns: Nothing on success
+/// Burns the current tune to the ECU.
+///
+/// Dirty cache pages (Load Tune imports, cell edits not yet sent) are
+/// written to ECU RAM first, then everything is committed with one burn.
+/// Without the write, Load → Burn silently re-flashes the ECU's previous
+/// tune: `load_tune` only fills the local cache and a bare `b` command
+/// persists whatever RAM already holds.
+///
+/// When nothing is dirty (e.g. live edits, which are already in RAM) this
+/// is just the burn commit, as before.
 #[tauri::command]
 pub async fn burn_to_ecu(
     app: tauri::AppHandle,
@@ -72,13 +82,60 @@ pub async fn burn_to_ecu(
     // Save window state before critical operation (in case of crash)
     let _ = app.save_window_state(StateFlags::all());
 
-    let mut conn_guard = state.connection.lock().await;
-    let conn = conn_guard.as_mut().ok_or("Not connected to ECU")?;
+    // Snapshot dirty pages up front: full-size images with real content.
+    // Zero-filled or short pages are never collected (see
+    // `TuneCache::dirty_page_images`), so a half-loaded tune cannot be
+    // pushed to the ECU here.
+    let pages = {
+        let cache_guard = state.tune_cache.lock().await;
+        cache_guard
+            .as_ref()
+            .map(|cache| cache.dirty_page_images())
+            .unwrap_or_default()
+    };
 
-    // Send burn command to ECU
-    // The 'b' command tells the ECU to write RAM to flash
-    conn.send_burn_command()
-        .map_err(|e| format!("Burn failed: {}", e))?;
+    // Fail fast offline, before pausing the (absent) stream.
+    if state.connection.lock().await.is_none() {
+        return Err("Not connected to ECU".to_string());
+    }
+
+    if !pages.is_empty() {
+        crate::commands::project_tune_sync::pause_realtime_stream(&state).await;
+    }
+
+    let result = {
+        let mut conn_guard = state.connection.lock().await;
+        match conn_guard.as_mut() {
+            Some(conn) => {
+                if pages.is_empty() {
+                    conn.send_burn_command()
+                        .map_err(|e| format!("Burn failed: {}", e))
+                } else {
+                    crate::commands::project_tune_sync::write_pages_and_burn(conn, &pages)
+                }
+            }
+            None => Err("Not connected to ECU".to_string()),
+        }
+    };
+
+    // The stream was paused for the write; bring it back before surfacing
+    // the outcome, so a failed write never leaves the app without data.
+    if !pages.is_empty() {
+        let _ =
+            crate::commands::realtime_stream::start_realtime_stream(app, state.clone(), Some(50))
+                .await;
+    }
+
+    result?;
+
+    // Written pages are now in ECU RAM and committed: Dirty → Pending → Clean.
+    // The burn-only path sends nothing, so states are left untouched.
+    if !pages.is_empty() {
+        if let Some(cache) = state.tune_cache.lock().await.as_mut() {
+            cache.mark_pending();
+            cache.mark_burned();
+        }
+    }
 
     *state.tune_modified.lock().await = false;
 

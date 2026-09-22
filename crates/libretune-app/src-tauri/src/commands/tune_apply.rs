@@ -34,10 +34,16 @@ pub fn pages_with_complete_page_data(def: &EcuDefinition, tune: &TuneFile) -> Ha
 }
 
 /// Load MSQ `<pageData>` that is actually a real image (not a zero fill).
+///
+/// Pages land Dirty, not Clean: file content is not ECU content until it is
+/// written, and the Burn step only picks up Dirty pages. Without this, an
+/// MSQ-loaded page looks ECU-synced and Load → Burn silently re-flashes the
+/// ECU's previous tune.
 pub fn load_msq_pages_into_cache(cache: &mut TuneCache, tune: &TuneFile) {
     for (page_num, page_data) in &tune.pages {
         if page_has_content(page_data) {
             cache.load_page(*page_num, page_data.clone());
+            cache.mark_page_dirty(*page_num);
         }
     }
 }
