@@ -25,6 +25,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { FolderOpen, Play, Check, AlertTriangle, Info } from 'lucide-react';
 import { parseLogFile, type LogSample } from '../../utils/parseLogFile';
 import GraphLog, { type GraphSample } from './GraphLog';
+import { applyMathOverlays, type MathSeriesMap } from '../../utils/mathOverlays';
 import './DatalogViewer.css';
 
 /** Channel name candidates, first match wins. Speeduino/MS naming varies. */
@@ -60,6 +61,8 @@ interface TableData {
   name: string; title: string;
   x_bins: number[]; y_bins: number[]; z_values: number[][];
 }
+/** Project math channel definition (Tools → Math Channels). */
+interface MathChannelDef { name: string; units: string; expression: string }
 
 /** Weighting choices, described by what they do rather than by tool name. */
 const WEIGHTINGS = [
@@ -90,6 +93,11 @@ export const DatalogViewer: React.FC<DatalogViewerProps> = ({ tableName, isConne
   // Traces first: reading the log is the common errand, and tuning a table
   // from it is the occasional one.
   const [view, setView] = useState<'analyse' | 'traces'>('traces');
+  // Math overlays for the traces view (Tools → Math Channels defines them).
+  const [mathChannels, setMathChannels] = useState<MathChannelDef[]>([]);
+  const [enabledOverlays, setEnabledOverlays] = useState<string[]>([]);
+  const [overlaySeries, setOverlaySeries] = useState<MathSeriesMap>({});
+  const [overlayError, setOverlayError] = useState<string | null>(null);
 
   // Config
   const [weighting, setWeighting] = useState('cell_proximity');
@@ -296,6 +304,59 @@ export const DatalogViewer: React.FC<DatalogViewerProps> = ({ tableName, isConne
     [samples],
   );
 
+  useEffect(() => {
+    invoke<MathChannelDef[]>('get_math_channels')
+      .then(setMathChannels)
+      .catch(() => setMathChannels([]));
+  }, []);
+
+  // Evaluate enabled overlays over the loaded rows in one backend call.
+  // Identifiers must match log column names; gaps stay gaps.
+  useEffect(() => {
+    if (!enabledOverlays.length || !samples.length) {
+      setOverlaySeries({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const defs = mathChannels.filter((m) => enabledOverlays.includes(m.name));
+        const result = await invoke<MathSeriesMap>('evaluate_math_series', {
+          overlays: defs.map((d) => ({ name: d.name, expression: d.expression })),
+          rows: samples.map((s) => s.values),
+        });
+        if (!cancelled) {
+          setOverlaySeries(result);
+          setOverlayError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setOverlaySeries({});
+          setOverlayError(String(e));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [samples, mathChannels, enabledOverlays]);
+
+  const toggleOverlay = useCallback(
+    (name: string) =>
+      setEnabledOverlays((prev) =>
+        prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+      ),
+    [],
+  );
+
+  const traced = useMemo(() => {
+    const { samples: merged, channels: overlayKeys } = applyMathOverlays(
+      graphSamples,
+      overlaySeries,
+    );
+    return { samples: merged, channels: [...channels, ...overlayKeys] };
+  }, [graphSamples, overlaySeries, channels]);
+
   const changed = report?.cells.filter((c) => c.delta !== 0).length ?? 0;
 
   return (
@@ -358,7 +419,25 @@ export const DatalogViewer: React.FC<DatalogViewerProps> = ({ tableName, isConne
           // the cursor. Reused rather than rebuilt so both places behave the
           // same and a pane layout set in one is the layout in the other.
           <div className="dv-traces">
-            <GraphLog samples={graphSamples} availableChannels={channels} />
+            {mathChannels.length > 0 && (
+              <div className="dv-bar">
+                <span className="dv-meta">Math overlays:</span>
+                {mathChannels.map((m) => (
+                  <label key={m.name} className="dv-meta" style={{ cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={enabledOverlays.includes(m.name)}
+                      onChange={() => toggleOverlay(m.name)}
+                    />{' '}
+                    {m.name}{m.units ? ` (${m.units})` : ''}
+                  </label>
+                ))}
+              </div>
+            )}
+            {overlayError && (
+              <div className="dv-error"><AlertTriangle size={14} /> {overlayError}</div>
+            )}
+            <GraphLog samples={traced.samples} availableChannels={traced.channels} />
           </div>
         ) : (
           <p className="dv-note dv-pad">Open a log to plot its channels.</p>

@@ -123,7 +123,8 @@ use commands::load_pages::load_all_pages;
 use commands::load_tune::load_tune;
 use commands::lua::run_lua_script;
 use commands::math_channels::{
-    delete_math_channel, get_math_channels, set_math_channel, validate_math_expression,
+    delete_math_channel, evaluate_math_series, get_math_channels, set_math_channel,
+    validate_math_expression,
 };
 use commands::menu::{get_menu_tree, get_searchable_index};
 use commands::metrics::stop_metrics_task;
@@ -307,6 +308,7 @@ pub fn run() {
             set_math_channel,
             delete_math_channel,
             validate_math_expression,
+            evaluate_math_series,
             // INI / protocol defaults
             get_protocol_defaults,
             get_protocol_capabilities,
