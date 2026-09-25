@@ -12,6 +12,7 @@ import {
   useRealtimeStore,
 } from '../../stores/realtimeStore';
 import { KnockSpectrogramView } from '../diagnostics/KnockSpectrogramView';
+import { LiveGraphLog } from '../tuner-ui/LiveGraphLog';
 import './StartupMonitor.css';
 
 export interface StartupMonitorProps {
@@ -183,6 +184,8 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
   const [paused, setPaused] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [showSpectrogram, setShowSpectrogram] = useState(false);
+  /** Channel-trace strip charts below the overlay graph (own pane layouts). */
+  const [showTraces, setShowTraces] = useState(true);
   const frozenRef = useRef<Record<string, number[]>>({});
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastTsRef = useRef(0);
@@ -428,6 +431,18 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="sm-graph-panel">
+        <div className="sm-graph-toolbar">
+          <span className="sm-graph-title">Channel traces · live</span>
+          <div className="sm-graph-actions">
+            <button type="button" onClick={() => setShowTraces((v) => !v)}>
+              {showTraces ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
+        {showTraces && <LiveGraphLog />}
       </div>
 
       <div className="sm-leds">

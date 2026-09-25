@@ -37,6 +37,8 @@ export interface GraphLogProps {
   isRecording?: boolean;
   /** Cursor position 0..1 across the visible window (playback), or null */
   cursorPosition?: number | null;
+  /** Empty-grid hint override (defaults to the record-prompt copy) */
+  emptyHint?: string;
 }
 
 const AXIS_TICKS = 5;
@@ -524,6 +526,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   availableChannels,
   isRecording = false,
   cursorPosition = null,
+  emptyHint,
 }) => {
   const tabs = useGraphLogStore((s) => s.tabs);
   const activeTab = useGraphLogStore(selectActiveTab);
@@ -920,9 +923,10 @@ export const GraphLog: React.FC<GraphLogProps> = ({
       >
         {samples.length === 0 && (
           <div className="graphlog-empty-hint">
-            {isRecording
-              ? 'Recording... waiting for ECU data (engine off or ECU disconnected)'
-              : 'Press Record to start logging'}
+            {emptyHint ??
+              (isRecording
+                ? 'Recording... waiting for ECU data (engine off or ECU disconnected)'
+                : 'Press Record to start logging')}
           </div>
         )}
         {visiblePanes.map((pane) => {
