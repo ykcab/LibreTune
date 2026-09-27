@@ -8,6 +8,7 @@
 use libretune_core::autotune::AutoTuneState;
 use libretune_core::datalog::DataLogger;
 use libretune_core::project::OnlineIniRepository;
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 mod commands;
@@ -538,6 +539,26 @@ pub fn run() {
                 }
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Save the tune before exit; time-boxed so a stuck disk can't trap the app.
+            let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            if window.label() != "main" {
+                return;
+            }
+            api.prevent_close();
+            let win = window.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = win.state::<AppState>();
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(8),
+                    crate::commands::sync_ecu_data::persist_project_tune(&state, true),
+                )
+                .await;
+                let _ = win.close();
+            });
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

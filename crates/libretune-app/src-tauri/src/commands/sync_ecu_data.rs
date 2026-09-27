@@ -46,6 +46,38 @@ fn pages_with_differences(
     diff_pages
 }
 
+/// Best-effort persist of the in-memory tune to CurrentTune.msq.
+/// Skips an unresolved mismatch, and unburned edits unless `allow_dirty`.
+pub(crate) async fn persist_project_tune(state: &AppState, allow_dirty: bool) {
+    if !allow_dirty && *state.tune_modified.lock().await {
+        return;
+    }
+    if state.tune_mismatch_snapshot.lock().await.is_some() {
+        return;
+    }
+    let tune_path = {
+        let project_guard = state.current_project.lock().await;
+        match project_guard.as_ref() {
+            Some(project) => project.current_tune_path(),
+            None => return,
+        }
+    };
+    if crate::commands::save_tune::save_tune_inner(
+        state,
+        Some(tune_path.to_string_lossy().to_string()),
+    )
+    .await
+    .is_err()
+    {
+        return;
+    }
+    let saved = state.current_tune.lock().await.clone();
+    let mut project_guard = state.current_project.lock().await;
+    if let Some(project) = project_guard.as_mut() {
+        project.current_tune = saved;
+    }
+}
+
 async fn restore_baseline_pages(state: &AppState, baseline: &HashMap<u8, Vec<u8>>) {
     {
         let mut cache_guard = state.tune_cache.lock().await;
@@ -425,6 +457,12 @@ pub async fn sync_ecu_data(
                     cache.load_page(*page_num, page_data.clone());
                 }
             }
+        }
+        // Keep the last synced ECU state on disk for offline work.
+        // Mismatch and partial-read paths skip this by design.
+        persist_project_tune(state.inner(), true).await;
+        if size_scalars_patched > 0 {
+            *state.tune_modified.lock().await = true;
         }
     }
 

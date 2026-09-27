@@ -94,6 +94,9 @@ pub async fn disconnect_ecu(state: tauri::State<'_, AppState>) -> Result<(), Str
                 }
                 *guard = None;
                 crate::state::clear_ecu_cancel_handle();
+                drop(guard);
+                // Leave the last ECU-agreed tune on disk.
+                crate::commands::sync_ecu_data::persist_project_tune(&state, false).await;
                 return Ok(());
             }
             Err(_) => {
@@ -115,6 +118,8 @@ pub async fn disconnect_ecu(state: tauri::State<'_, AppState>) -> Result<(), Str
                     }
                     *guard = None;
                     crate::state::clear_ecu_cancel_handle();
+                    drop(guard);
+                    crate::commands::sync_ecu_data::persist_project_tune(&state, false).await;
                     return Ok(());
                 }
                 // Yield to the runtime so the (aborted) streaming task can finish its
