@@ -91,8 +91,9 @@ use commands::demo::{get_demo_mode, set_demo_mode};
 use commands::dyno::{compare_dyno_runs, detect_dyno_headers, load_dyno_run};
 use commands::find_inis::find_matching_inis;
 use commands::firmware_update::{
-    get_firmware_flasher_info, get_firmware_update_guidance, recover_ecu_firmware_dfu,
-    release_serial_port_blockers, suggest_firmware_companion, update_ecu_firmware,
+    detect_dfu_device, flash_firmware_dfu_direct, get_firmware_flasher_info,
+    get_firmware_update_guidance, recover_ecu_firmware_dfu, release_serial_port_blockers,
+    suggest_firmware_companion, update_ecu_firmware,
 };
 use commands::generate_table::generate_table_values;
 use commands::get_table_data::get_table_data;
@@ -392,6 +393,8 @@ pub fn run() {
             get_firmware_update_guidance,
             suggest_firmware_companion,
             update_ecu_firmware,
+            detect_dfu_device,
+            flash_firmware_dfu_direct,
             recover_ecu_firmware_dfu,
             release_serial_port_blockers,
             use_project_tune,

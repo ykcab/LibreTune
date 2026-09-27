@@ -587,6 +587,12 @@ fn run_command_capture(tool: &Path, args: &[&str]) -> Result<(bool, String), Str
 
 fn detect_stm32_usb_port(cli: &Path) -> Option<String> {
     let (_, listing) = run_command_capture(cli, &["-l"]).ok()?;
+    parse_stm32_programmer_usb_port(&listing)
+}
+
+/// Pure parser for `STM32_Programmer_CLI -l` output, split out so the DFU
+/// detection path and unit tests share the same logic.
+fn parse_stm32_programmer_usb_port(listing: &str) -> Option<String> {
     for line in listing.lines() {
         let trimmed = line.trim();
         if trimmed.contains("USB") && trimmed.contains(':') {
@@ -601,6 +607,117 @@ fn detect_stm32_usb_port(cli: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Count DFU devices reported by `dfu-util -l`.
+///
+/// Typical hit: `Found DFU: [0483:df11] ver=2200, ...`. When no device is
+/// attached dfu-util prints `No DFU capable USB device available` (count 0).
+fn parse_dfu_util_device_count(listing: &str) -> usize {
+    listing
+        .lines()
+        .filter(|l| l.to_ascii_lowercase().contains("found dfu"))
+        .count()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DfuDeviceStatus {
+    pub detected: bool,
+    pub usb_port: Option<String>,
+    pub dfu_util_devices: usize,
+    pub stm32_cli_found: bool,
+    pub dfu_util_found: bool,
+    pub detail: String,
+}
+
+/// Check whether a board already in STM32 DFU mode is visible over USB.
+///
+/// Unlike `update_ecu_firmware` (which reboots a connected ECU with `cmd_dfu`
+/// first), this probes the DFU USB device directly with the external flash
+/// tools, so a bricked / blank board that never shows up as a serial port is
+/// still detected. Used by the "Flash in DFU" dialog mode.
+#[tauri::command]
+pub async fn detect_dfu_device() -> Result<DfuDeviceStatus, String> {
+    blocking_flash_step(|| {
+        let stm32_cli = find_stm32_programmer_cli();
+        let dfu_util = find_dfu_util();
+        let mut detail_lines: Vec<String> = Vec::new();
+
+        let mut usb_port: Option<String> = None;
+        if let Some(ref cli) = stm32_cli {
+            match run_command_capture(cli, &["-l"]) {
+                Ok((_, listing)) => {
+                    usb_port = parse_stm32_programmer_usb_port(&listing);
+                    for line in listing.lines().map(str::trim).filter(|l| !l.is_empty()) {
+                        detail_lines.push(format!("cubeprog: {line}"));
+                    }
+                }
+                Err(e) => detail_lines.push(format!("cubeprog: {e}")),
+            }
+        }
+
+        let mut dfu_util_devices: usize = 0;
+        if let Some(ref tool) = dfu_util {
+            match run_command_capture(tool, &["-l"]) {
+                Ok((_, listing)) => {
+                    dfu_util_devices = parse_dfu_util_device_count(&listing);
+                    // Keep the raw listing short — one line per found device, or
+                    // the tool's own "no device" message.
+                    let mut kept = 0;
+                    for line in listing.lines().map(str::trim).filter(|l| !l.is_empty()) {
+                        let lower = line.to_ascii_lowercase();
+                        if lower.contains("found dfu")
+                            || lower.contains("no dfu")
+                            || lower.contains("no capable")
+                        {
+                            detail_lines.push(format!("dfu-util: {line}"));
+                            kept += 1;
+                        }
+                        if kept >= 8 {
+                            break;
+                        }
+                    }
+                    if kept == 0 {
+                        detail_lines.push("dfu-util: no DFU devices listed".into());
+                    }
+                }
+                Err(e) => detail_lines.push(format!("dfu-util: {e}")),
+            }
+        }
+
+        if stm32_cli.is_none() && dfu_util.is_none() {
+            return Ok(DfuDeviceStatus {
+                detected: false,
+                usb_port: None,
+                dfu_util_devices: 0,
+                stm32_cli_found: false,
+                dfu_util_found: false,
+                detail: "No DFU flasher found. Install STM32CubeProgrammer \
+                    (STM32_Programmer_CLI) or dfu-util and ensure it is on PATH."
+                    .to_string(),
+            });
+        }
+
+        let detected = usb_port.is_some() || dfu_util_devices > 0;
+        if detected && detail_lines.is_empty() {
+            detail_lines.push("DFU device detected.".into());
+        } else if !detected && detail_lines.is_empty() {
+            detail_lines.push(
+                "No DFU device found. Put the board in DFU mode (BOOT/PROG jumper + \
+                 power cycle) and check the USB cable."
+                    .into(),
+            );
+        }
+        Ok(DfuDeviceStatus {
+            detected,
+            usb_port,
+            dfu_util_devices,
+            stm32_cli_found: stm32_cli.is_some(),
+            dfu_util_found: dfu_util.is_some(),
+            detail: detail_lines.join("\n"),
+        })
+    })
+    .await
 }
 
 fn firmware_extension(path: &Path) -> String {
@@ -624,6 +741,12 @@ fn default_bin_flash_address() -> u32 {
     // rusEFI / epicEFI application region when a bootloader occupies the first 32 KB.
     0x0800_8000
 }
+
+/// `.bin` flash address for a board in ROM DFU mode with no bootloader
+/// (same as epicEFI Firmware Flasher / rusEFI Console). A raw `.bin` has no
+/// load address of its own, and writing it at the application offset above
+/// on a bootloader-less board bricks it — DFU boots from 0x08000000.
+const DFU_BIN_FLASH_ADDRESS: u32 = 0x0800_0000;
 
 const OPENBLT_BOOTLOADER_ADDRESS: u32 = 0x0800_0000;
 
@@ -1161,6 +1284,88 @@ pub async fn update_ecu_firmware(
     })
 }
 
+/// Flash a single firmware image to a board that is ALREADY in DFU mode.
+///
+/// Unlike `update_ecu_firmware`, this never touches the serial connection and
+/// never needs an INI/`cmd_dfu`: the ECU is expected to be sitting in the
+/// STM32 ROM bootloader (BOOT jumper, blank/broken flash). The image is
+/// written straight to flash with STM32CubeProgrammer (preferred) or
+/// dfu-util, using the same 0x08000000 `.bin` address as the normal DFU path.
+#[tauri::command]
+pub async fn flash_firmware_dfu_direct(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    firmware_path: String,
+    bin_flash_address: Option<String>,
+) -> Result<FirmwareUpdateResult, String> {
+    let path = PathBuf::from(&firmware_path);
+    validate_firmware_file(&path, "dfu")?;
+
+    let ext = firmware_extension(&path);
+    let resolved_bin_address = if ext == "bin" {
+        Some(parse_flash_address(bin_flash_address.as_deref())?.unwrap_or(DFU_BIN_FLASH_ADDRESS))
+    } else {
+        None
+    };
+
+    let mut log = Vec::new();
+    push_log(
+        &app,
+        &mut log,
+        "Flashing board already in DFU mode (no ECU reboot)…",
+    );
+
+    let flash_output = if let Some(cli) = find_stm32_programmer_cli() {
+        if ext == "bin" {
+            push_log(
+                &app,
+                &mut log,
+                format!(
+                    "Flashing .bin at 0x{:08X} with {}…",
+                    resolved_bin_address.unwrap_or(DFU_BIN_FLASH_ADDRESS),
+                    cli.display()
+                ),
+            );
+        } else {
+            push_log(&app, &mut log, format!("Flashing with {}…", cli.display()));
+        }
+        let firmware = path.clone();
+        blocking_flash_step(move || {
+            flash_with_stm32_programmer(&cli, &firmware, resolved_bin_address)
+        })
+        .await?
+    } else if let Some(tool) = find_dfu_util() {
+        push_log(&app, &mut log, format!("Flashing with {}…", tool.display()));
+        let firmware = path.clone();
+        blocking_flash_step(move || {
+            flash_with_dfu_util(&tool, &firmware, resolved_bin_address)
+        })
+        .await?
+    } else {
+        return Err(
+            "No DFU flasher found. Install STM32CubeProgrammer (STM32_Programmer_CLI) or dfu-util and ensure it is on PATH.".to_string(),
+        );
+    };
+
+    for line in flash_output
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        push_log(&app, &mut log, line);
+    }
+
+    let message = "Direct DFU flash complete. Disconnect USB, remove the BOOT jumper, power-cycle the ECU, then reconnect in normal mode.";
+    push_log(&app, &mut log, message);
+    install_bundled_ini(&app, &state, &path, &mut log).await;
+    Ok(FirmwareUpdateResult {
+        success: true,
+        log,
+        message: message.to_string(),
+        should_reconnect: false,
+    })
+}
+
 fn validate_recovery_image(path: &Path, label: &str) -> Result<(), String> {
     if !path.is_file() {
         return Err(format!("{} file not found: {}", label, path.display()));
@@ -1396,5 +1601,41 @@ mod tests {
             ini_prefer_prefix(Some("rusEFI master.2026.09.02")).as_deref(),
             Some("rusefi")
         );
+    }
+
+    #[test]
+    fn stm32_programmer_list_finds_usb_port() {
+        let listing = "-------------------------------------------------------------------\n\
+             STM32CubeProgrammer v2.15.0\n\
+             -------------------------------------------------------------------\n\
+             \n\
+             =================== USB Port ===================\n\
+             \n\
+             USB Port :\n\
+               USB1\n";
+        assert_eq!(
+            parse_stm32_programmer_usb_port(listing).as_deref(),
+            Some("USB1")
+        );
+    }
+
+    #[test]
+    fn stm32_programmer_list_no_device_gives_none() {
+        let listing = "STM32CubeProgrammer v2.15.0\nNo STM32 target found\n";
+        assert_eq!(parse_stm32_programmer_usb_port(listing), None);
+    }
+
+    #[test]
+    fn dfu_util_list_counts_found_devices() {
+        let listing = "dfu-util 0.11\n\
+             Copyright 2005-2009 Weston Schmidt, Harald Welte and OpenMoko Inc.\n\
+             Found DFU: [0483:df11] ver=2200, devnum=23, cfg=1, intf=0, path=\"1-2\", alt=3, name=\"@Device Feature/0xFFFF0000/01*004Ge\"\n";
+        assert_eq!(parse_dfu_util_device_count(listing), 1);
+    }
+
+    #[test]
+    fn dfu_util_list_no_device_counts_zero() {
+        let listing = "dfu-util 0.11\nNo DFU capable USB device available\n";
+        assert_eq!(parse_dfu_util_device_count(listing), 0);
     }
 }

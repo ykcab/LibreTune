@@ -39,6 +39,15 @@ interface FirmwareUpdateResult {
   should_reconnect: boolean;
 }
 
+interface DfuDeviceStatus {
+  detected: boolean;
+  usb_port: string | null;
+  dfu_util_devices: number;
+  stm32_cli_found: boolean;
+  dfu_util_found: boolean;
+  detail: string;
+}
+
 export interface FirmwareUpdateDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -47,7 +56,7 @@ export interface FirmwareUpdateDialogProps {
 }
 
 type UpdateMethod = 'dfu' | 'openblt';
-type DialogMode = 'update' | 'recovery';
+type DialogMode = 'update' | 'dfu_direct' | 'recovery';
 
 export function FirmwareUpdateDialog({
   isOpen,
@@ -65,6 +74,8 @@ export function FirmwareUpdateDialog({
   const [guidance, setGuidance] = useState<FirmwareUpdateGuidance | null>(null);
   const [companion, setCompanion] = useState<FirmwareCompanionSuggestion | null>(null);
   const [acknowledgeRisk, setAcknowledgeRisk] = useState(false);
+  const [dfuStatus, setDfuStatus] = useState<DfuDeviceStatus | null>(null);
+  const [dfuChecking, setDfuChecking] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,10 +93,25 @@ export function FirmwareUpdateDialog({
     setShouldReconnect(false);
     setAcknowledgeRisk(false);
     setCompanion(null);
+    setDfuStatus(null);
     invoke<FirmwareFlasherInfo>('get_firmware_flasher_info')
       .then(setFlasherInfo)
       .catch((e) => setError(String(e)));
+    setDfuChecking(true);
+    invoke<DfuDeviceStatus>('detect_dfu_device')
+      .then(setDfuStatus)
+      .catch((e) => setError(String(e)))
+      .finally(() => setDfuChecking(false));
   }, [isOpen]);
+
+  const refreshDfuStatus = useCallback(() => {
+    setDfuChecking(true);
+    setError(null);
+    invoke<DfuDeviceStatus>('detect_dfu_device')
+      .then(setDfuStatus)
+      .catch((e) => setError(String(e)))
+      .finally(() => setDfuChecking(false));
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -198,15 +224,18 @@ export function FirmwareUpdateDialog({
         firmwarePath &&
         binFlashAddress.trim().length > 0 &&
         !!flasherInfo?.stm32_programmer_cli
-      : isConnected &&
-        firmwarePath &&
-        riskAckSatisfied &&
-        !openbltNeedsObjcopy &&
-        (method !== 'dfu' || !isBinFirmware || binFlashAddress.trim().length > 0) &&
-        ((method === 'dfu' &&
-          dfuAvailable &&
-          (flasherInfo?.stm32_programmer_cli || flasherInfo?.dfu_util)) ||
-          (method === 'openblt' && openbltAvailable && flasherInfo?.bootcommander));
+      : mode === 'dfu_direct'
+        ? !!firmwarePath &&
+          !!(flasherInfo?.stm32_programmer_cli || flasherInfo?.dfu_util)
+        : isConnected &&
+          firmwarePath &&
+          riskAckSatisfied &&
+          !openbltNeedsObjcopy &&
+          (method !== 'dfu' || !isBinFirmware || binFlashAddress.trim().length > 0) &&
+          ((method === 'dfu' &&
+            dfuAvailable &&
+            (flasherInfo?.stm32_programmer_cli || flasherInfo?.dfu_util)) ||
+            (method === 'openblt' && openbltAvailable && flasherInfo?.bootcommander));
 
   const handleUpdate = useCallback(async () => {
     if (!firmwarePath) return;
@@ -224,12 +253,18 @@ export function FirmwareUpdateDialog({
               appFlashAddress: binFlashAddress,
               fullErase,
             })
-          : await invoke<FirmwareUpdateResult>('update_ecu_firmware', {
-              firmwarePath,
-              method,
-              binFlashAddress: isBinFirmware ? binFlashAddress : null,
-              acknowledgeRisk,
-            });
+          : mode === 'dfu_direct'
+            ? await invoke<FirmwareUpdateResult>('flash_firmware_dfu_direct', {
+                firmwarePath,
+                // DFU .bin address is fixed at 0x08000000 (same as epicEFI Flasher).
+                binFlashAddress: null,
+              })
+            : await invoke<FirmwareUpdateResult>('update_ecu_firmware', {
+                firmwarePath,
+                method,
+                binFlashAddress: isBinFirmware ? binFlashAddress : null,
+                acknowledgeRisk,
+              });
       setLog(result.log);
       setResultMessage(result.message);
       setShouldReconnect(result.should_reconnect);
@@ -261,15 +296,37 @@ export function FirmwareUpdateDialog({
   const missingFlasher =
     mode === 'recovery'
       ? !flasherInfo?.stm32_programmer_cli
-      : method === 'dfu'
+      : mode === 'dfu_direct'
         ? !flasherInfo?.stm32_programmer_cli && !flasherInfo?.dfu_util
-        : !flasherInfo?.bootcommander;
+        : method === 'dfu'
+          ? !flasherInfo?.stm32_programmer_cli && !flasherInfo?.dfu_util
+          : !flasherInfo?.bootcommander;
 
   const showMethodHint =
     guidance &&
     guidance.recommended_method !== method &&
     mode === 'update' &&
     firmwarePath;
+
+  const dfuStatusLine = dfuChecking
+    ? 'Checking for DFU device…'
+    : dfuStatus?.detected
+      ? `DFU device detected${dfuStatus.usb_port ? ` on ${dfuStatus.usb_port}` : ''}${
+          dfuStatus.dfu_util_devices > 0 ? ` (${dfuStatus.dfu_util_devices} via dfu-util)` : ''
+        }.`
+      : 'No DFU device found.';
+
+  const primaryLabel = isUpdating
+    ? mode === 'recovery'
+      ? 'Recovering…'
+      : mode === 'dfu_direct'
+        ? 'Flashing…'
+        : 'Updating…'
+    : mode === 'recovery'
+      ? 'Recover ECU'
+      : mode === 'dfu_direct'
+        ? 'Flash in DFU'
+        : 'Update Firmware';
 
   return (
     <Dialog
@@ -286,7 +343,9 @@ export function FirmwareUpdateDialog({
           <p>
             {mode === 'recovery'
               ? 'Recover an ECU that no longer boots after a DFU flash. Put the board in DFU mode manually (PROG button + power cycle) — no tuning connection required.'
-              : 'Flash new firmware to your ECU. The tuning connection will drop while the ECU reboots into bootloader mode.'}
+              : mode === 'dfu_direct'
+                ? 'Board is already in DFU mode (broken firmware / BOOT jumper). Flashes one firmware image straight over USB — no ECU connection, no reboot command.'
+                : 'Flash new firmware to your ECU. The tuning connection will drop while the ECU reboots into bootloader mode.'}
           </p>
         </div>
 
@@ -304,6 +363,19 @@ export function FirmwareUpdateDialog({
               />
               <span>
                 <strong>Normal update</strong> — ECU is running and connected
+              </span>
+            </label>
+            <label className="firmware-method-option">
+              <input
+                type="radio"
+                name="fw-mode"
+                value="dfu_direct"
+                checked={mode === 'dfu_direct'}
+                onChange={() => setMode('dfu_direct')}
+                disabled={isUpdating}
+              />
+              <span>
+                <strong>Flash in DFU</strong> — board already in DFU, no connection
               </span>
             </label>
             <label className="firmware-method-option">
@@ -403,6 +475,78 @@ export function FirmwareUpdateDialog({
                 </li>
               </ul>
             </div>
+          </>
+        )}
+
+        {mode === 'dfu_direct' && (
+          <>
+            <div
+              className={
+                dfuStatus?.detected
+                  ? 'firmware-update-success'
+                  : 'firmware-update-warning'
+              }
+            >
+              <div className="firmware-dfu-status-row">
+                <span>{dfuStatusLine}</span>
+                <Button
+                  variant="secondary"
+                  onClick={() => refreshDfuStatus()}
+                  disabled={isUpdating || dfuChecking}
+                >
+                  {dfuChecking ? 'Checking…' : 'Refresh'}
+                </Button>
+              </div>
+              {dfuStatus && !dfuStatus.detected && dfuStatus.detail && (
+                <p className="firmware-reconnect-hint">{dfuStatus.detail}</p>
+              )}
+            </div>
+
+            {missingFlasher && (
+              <div className="firmware-update-warning">
+                Install STM32CubeProgrammer or dfu-util and ensure it is on PATH.
+              </div>
+            )}
+
+            <div className="firmware-update-field">
+              <label>Firmware file</label>
+              <div className="firmware-file-row">
+                <code className="firmware-file-path">
+                  {firmwarePath ?? 'No file selected'}
+                </code>
+                <Button
+                  variant="secondary"
+                  onClick={() => void browseFirmware()}
+                  disabled={isUpdating}
+                >
+                  Browse…
+                </Button>
+              </div>
+              <p className="firmware-flasher-hint">
+                {flasherInfo?.stm32_programmer_cli ? (
+                  <>
+                    Use <code>rusefi.hex</code> or a <code>.dfu</code> package. A
+                    raw <code>.bin</code> flashes at <code>0x08000000</code>{' '}
+                    (same as epicEFI Firmware Flasher).
+                  </>
+                ) : (
+                  <>
+                    Only <code>dfu-util</code> found — use a <code>.bin</code>{' '}
+                    (flashes at <code>0x08000000</code>) or <code>.dfu</code>{' '}
+                    package. <code>.hex</code>/.<code>srec</code> need
+                    STM32CubeProgrammer.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {!isUpdating && isConnected && (
+              <div className="firmware-update-warning">
+                You are still connected to a running ECU — use Normal update
+                instead, or disconnect first so the DFU device is not claimed by
+                the tuning connection.
+              </div>
+            )}
           </>
         )}
 
@@ -655,13 +799,7 @@ export function FirmwareUpdateDialog({
           onClick={() => void handleUpdate()}
           disabled={!canFlash || isUpdating}
         >
-          {isUpdating
-            ? mode === 'recovery'
-              ? 'Recovering…'
-              : 'Updating…'
-            : mode === 'recovery'
-              ? 'Recover ECU'
-              : 'Update Firmware'}
+          {primaryLabel}
         </Button>
       </Dialog.Footer>
     </Dialog>
