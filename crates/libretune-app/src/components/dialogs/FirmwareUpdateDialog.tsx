@@ -22,6 +22,15 @@ interface FirmwareUpdateResult {
   should_reconnect: boolean;
 }
 
+interface DfuDeviceStatus {
+  detected: boolean;
+  usb_port: string | null;
+  dfu_util_devices: number;
+  stm32_cli_found: boolean;
+  dfu_util_found: boolean;
+  detail: string;
+}
+
 export interface FirmwareUpdateDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -29,7 +38,7 @@ export interface FirmwareUpdateDialogProps {
   iniCapabilities: IniCapabilities | null;
 }
 
-type DialogMode = 'update' | 'recovery';
+type DialogMode = 'update' | 'dfu_direct' | 'recovery';
 
 export function FirmwareUpdateDialog({
   isOpen,
@@ -42,6 +51,8 @@ export function FirmwareUpdateDialog({
   const [bootloaderPath, setBootloaderPath] = useState<string | null>(null);
   const [fullErase, setFullErase] = useState(true);
   const [flasherInfo, setFlasherInfo] = useState<FirmwareFlasherInfo | null>(null);
+  const [dfuStatus, setDfuStatus] = useState<DfuDeviceStatus | null>(null);
+  const [dfuChecking, setDfuChecking] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,10 +69,25 @@ export function FirmwareUpdateDialog({
     setError(null);
     setResultMessage(null);
     setShouldReconnect(false);
+    setDfuStatus(null);
     invoke<FirmwareFlasherInfo>('get_firmware_flasher_info')
       .then(setFlasherInfo)
       .catch((e) => setError(String(e)));
+    setDfuChecking(true);
+    invoke<DfuDeviceStatus>('detect_dfu_device')
+      .then(setDfuStatus)
+      .catch((e) => setError(String(e)))
+      .finally(() => setDfuChecking(false));
   }, [isOpen]);
+
+  const refreshDfuStatus = useCallback(() => {
+    setDfuChecking(true);
+    setError(null);
+    invoke<DfuDeviceStatus>('detect_dfu_device')
+      .then(setDfuStatus)
+      .catch((e) => setError(String(e)))
+      .finally(() => setDfuChecking(false));
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -121,7 +147,9 @@ export function FirmwareUpdateDialog({
   const canFlash =
     mode === 'recovery'
       ? !!bootloaderPath && !!firmwarePath && hasRecoveryTool
-      : isConnected && !!firmwarePath && dfuAvailable && hasDfuTool;
+      : mode === 'dfu_direct'
+        ? !!firmwarePath && hasDfuTool
+        : isConnected && !!firmwarePath && dfuAvailable && hasDfuTool;
 
   const handleUpdate = useCallback(async () => {
     if (!firmwarePath) return;
@@ -140,13 +168,19 @@ export function FirmwareUpdateDialog({
               appFlashAddress: null,
               fullErase,
             })
-          : await invoke<FirmwareUpdateResult>('update_ecu_firmware', {
-              firmwarePath,
-              method: 'dfu',
-              // DFU .bin address is fixed at 0x08000000 (same as epicEFI Flasher).
-              binFlashAddress: null,
-              acknowledgeRisk: true,
-            });
+          : mode === 'dfu_direct'
+            ? await invoke<FirmwareUpdateResult>('flash_firmware_dfu_direct', {
+                firmwarePath,
+                // DFU .bin address is fixed at 0x08000000 (same as epicEFI Flasher).
+                binFlashAddress: null,
+              })
+            : await invoke<FirmwareUpdateResult>('update_ecu_firmware', {
+                firmwarePath,
+                method: 'dfu',
+                // DFU .bin address is fixed at 0x08000000 (same as epicEFI Flasher).
+                binFlashAddress: null,
+                acknowledgeRisk: true,
+              });
       setLog(result.log);
       setResultMessage(result.message);
       setShouldReconnect(result.should_reconnect);
@@ -169,6 +203,26 @@ export function FirmwareUpdateDialog({
   const toolMissing =
     mode === 'recovery' ? !hasRecoveryTool : !hasDfuTool;
 
+  const dfuStatusLine = dfuChecking
+    ? 'Checking for DFU device…'
+    : dfuStatus?.detected
+      ? `DFU device detected${dfuStatus.usb_port ? ` on ${dfuStatus.usb_port}` : ''}${
+          dfuStatus.dfu_util_devices > 0 ? ` (${dfuStatus.dfu_util_devices} via dfu-util)` : ''
+        }.`
+      : 'No DFU device found.';
+
+  const primaryLabel = isUpdating
+    ? mode === 'recovery'
+      ? 'Recovering…'
+      : mode === 'dfu_direct'
+        ? 'Flashing…'
+        : 'Updating…'
+    : mode === 'recovery'
+      ? 'Recover ECU'
+      : mode === 'dfu_direct'
+        ? 'Flash in DFU'
+        : 'Update Firmware';
+
   return (
     <Dialog
       open={isOpen}
@@ -183,8 +237,10 @@ export function FirmwareUpdateDialog({
           <Cpu size={18} aria-hidden />
           <p>
             {mode === 'recovery'
-              ? 'Board must already be in DFU mode (PROG + power cycle). No tuning connection needed.'
-              : 'Flash firmware over DFU. Keep USB powered; power-cycle the ECU when finished.'}
+              ? 'Board must already be in DFU mode (BOOT + power cycle). Re-flashes OpenBLT bootloader + application. No tuning connection needed.'
+              : mode === 'dfu_direct'
+                ? 'Board is already in DFU mode (broken firmware / BOOT jumper). Flashes one firmware image straight over USB — no ECU connection, no reboot command.'
+                : 'ECU is connected and running. LibreTune reboots it into DFU (cmd_dfu), then flashes. Keep USB powered; power-cycle the ECU when finished.'}
           </p>
         </div>
 
@@ -201,7 +257,20 @@ export function FirmwareUpdateDialog({
                 disabled={isUpdating}
               />
               <span>
-                <strong>Normal update</strong> — ECU connected
+                <strong>Normal update</strong> — ECU connected, reboot into DFU
+              </span>
+            </label>
+            <label className="firmware-method-option">
+              <input
+                type="radio"
+                name="fw-mode"
+                value="dfu_direct"
+                checked={mode === 'dfu_direct'}
+                onChange={() => setMode('dfu_direct')}
+                disabled={isUpdating}
+              />
+              <span>
+                <strong>Flash in DFU</strong> — board already in DFU, no connection
               </span>
             </label>
             <label className="firmware-method-option">
@@ -264,6 +333,59 @@ export function FirmwareUpdateDialog({
               <span>Full chip erase before flash</span>
             </label>
           </>
+        ) : mode === 'dfu_direct' ? (
+          <>
+            <div
+              className={
+                dfuStatus?.detected
+                  ? 'firmware-update-success'
+                  : 'firmware-update-warning'
+              }
+            >
+              <div className="firmware-dfu-status-row">
+                <span>{dfuStatusLine}</span>
+                <Button
+                  variant="secondary"
+                  onClick={() => refreshDfuStatus()}
+                  disabled={isUpdating || dfuChecking}
+                >
+                  {dfuChecking ? 'Checking…' : 'Refresh'}
+                </Button>
+              </div>
+              {dfuStatus && !dfuStatus.detected && dfuStatus.detail && (
+                <p className="firmware-reconnect-hint">{dfuStatus.detail}</p>
+              )}
+            </div>
+
+            <div className="firmware-update-field">
+              <label>Firmware file</label>
+              <div className="firmware-file-row">
+                <code className="firmware-file-path">
+                  {firmwarePath ?? 'No file selected'}
+                </code>
+                <Button
+                  variant="secondary"
+                  onClick={() => void browseFirmware()}
+                  disabled={isUpdating}
+                >
+                  Browse…
+                </Button>
+              </div>
+              <p className="firmware-flasher-hint">
+                Use <code>rusefi.hex</code> or a <code>.dfu</code> package. A raw{' '}
+                <code>.bin</code> flashes at <code>0x08000000</code> (same as
+                epicEFI Firmware Flasher).
+              </p>
+            </div>
+
+            {!isUpdating && isConnected && (
+              <div className="firmware-update-warning">
+                You are still connected to a running ECU — use Normal update
+                instead, or disconnect first so the DFU device is not claimed by
+                the tuning connection.
+              </div>
+            )}
+          </>
         ) : (
           <>
             {!dfuAvailable && (
@@ -290,7 +412,8 @@ export function FirmwareUpdateDialog({
 
             {!isUpdating && !isConnected && (
               <div className="firmware-update-warning">
-                Connect to the ECU before updating.
+                Connect to the ECU before updating. If the board is already in
+                DFU mode, use Flash in DFU instead.
               </div>
             )}
           </>
@@ -354,13 +477,7 @@ export function FirmwareUpdateDialog({
           onClick={() => void handleUpdate()}
           disabled={!canFlash || isUpdating}
         >
-          {isUpdating
-            ? mode === 'recovery'
-              ? 'Recovering…'
-              : 'Updating…'
-            : mode === 'recovery'
-              ? 'Recover ECU'
-              : 'Update Firmware'}
+          {primaryLabel}
         </Button>
       </Dialog.Footer>
     </Dialog>
