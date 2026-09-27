@@ -372,9 +372,20 @@ export function FirmwareUpdateDialog({
                 </Button>
               </div>
               <p className="firmware-flasher-hint">
-                Use <code>rusefi.hex</code> or a <code>.dfu</code> package. A raw{' '}
-                <code>.bin</code> flashes at <code>0x08000000</code> (same as
-                epicEFI Firmware Flasher).
+                {flasherInfo?.stm32_programmer_cli ? (
+                  <>
+                    Use <code>rusefi.hex</code> or a <code>.dfu</code> package. A
+                    raw <code>.bin</code> flashes at <code>0x08000000</code>{' '}
+                    (same as epicEFI Firmware Flasher).
+                  </>
+                ) : (
+                  <>
+                    Only <code>dfu-util</code> found — use a <code>.bin</code>{' '}
+                    (flashes at <code>0x08000000</code>) or <code>.dfu</code>{' '}
+                    package. <code>.hex</code>/.<code>srec</code> need
+                    STM32CubeProgrammer.
+                  </>
+                )}
               </p>
             </div>
 

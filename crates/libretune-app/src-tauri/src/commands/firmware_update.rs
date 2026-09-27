@@ -839,6 +839,13 @@ fn flash_with_dfu_util(
         .ok_or_else(|| "Invalid firmware path".to_string())?;
 
     let ext = firmware_extension(firmware_path);
+    if !dfu_util_supports_extension(&ext) {
+        return Err(
+            "dfu-util can only flash .bin or .dfu files. Use a .bin (flashes at 0x08000000) \
+             or a .dfu package — or install STM32CubeProgrammer for .hex/.srec support."
+                .to_string(),
+        );
+    }
     let (ok, output) = if ext == "bin" {
         let address = bin_address
             .ok_or("Binary (.bin) files require a flash start address (DFU default: 0x08000000)")?;
@@ -846,7 +853,7 @@ fn flash_with_dfu_util(
         let args = ["-a", "0", "-s", sector.as_str(), "-D", firmware];
         run_command_capture(tool, &args)?
     } else {
-        // .dfu / .hex images embed the correct load address.
+        // .dfu images embed the correct load address.
         let args = ["-a", "0", "-s", ":leave", "-D", firmware];
         run_command_capture(tool, &args)?
     };
@@ -856,6 +863,13 @@ fn flash_with_dfu_util(
     } else {
         Err(format!("dfu-util failed:\n{}", output))
     }
+}
+
+/// File types dfu-util can flash directly. Intel HEX / Motorola S-records
+/// need STM32CubeProgrammer — dfu-util only understands raw binaries and
+/// DfuSe (.dfu) packages.
+fn dfu_util_supports_extension(ext: &str) -> bool {
+    matches!(ext, "bin" | "dfu")
 }
 
 fn flash_with_bootcommander(
@@ -1652,5 +1666,14 @@ mod tests {
     fn dfu_util_list_no_device_counts_zero() {
         let listing = "dfu-util 0.11\nNo DFU capable USB device available\n";
         assert_eq!(parse_dfu_util_device_count(listing), 0);
+    }
+
+    #[test]
+    fn dfu_util_supports_only_bin_and_dfu() {
+        assert!(dfu_util_supports_extension("bin"));
+        assert!(dfu_util_supports_extension("dfu"));
+        assert!(!dfu_util_supports_extension("hex"));
+        assert!(!dfu_util_supports_extension("srec"));
+        assert!(!dfu_util_supports_extension("s19"));
     }
 }
