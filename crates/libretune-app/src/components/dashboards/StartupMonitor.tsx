@@ -48,7 +48,7 @@ const COL_FUEL: TelemetryRow[] = [
   { key: 'flexPercent', label: 'Ethanol', unit: '%', digits: 1 },
   { key: 'dutyCycle', label: 'Inj Duty', unit: '%', digits: 1, warnHi: 85, critHi: 95 },
   { key: 'pulseWidth', label: 'Inj PW', unit: 'ms', digits: 2 },
-  { key: 'lowFuelPressure', label: 'LPFP', unit: 'bar', digits: 1, alt: 'fuelPressure' },
+  { key: 'lowFuelPressure', label: 'LPFP', unit: 'kPa', digits: 0, alt: 'fuelPressure' },
   { key: 'highFuelPressure', label: 'HPFP', unit: 'bar', digits: 1, alt: 'rawHighFuelPressure' },
 ];
 
