@@ -35,6 +35,8 @@ dist/
 # Reference materials (not for distribution)
 /reference/
 
+#artifacts
+**/artifacts/*
 # Release build outputs
 /releases/linux/
 /releases/macos/
