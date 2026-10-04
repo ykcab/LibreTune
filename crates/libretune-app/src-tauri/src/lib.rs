@@ -20,6 +20,11 @@ mod state;
 
 use state::{AppState, AutoTuneLoadSource, RpmState, RpmStateTracker, StreamStats};
 
+/// Set once the main-window close sequence starts. `win.close()` after the
+/// pre-exit save re-fires `CloseRequested`; without this guard the handler
+/// would `prevent_close()` again and loop on save forever.
+static CLOSE_IN_PROGRESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 // Re-exports for cross-module use within the crate.
 pub(crate) use commands::app_settings::{
     get_commit_message_format, load_settings, with_settings, Settings,
@@ -546,6 +551,11 @@ pub fn run() {
                 return;
             };
             if window.label() != "main" {
+                return;
+            }
+            // The programmatic `win.close()` below re-fires this event; let
+            // that second close proceed instead of saving in a loop.
+            if CLOSE_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
             api.prevent_close();

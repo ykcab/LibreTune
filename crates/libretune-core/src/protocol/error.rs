@@ -52,6 +52,18 @@ pub enum ProtocolError {
     #[error("Protocol error: {0}")]
     ProtocolError(String),
 
+    /// Well-formed frame but wrong size: the link is alive, so this is an
+    /// INI/firmware mismatch and must never count as link loss.
+    #[error(
+        "ECU answered {label} with {received} bytes but the INI declares {expected} — \
+         the firmware does not implement that realtime command at that size"
+    )]
+    ResponseSizeMismatch {
+        label: String,
+        received: usize,
+        expected: usize,
+    },
+
     /// A write was read straight back and the ECU did not hold what was sent.
     /// Distinct from a failed write: the command was accepted, so nothing else
     /// on the wire reports a problem, and the tune the tuner is looking at no
@@ -101,4 +113,17 @@ pub enum ProtocolError {
 
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
+}
+
+impl ProtocolError {
+    pub fn is_response_size_mismatch(&self) -> bool {
+        matches!(self, ProtocolError::ResponseSizeMismatch { .. })
+    }
+
+    pub fn size_mismatch_received(&self) -> Option<usize> {
+        match self {
+            ProtocolError::ResponseSizeMismatch { received, .. } => Some(*received),
+            _ => None,
+        }
+    }
 }

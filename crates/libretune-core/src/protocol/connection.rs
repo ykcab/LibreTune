@@ -128,14 +128,11 @@ fn strip_status_byte(
             );
             return Ok(payload[1..].to_vec());
         }
-        return Err(ProtocolError::ProtocolError(format!(
-            "{} response: {} bytes, expected {} (or {} with a status byte) — \
-             channel offsets cannot be trusted",
-            label,
-            payload.len(),
-            expected_data_len,
-            expected_data_len + 1
-        )));
+        return Err(ProtocolError::ResponseSizeMismatch {
+            label: label.to_string(),
+            received: payload.len(),
+            expected: expected_data_len,
+        });
     }
 
     // No declared length (INI omits ochBlockSize): nothing to validate
@@ -452,6 +449,8 @@ pub struct Connection {
     /// blocking I/O polling loops abort early so `disconnect()` can complete even
     /// while another thread is mid-read (Issue #71: "disconnect does nothing").
     cancel: Arc<AtomicBool>,
+    /// OCH proved unusable at the declared block size; Auto prefers Burst.
+    och_unusable: bool,
 }
 
 impl Connection {
@@ -478,6 +477,7 @@ impl Connection {
             dirty_pages: std::collections::BTreeSet::new(),
             ecu_type: EcuType::Unknown,
             cancel: Arc::new(AtomicBool::new(false)),
+            och_unusable: false,
         }
     }
 
@@ -516,6 +516,7 @@ impl Connection {
             dirty_pages: std::collections::BTreeSet::new(),
             ecu_type: EcuType::Unknown,
             cancel: Arc::new(AtomicBool::new(false)),
+            och_unusable: false,
         }
     }
 
@@ -538,6 +539,45 @@ impl Connection {
     /// Get the detected ECU type.
     pub fn ecu_type(&self) -> EcuType {
         self.ecu_type
+    }
+
+    /// Mark OCH unusable; Auto falls back to Burst. True when the fallback
+    /// applies (an explicit ForceOCH stays in force).
+    pub fn note_och_unusable(&mut self) -> bool {
+        self.och_unusable = true;
+        self.config.runtime_packet_mode == RuntimePacketMode::Auto
+    }
+
+    pub fn och_fallback_active(&self) -> bool {
+        self.och_unusable && self.config.runtime_packet_mode == RuntimePacketMode::Auto
+    }
+
+    /// Actionable diagnosis for a wrong-sized reply: the INI command and
+    /// block size behind the request that failed.
+    pub fn describe_size_mismatch(&self, received: usize) -> String {
+        let expected = self
+            .protocol_settings
+            .as_ref()
+            .map(|p| p.och_block_size as usize)
+            .unwrap_or(0);
+        let (choice, _reason) = self.choose_runtime_command();
+        let via = match &choice {
+            RuntimeFetch::OCH(cmd) => format!("OCH `{cmd}`"),
+            RuntimeFetch::Burst(cmd) => format!("Burst `{cmd}`"),
+        };
+        let tried = if self.och_fallback_active() {
+            " OCH already proved unusable, so this session fell back to Burst — \
+             which also came back the wrong size."
+        } else {
+            ""
+        };
+        format!(
+            "ECU answered {via} with {received} bytes but the INI declares \
+             ochBlockSize={expected}.{tried} The link is alive (framing decoded), \
+             so this is an INI/firmware mismatch, not a dropout: the connected \
+             firmware or simulator does not implement that realtime command at \
+             that size. Check that the INI matches the firmware, then reconnect."
+        )
     }
 
     /// Get a clone of the cancellation handle. The owner (e.g. Tauri AppState)
@@ -1435,6 +1475,13 @@ impl Connection {
 
         // === Auto mode ===
         //
+        // OCH already proved unusable at the declared size: stay on Burst.
+        if self.och_unusable {
+            return (
+                RuntimeFetch::Burst(burst_cmd),
+                "auto: Burst (OCH marked unusable after size mismatches)".to_string(),
+            );
+        }
         // For Speeduino / MS2 / MS3 (big-endian, classic MegaSquirt lineage),
         // Burst ('A') is the canonical high-throughput realtime path. The OCH
         // heuristics below were observed to mis-select OCH on real Speeduino
@@ -3825,6 +3872,44 @@ mod tests {
             RuntimeFetch::Burst(cmd) => assert_eq!(cmd, "A".to_string()),
             _ => panic!("Expected Burst due to ForceBurst"),
         }
+    }
+
+    #[test]
+    fn test_och_unusable_falls_back_to_burst_in_auto() {
+        let cfg = ConnectionConfig::default();
+        let mut conn = Connection::new(cfg);
+        conn.set_ecu_type(EcuType::RusEFI);
+        let mut proto = ProtocolSettings::default();
+        proto.och_get_command = Some("O%2o%2c".to_string());
+        proto.burst_get_command = Some("A".to_string());
+        proto.max_unused_runtime_range = 1;
+        conn.set_protocol(proto, Endianness::Little);
+        assert!(matches!(
+            conn.choose_runtime_command().0,
+            RuntimeFetch::OCH(_)
+        ));
+        assert!(conn.note_och_unusable());
+        assert!(matches!(
+            conn.choose_runtime_command().0,
+            RuntimeFetch::Burst(_)
+        ));
+    }
+
+    #[test]
+    fn test_och_unusable_respects_force_och() {
+        let mut cfg = ConnectionConfig::default();
+        cfg.runtime_packet_mode = RuntimePacketMode::ForceOCH;
+        let mut conn = Connection::new(cfg);
+        conn.set_ecu_type(EcuType::RusEFI);
+        let mut proto = ProtocolSettings::default();
+        proto.och_get_command = Some("O%2o%2c".to_string());
+        proto.burst_get_command = Some("A".to_string());
+        conn.set_protocol(proto, Endianness::Little);
+        assert!(!conn.note_och_unusable());
+        assert!(matches!(
+            conn.choose_runtime_command().0,
+            RuntimeFetch::OCH(_)
+        ));
     }
 
     #[test]

@@ -746,6 +746,8 @@ pub async fn start_realtime_stream(
 
         let mut tick_count: u64 = 0;
         let mut consecutive_read_errors: u32 = 0;
+        let mut consecutive_size_mismatch: u32 = 0;
+        let mut mismatch_diagnosed: bool = false;
         // Local stream stat counters (flushed to shared state periodically)
         let mut local_ticks_total: u64 = 0;
         let mut local_ticks_success: u64 = 0;
@@ -892,15 +894,16 @@ pub async fn start_realtime_stream(
                 if tick_count <= 25 || tick_count.is_multiple_of(20) {
                     stream_log(&format!("tick #{}: T2-conn_lock", tick_count));
                 }
-                let raw_result: Result<Vec<u8>, String>;
+                let raw_result: Result<Vec<u8>, libretune_core::protocol::ProtocolError>;
                 {
                     match app_state.connection.try_lock() {
                         Ok(mut conn_guard) => {
                             set_conn_lock_holder("stream_loop");
                             if let Some(conn) = conn_guard.as_mut() {
-                                raw_result = conn.get_realtime_data().map_err(|e| e.to_string());
+                                raw_result = conn.get_realtime_data();
                             } else {
-                                raw_result = Err("No connection".to_string());
+                                raw_result =
+                                    Err(libretune_core::protocol::ProtocolError::NotConnected);
                             }
                             set_conn_lock_holder("(none)");
                         }
@@ -932,6 +935,8 @@ pub async fn start_realtime_stream(
                 match &raw_result {
                     Ok(raw) => {
                         consecutive_read_errors = 0;
+                        consecutive_size_mismatch = 0;
+                        mismatch_diagnosed = false;
                         static STREAM_LOG_COUNTER: std::sync::atomic::AtomicU64 =
                             std::sync::atomic::AtomicU64::new(0);
                         let count =
@@ -945,16 +950,37 @@ pub async fn start_realtime_stream(
                         }
                     }
                     Err(e) => {
-                        consecutive_read_errors = consecutive_read_errors.saturating_add(1);
-                        static ERR_LOG_COUNTER: std::sync::atomic::AtomicU64 =
-                            std::sync::atomic::AtomicU64::new(0);
-                        let count =
-                            ERR_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if count < 10 || count.is_multiple_of(50) {
-                            eprintln!(
-                                "[ERROR] stream tick #{}: get_realtime_data failed: {}",
-                                count, e
-                            );
+                        if e.is_response_size_mismatch() {
+                            consecutive_size_mismatch = consecutive_size_mismatch.saturating_add(1);
+                            if consecutive_size_mismatch == 3 && !mismatch_diagnosed {
+                                mismatch_diagnosed = true;
+                                let received = e.size_mismatch_received().unwrap_or(0);
+                                let mut conn_guard = app_state.connection.lock().await;
+                                if let Some(conn) = conn_guard.as_mut() {
+                                    let fell_back = conn.note_och_unusable();
+                                    let mut guidance = conn.describe_size_mismatch(received);
+                                    if fell_back {
+                                        guidance
+                                            .push_str(" Falling back to Burst for this session.");
+                                    }
+                                    eprintln!("[ERROR] stream: {}", guidance);
+                                    let _ = app_handle.emit("realtime:error", guidance);
+                                }
+                                consecutive_size_mismatch = 0;
+                            }
+                        } else {
+                            consecutive_size_mismatch = 0;
+                            consecutive_read_errors = consecutive_read_errors.saturating_add(1);
+                            static ERR_LOG_COUNTER: std::sync::atomic::AtomicU64 =
+                                std::sync::atomic::AtomicU64::new(0);
+                            let count =
+                                ERR_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if count < 10 || count.is_multiple_of(50) {
+                                eprintln!(
+                                    "[ERROR] stream tick #{}: get_realtime_data failed: {}",
+                                    count, e
+                                );
+                            }
                         }
                     }
                 }
@@ -1141,7 +1167,9 @@ pub async fn start_realtime_stream(
                                 stream_log(&format!("stream error #{}: {}", n, e));
                             }
                         }
-                        let _ = app_handle.emit("realtime:error", &e);
+                        if !(e.is_response_size_mismatch() && mismatch_diagnosed) {
+                            let _ = app_handle.emit("realtime:error", e.to_string());
+                        }
                         local_ticks_error += 1;
                     }
                     _ => {}
