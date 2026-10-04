@@ -59,51 +59,51 @@ export function WmiFlowBoostGraph() {
     return out;
   }, [boostName, boostUnit, currentBoostPsi, currentFlow]);
 
-  const path = useMemo(() => {
-    if (points.length < 2) return '';
+  const domain = useMemo(() => {
+    if (points.length === 0) return null;
     const xs = points.map((p) => p.x);
     const ys = points.map((p) => p.y);
-    const minX = Math.min(...xs, currentBoostPsi ?? Infinity);
-    const maxX = Math.max(...xs, currentBoostPsi ?? -Infinity);
-    const minY = Math.min(...ys, currentFlow ?? Infinity);
-    const maxY = Math.max(...ys, currentFlow ?? -Infinity);
-    const padX = Math.max(1, (maxX - minX) * 0.08);
-    const padY = Math.max(1, (maxY - minY) * 0.08);
-    const x0 = minX - padX;
-    const x1 = maxX + padX;
-    const y0 = Math.max(0, minY - padY);
-    const y1 = maxY + padY;
+    let xMin = Math.min(...xs);
+    let xMax = Math.max(...xs);
+    let yMin = Math.min(...ys);
+    let yMax = Math.max(...ys);
+    if (currentBoostPsi !== undefined) {
+      xMin = Math.min(xMin, currentBoostPsi);
+      xMax = Math.max(xMax, currentBoostPsi);
+    }
+    if (currentFlow !== undefined) {
+      yMin = Math.min(yMin, currentFlow);
+      yMax = Math.max(yMax, currentFlow);
+    }
+    const padX = Math.max(1, (xMax - xMin) * 0.08);
+    const padY = Math.max(1, (yMax - yMin) * 0.08);
+    return {
+      x0: xMin - padX,
+      x1: xMax + padX,
+      y0: Math.max(0, yMin - padY),
+      y1: yMax + padY,
+    };
+  }, [points, currentBoostPsi, currentFlow]);
+
+  const path = useMemo(() => {
+    if (!domain || points.length < 2) return '';
     const W = 100;
     const H = 44;
     return points
       .map((p, i) => {
-        const px = ((p.x - x0) / Math.max(1e-6, x1 - x0)) * W;
-        const py = H - ((p.y - y0) / Math.max(1e-6, y1 - y0)) * H;
+        const px = ((p.x - domain.x0) / Math.max(1e-6, domain.x1 - domain.x0)) * W;
+        const py = H - ((p.y - domain.y0) / Math.max(1e-6, domain.y1 - domain.y0)) * H;
         return `${i === 0 ? 'M' : 'L'}${px.toFixed(1)},${py.toFixed(1)}`;
       })
       .join(' ');
-  }, [points, currentBoostPsi, currentFlow]);
+  }, [domain, points]);
 
   const currentPoint = useMemo(() => {
-    if (currentBoostPsi === undefined || currentFlow === undefined) return null;
-    const all = points;
-    if (all.length < 2) return null;
-    const xs = all.map((p) => p.x);
-    const ys = all.map((p) => p.y);
-    const minX = Math.min(...xs, currentBoostPsi);
-    const maxX = Math.max(...xs, currentBoostPsi);
-    const minY = Math.min(...ys, currentFlow);
-    const maxY = Math.max(...ys, currentFlow);
-    const padX = Math.max(1, (maxX - minX) * 0.08);
-    const padY = Math.max(1, (maxY - minY) * 0.08);
-    const x0 = minX - padX;
-    const x1 = maxX + padX;
-    const y0 = Math.max(0, minY - padY);
-    const y1 = maxY + padY;
-    const px = ((currentBoostPsi - x0) / Math.max(1e-6, x1 - x0)) * 100;
-    const py = 44 - ((currentFlow - y0) / Math.max(1e-6, y1 - y0)) * 44;
+    if (!domain || currentBoostPsi === undefined || currentFlow === undefined) return null;
+    const px = ((currentBoostPsi - domain.x0) / Math.max(1e-6, domain.x1 - domain.x0)) * 100;
+    const py = 44 - ((currentFlow - domain.y0) / Math.max(1e-6, domain.y1 - domain.y0)) * 44;
     return { x: px, y: py };
-  }, [points, currentBoostPsi, currentFlow]);
+  }, [domain, currentBoostPsi, currentFlow]);
 
   return (
     <div className="wmi-flow-graph" aria-label="WMI flow versus boost graph">
@@ -117,12 +117,17 @@ export function WmiFlowBoostGraph() {
       </div>
       {path ? (
         <svg viewBox="0 0 100 44" preserveAspectRatio="none" role="img">
-          <path d={path} fill="none" stroke="#b7ff00" strokeWidth="1.4" vectorEffect="non-scaling-stroke" />
-          {currentPoint && <circle cx={currentPoint.x} cy={currentPoint.y} r="2.2" fill="#ff3cac" />}
+          <line x1="0" y1="22" x2="100" y2="22" stroke="rgba(232,234,240,0.08)" strokeWidth="0.5" />
+          <path d={path} fill="none" stroke="#b7ff00" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+          {currentPoint && <circle cx={currentPoint.x} cy={currentPoint.y} r="2.4" fill="#ff3cac" />}
         </svg>
       ) : (
         <div className="wmi-flow-graph-empty">connect to stream flow and boost</div>
       )}
+      <div className="wmi-flow-graph-axis">
+        <span>boost psi</span>
+        <span>flow g/s</span>
+      </div>
     </div>
   );
 }
