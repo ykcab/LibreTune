@@ -562,14 +562,24 @@ pub fn run() {
             }
             api.prevent_close();
             let win = window.clone();
+            let app_handle = window.app_handle().clone();
+            eprintln!("[CLOSE] main close requested, saving tune before exit");
             tauri::async_runtime::spawn(async move {
                 let state = win.state::<AppState>();
-                let _ = tokio::time::timeout(
+                let saved = tokio::time::timeout(
                     std::time::Duration::from_secs(8),
                     crate::commands::sync_ecu_data::persist_project_tune(&state, true),
                 )
                 .await;
-                let _ = win.close();
+                if saved.is_err() {
+                    eprintln!("[CLOSE] pre-exit save timed out, closing anyway");
+                }
+                eprintln!("[CLOSE] save phase done, closing windows");
+                // Close pop-outs too: leaving them open keeps the Tauri app
+                // alive after the main window is gone.
+                for (_label, window) in app_handle.webview_windows() {
+                    let _ = window.close();
+                }
             });
         })
         .run(tauri::generate_context!())
