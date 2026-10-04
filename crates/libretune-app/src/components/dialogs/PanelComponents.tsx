@@ -30,6 +30,7 @@ import { DialogGaugeStack } from './fields/DialogGauge';
 import { CommandButton } from './fields/CommandButton';
 import DialogField from './fields/DialogField';
 import { RuntimeValueReadout } from './fields/RuntimeValueReadout';
+import { WmiFlowBoostGraph } from './fields/WmiFlowBoostGraph';
 import { isUserTableLiveChannel, isGppwmLiveChannel, isCommandButtonPanel, inferLiveStateGateExpression, groupDialogComponents } from './dialogLayout';
 import { useDialogValueSource } from './DialogValueSource';
 
@@ -333,12 +334,17 @@ export const RecursivePanel = memo(function RecursivePanel({
 
   // Render as indicatorPanel
   if (panelType === 'indicatorPanel' && indicatorPanel) {
-    return <IndicatorPanelRenderer panel={indicatorPanel} context={context} />;
+    return <IndicatorPanelRenderer panel={indicatorPanel} context={context} panelName={name} />;
   }
 
   // Render as readoutPanel (live numeric gauges)
   if (panelType === 'readoutPanel' && readoutPanel) {
-    return <ReadoutPanelRenderer panel={readoutPanel} />;
+    return (
+      <div className="readout-panel-wrap">
+        <ReadoutPanelRenderer panel={readoutPanel} />
+        {name.toLowerCase().includes('wmi') && <WmiFlowBoostGraph />}
+      </div>
+    );
   }
 
   // Render as dialog
