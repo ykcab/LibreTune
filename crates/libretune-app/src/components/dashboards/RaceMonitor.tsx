@@ -19,6 +19,9 @@ const RPM_FLASH = 7200;
 const GREEN_LEDS = 5;
 const TICKS = 36;
 
+/** Shift-band LED colors: transition blue → purple → white → red by position. */
+const SHIFT_LED_COLORS = ['#1769FF', '#8B4DFF', '#E8EAF0', '#E8EAF0', '#FF3030'];
+
 export function isRaceMonitorPath(path: string | null | undefined): boolean {
   if (!path) return false;
   const base = path.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
@@ -212,20 +215,35 @@ export default function RaceMonitor({ isConnected }: RaceMonitorProps) {
             </span>
             <span className="rm-greens">
               {Array.from({ length: GREEN_LEDS }, (_, i) => (
-                <b key={i} className={i < greens ? 'on' : ''} />
+                <b
+                  key={i}
+                  className={i < greens ? 'on' : ''}
+                  style={i < greens ? { ['--led' as string]: SHIFT_LED_COLORS[i] } : undefined}
+                />
               ))}
             </span>
           </div>
         </div>
 
+        {warns.length > 0 && (
+          <div className="rm-banner" aria-live="assertive">
+            {warns.map((w) => (
+              <span key={w} className="rm-banner-item">{w}</span>
+            ))}
+          </div>
+        )}
+
         {page === 'race' ? (
           <div className="rm-race">
             <div className="rm-hero">
-              <Cell k="SPD" v={fmt(speed, 0)} cls="hero" />
-              <Cell k={flankL.k} v={flankL.v} cls={`flank ${flankL.cls}`} />
-              <div className={`rm-gear${gearTone}`}>{gearTxt}</div>
-              <Cell k={flankR.k} v={flankR.v} cls={`flank ${flankR.cls}`} />
-              <Cell k="RPM" v={fmt(rpm, 0)} cls={`hero${flash ? ' crit' : ''}`} />
+              <Cell k="SPD" v={fmt(speed, 0)} cls="hero acc-cyan" />
+              <Cell k={flankL.k} v={flankL.v} cls={`flank acc-blue ${flankL.cls}`} />
+              <div className="rm-gear-block">
+                <span className="rm-gear-label">Gear</span>
+                <div className={`rm-gear${gearTone}`}>{gearTxt}</div>
+              </div>
+              <Cell k={flankR.k} v={flankR.v} cls={`flank acc-purple ${flankR.cls}`} />
+              <Cell k="RPM" v={fmt(rpm, 0)} cls={`hero acc-magenta${flash ? ' crit' : ''}`} />
             </div>
             <div className="rm-row">
               <Cell k="OIL P" v={fmt(oilP, 0)} cls={tone(oilP, { lo: 180 })} />
@@ -257,11 +275,14 @@ export default function RaceMonitor({ isConnected }: RaceMonitorProps) {
               <Cell k="BST" v={fmt(boost, 0)} cls={`lg ${tone(boost, { hi: 220 })}`} />
             </div>
             <div className="rm-eng-mid">
-              <Cell k="SPD" v={fmt(speed, 0)} />
-              <Cell k="THR" v={fmt(tps, 0)} />
-              <div className={`rm-gear${gearTone}`}>{gearTxt}</div>
-              <Cell k="MAP" v={fmt(map, 0)} />
-              <Cell k="TIM" v={fmt(tim, 1)} />
+              <Cell k="SPD" v={fmt(speed, 0)} cls="acc-cyan" />
+              <Cell k="THR" v={fmt(tps, 0)} cls="acc-blue" />
+              <div className="rm-gear-block">
+                <span className="rm-gear-label">Gear</span>
+                <div className={`rm-gear${gearTone}`}>{gearTxt}</div>
+              </div>
+              <Cell k="MAP" v={fmt(map, 0)} cls="acc-purple" />
+              <Cell k="TIM" v={fmt(tim, 1)} cls="acc-magenta" />
             </div>
             <div className="rm-eng-bot">
               <Cell k="OIL P" v={fmt(oilP, 0)} cls={tone(oilP, { lo: 180 })} />
