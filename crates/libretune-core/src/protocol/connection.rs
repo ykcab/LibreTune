@@ -110,6 +110,25 @@ fn strip_status_byte(
     label: &str,
 ) -> Result<Vec<u8>, ProtocolError> {
     if expected_data_len > 0 {
+        // A short reply whose first byte is an ECU error status is not a
+        // size mismatch: the ECU refused the request (`OutOfRange` for a
+        // too-big block, `UnrecognizedCommand`, ...), so report that.
+        if payload.len() < expected_data_len {
+            if let Some(&first) = payload.first() {
+                if first & 0x80 != 0 {
+                    let code = super::ResponseCode::from_byte(first);
+                    let message = if code.carries_payload_message() && payload.len() > 1 {
+                        String::from_utf8_lossy(&payload[1..]).into_owned()
+                    } else {
+                        code.message().to_string()
+                    };
+                    return Err(ProtocolError::EcuStatusError {
+                        code: first,
+                        message,
+                    });
+                }
+            }
+        }
         if payload.len() == expected_data_len + 1 && payload[0] == 0 {
             // Status byte present and indicates success
             return Ok(payload[1..].to_vec());
