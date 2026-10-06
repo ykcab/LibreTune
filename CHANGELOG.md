@@ -13,6 +13,37 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-06 — Startup dashboard chart merge & realtime decimation
+
+Removed the duplicate live-chart panels in the Startup dashboard and cut
+app-wide realtime render churn.
+
+#### Changed
+
+- **Startup dashboard** (`StartupMonitor.tsx`): the 60 fps `Live Telemetry`
+  canvas overlay is gone. The GraphLog multi-lane scope is now the single
+  chart, titled and toggled as Live/Review, with the knock spectrogram kept
+  as a toggleable overlay.
+- **Realtime pipeline** (`realtimeListener.ts`): the 20 Hz backend stream is
+  decimated to the documented 100 ms history-sample cadence (latest payload
+  wins), halving React re-renders on dashboards/tables/AutoTune and fixing
+  the graph window being half its labelled duration (300 samples at 50 ms =
+  15 s, labelled 30 s).
+- **GraphLog pan/zoom** (`GraphLog.tsx`): hover/pan/wheel-driven view state
+  is rAF-coalesced to one render per frame; visible-window slicing uses
+  binary search instead of a linear scan.
+
+#### Added
+
+- **Review mode** (`ReviewGraphLog.tsx`): the Startup chart can show the most
+  recent recorded session via `get_log_entries`, in the same scope layouts as
+  the live view (scrub cursor, pan, zoom), refreshing while recording.
+
+#### Removed
+
+- Dead `GRAPH_SERIES` overlay series, its canvas paint loop, and the
+  per-series pause/zoom state from `StartupMonitor`.
+
 ### 2026-09-13 — Race F1 steering-wheel display
 
 Race is a composed driver LCD (`RaceMonitor`), not a gauge grid. 16:9 face
