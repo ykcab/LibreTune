@@ -10,7 +10,7 @@
  * toolbar makes visible: the window-length label (zoom) and the Latest button,
  * which only appears once the view has left the live edge (pan).
  */
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { beforeEach, vi } from 'vitest';
 import GraphLog, { type GraphSample } from '../GraphLog';
 import { useGraphLogStore } from '../../../stores/graphLogStore';
@@ -31,6 +31,13 @@ const windowLabel = () =>
   document.querySelector('.graphlog-window-label')?.textContent?.trim() ?? '';
 
 const latestButton = () => screen.queryByRole('button', { name: 'Latest' });
+
+/** Pan/hover updates are rAF-coalesced (one render per frame); flush a frame
+ *  before asserting on view-edge state. */
+const afterFrame = () =>
+  act(async () => {
+    await new Promise((r) => setTimeout(r, 40));
+  });
 
 beforeEach(() => {
   // The store persists, so a window length left over from another test would
@@ -64,28 +71,32 @@ test('zoom stops rather than running away in either direction', () => {
   expect(windowLabel()).toBe('10 min');
 });
 
-test('shift+wheel scrolls back through the log and Latest returns', () => {
+test('shift+wheel scrolls back through the log and Latest returns', async () => {
   render(<GraphLog samples={SAMPLES} availableChannels={CHANNELS} />);
   expect(latestButton()).toBeNull(); // following the live edge
 
   // Shift+wheel up scrolls back in time, the way a browser scrolls left.
   fireEvent.wheel(panes(), { deltaY: -120, shiftKey: true });
+  await afterFrame();
   expect(latestButton()).not.toBeNull();
 
   fireEvent.click(latestButton()!);
+  await afterFrame();
   expect(latestButton()).toBeNull();
 
   // Scrolling forward at the live edge has nowhere to go and must stay there,
   // rather than offering a Latest button that does nothing.
   fireEvent.wheel(panes(), { deltaY: 120, shiftKey: true });
+  await afterFrame();
   expect(latestButton()).toBeNull();
 });
 
-test('dragging the graphs pans them', () => {
+test('dragging the graphs pans them', async () => {
   render(<GraphLog samples={SAMPLES} availableChannels={CHANNELS} />);
   fireEvent.mouseDown(panes(), { clientX: 600, button: 0 });
   fireEvent.mouseMove(panes(), { clientX: 750 });
   fireEvent.mouseUp(panes());
+  await afterFrame();
   expect(latestButton()).not.toBeNull();
 });
 

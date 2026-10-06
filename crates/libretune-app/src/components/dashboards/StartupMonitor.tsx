@@ -5,14 +5,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
-  CHANNEL_HISTORY_MS_PER_SAMPLE,
-  getChannelHistoryBuffer,
   useChannels,
   useIsReceivingData,
   useRealtimeStore,
 } from '../../stores/realtimeStore';
 import { KnockSpectrogramView } from '../diagnostics/KnockSpectrogramView';
 import { LiveGraphLog } from '../tuner-ui/LiveGraphLog';
+import { ReviewGraphLog } from '../tuner-ui/ReviewGraphLog';
 import './StartupMonitor.css';
 
 export interface StartupMonitorProps {
@@ -68,13 +67,6 @@ const COLUMNS: { id: string; title: string; rows: TelemetryRow[] }[] = [
   { id: 'fuel', title: 'Fuel', rows: COL_FUEL },
   { id: 'critical', title: 'Critical', rows: COL_CRITICAL },
 ];
-
-const GRAPH_SERIES = [
-  { key: 'rpm', label: 'RPM', color: '#57a0f5', min: 0, max: 8000 },
-  { key: 'map', label: 'MAP', color: '#38bdf8', min: 0, max: 250 },
-  { key: 'tps', label: 'TPS', color: '#fbbf24', min: 0, max: 100 },
-  { key: 'lambda', label: 'λ', color: '#22c55e', min: 0.7, max: 1.3 },
-] as const;
 
 const LED_DEFS: { id: string; label: string; channel?: string }[] = [
   { id: 'connected', label: 'Connected' },
@@ -178,16 +170,10 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
   const [logging, setLogging] = useState(false);
   const [logDurationSec, setLogDurationSec] = useState(0);
   const [hz, setHz] = useState(0);
-  const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({
-    rpm: true, map: true, tps: true, lambda: true,
-  });
-  const [paused, setPaused] = useState(false);
-  const [zoom, setZoom] = useState(1);
+  const [mode, setMode] = useState<'live' | 'review'>('live');
   const [showSpectrogram, setShowSpectrogram] = useState(false);
-  /** Channel-trace strip charts below the overlay graph (own pane layouts). */
-  const [showTraces, setShowTraces] = useState(true);
-  const frozenRef = useRef<Record<string, number[]>>({});
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  /** Whether the unified chart panel is expanded. */
+  const [showGraph, setShowGraph] = useState(true);
   const lastTsRef = useRef(0);
   const hzSamplesRef = useRef<number[]>([]);
 
@@ -266,107 +252,6 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     return v > 0.5 ? 'on' : 'off';
   }, [channels, isConnected, logging]);
 
-  const toggleSeries = (key: string) => {
-    setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const handlePause = () => {
-    if (!paused) {
-      const snap: Record<string, number[]> = {};
-      for (const s of GRAPH_SERIES) {
-        let hist = getChannelHistoryBuffer(s.key);
-        if (hist.length < 2 && s.key === 'lambda') {
-          const afr = getChannelHistoryBuffer('afr');
-          if (afr.length >= 2) hist = afr.map((v) => v / 14.7);
-        }
-        snap[s.key] = hist.slice();
-      }
-      frozenRef.current = snap;
-    }
-    setPaused((p) => !p);
-  };
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let raf = 0;
-    let cssW = 0;
-    let cssH = 0;
-    const syncSize = () => {
-      const rect = canvas.getBoundingClientRect();
-      cssW = Math.max(1, Math.floor(rect.width));
-      cssH = Math.max(1, Math.floor(rect.height));
-    };
-    syncSize();
-    const ro = new ResizeObserver(() => syncSize());
-    ro.observe(canvas);
-
-    const paint = () => {
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        raf = requestAnimationFrame(paint);
-        return;
-      }
-      const dpr = window.devicePixelRatio || 1;
-      const w = Math.max(1, Math.floor(cssW * dpr));
-      const h = Math.max(1, Math.floor(cssH * dpr));
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = '#12151a';
-      ctx.fillRect(0, 0, w, h);
-
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-      ctx.lineWidth = 1;
-      for (let i = 1; i < 4; i++) {
-        const y = (h * i) / 4;
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-      }
-
-      const pad = 8 * dpr;
-      for (const s of GRAPH_SERIES) {
-        if (!visibleSeries[s.key]) continue;
-        let hist = paused
-          ? (frozenRef.current[s.key] ?? [])
-          : getChannelHistoryBuffer(s.key);
-        if (hist.length < 2 && s.key === 'lambda' && !paused) {
-          const afrHist = getChannelHistoryBuffer('afr');
-          if (afrHist.length >= 2) hist = afrHist.map((v) => v / 14.7);
-        }
-        if (hist.length < 2) continue;
-        const keep = Math.max(20, Math.floor(hist.length / Math.max(1, zoom)));
-        hist = hist.slice(hist.length - keep);
-        const range = s.max - s.min || 1;
-        ctx.beginPath();
-        ctx.strokeStyle = s.color;
-        ctx.lineWidth = 1.5 * dpr;
-        for (let i = 0; i < hist.length; i++) {
-          const x = pad + ((w - pad * 2) * i) / (hist.length - 1);
-          const n = Math.max(0, Math.min(1, (hist[i] - s.min) / range));
-          const y = h - pad - n * (h - pad * 2);
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-      }
-      raf = requestAnimationFrame(paint);
-    };
-    raf = requestAnimationFrame(paint);
-    return () => {
-      cancelAnimationFrame(raf);
-      ro.disconnect();
-    };
-  }, [paused, visibleSeries, zoom]);
-
-  const windowSec = Math.round(
-    ((300 * CHANNEL_HISTORY_MS_PER_SAMPLE) / 1000) / Math.max(1, zoom),
-  );
-
   return (
     <div className="startup-monitor">
       <div className="sm-status">
@@ -388,19 +273,27 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
 
       <div className="sm-graph-panel">
         <div className="sm-graph-toolbar">
-          <span className="sm-graph-title">Live Telemetry · {windowSec}s</span>
+          <span className="sm-graph-title">
+            {mode === 'live' ? 'Live Telemetry' : 'Review · last recording'}
+          </span>
           <div className="sm-series-toggles">
-            {GRAPH_SERIES.map((s) => (
-              <button
-                key={s.key}
-                type="button"
-                className={`sm-series-btn ${visibleSeries[s.key] ? 'on' : ''}`}
-                style={{ ['--series' as string]: s.color }}
-                onClick={() => toggleSeries(s.key)}
-              >
-                {s.label}
-              </button>
-            ))}
+            <button
+              type="button"
+              className={`sm-series-btn ${mode === 'live' ? 'on' : ''}`}
+              style={{ ['--series' as string]: '#57a0f5' }}
+              onClick={() => setMode('live')}
+            >
+              Live
+            </button>
+            <button
+              type="button"
+              className={`sm-series-btn ${mode === 'review' ? 'on' : ''}`}
+              style={{ ['--series' as string]: '#fbbf24' }}
+              onClick={() => setMode('review')}
+              title="Scrub through the most recent recorded log without leaving the dashboard"
+            >
+              Review
+            </button>
             <button
               type="button"
               className={`sm-series-btn ${showSpectrogram ? 'on' : ''}`}
@@ -412,37 +305,27 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
             </button>
           </div>
           <div className="sm-graph-actions">
-            <button type="button" onClick={handlePause}>{paused ? 'Resume' : 'Pause'}</button>
-            <button type="button" onClick={() => setZoom((z) => Math.min(4, z + 1))} disabled={zoom >= 4}>Zoom +</button>
-            <button type="button" onClick={() => setZoom((z) => Math.max(1, z - 1))} disabled={zoom <= 1}>Zoom −</button>
-          </div>
-        </div>
-        <div className="sm-graph-stage">
-          <canvas ref={canvasRef} className="sm-graph-canvas" />
-          {showSpectrogram && (
-            <div className="sm-graph-overlays">
-              <div className="sm-overlay-pane">
-                <KnockSpectrogramView
-                  isConnected={isConnected}
-                  embedded
-                  active={showSpectrogram}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="sm-graph-panel">
-        <div className="sm-graph-toolbar">
-          <span className="sm-graph-title">Channel traces · live</span>
-          <div className="sm-graph-actions">
-            <button type="button" onClick={() => setShowTraces((v) => !v)}>
-              {showTraces ? 'Hide' : 'Show'}
+            <button type="button" onClick={() => setShowGraph((v) => !v)}>
+              {showGraph ? 'Hide' : 'Show'}
             </button>
           </div>
         </div>
-        {showTraces && <LiveGraphLog />}
+        {showGraph && (
+          <div className="sm-graph-stage">
+            {mode === 'live' ? <LiveGraphLog /> : <ReviewGraphLog />}
+            {showSpectrogram && (
+              <div className="sm-graph-overlays">
+                <div className="sm-overlay-pane">
+                  <KnockSpectrogramView
+                    isConnected={isConnected}
+                    embedded
+                    active={showSpectrogram}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="sm-leds">

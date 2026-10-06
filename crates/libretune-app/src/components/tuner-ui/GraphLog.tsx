@@ -555,6 +555,24 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   cursorTRef.current = cursorT;
   samplesRef.current = samples;
 
+  /** Coalesce pointer-driven state updates to one render per animation
+   *  frame. Every mousemove during pan/hover/drag used to trigger a full
+   *  React re-render of the graph (tabs, pickers, all canvases), several
+   *  times per frame — the main source of pan lag. */
+  const pendingUiRef = useRef<{ hover?: number | null; end?: number | null }>({});
+  const uiRafRef = useRef(0);
+  const scheduleUi = useCallback((patch: { hover?: number | null; end?: number | null }) => {
+    pendingUiRef.current = { ...pendingUiRef.current, ...patch };
+    if (uiRafRef.current) return;
+    uiRafRef.current = requestAnimationFrame(() => {
+      uiRafRef.current = 0;
+      const pending = pendingUiRef.current;
+      pendingUiRef.current = {};
+      if ('hover' in pending) setHoverFrac(pending.hover ?? null);
+      if ('end' in pending) setViewEnd(pending.end ?? null);
+    });
+  }, []);
+
   /** Zoom keeping the time under the hover cursor fixed; anchors the right
    *  edge when the mouse isn't over the graphs. */
   const zoomBy = useCallback(
@@ -568,11 +586,11 @@ export const GraphLog: React.FC<GraphLogProps> = ({
         const curEnd = viewEndRef.current ?? lastT;
         const tCursor = curEnd - oldWin * (1 - frac);
         const newEnd = tCursor + (1 - frac) * newWin;
-        setViewEnd(newEnd >= lastT ? null : Math.max(newEnd, data[0].t));
+        scheduleUi({ end: newEnd >= lastT ? null : Math.max(newEnd, data[0].t) });
       }
       setTimeWindow(newWin / 1000);
     },
-    [setTimeWindow],
+    [setTimeWindow, scheduleUi],
   );
 
   const zoomIn = useCallback(() => zoomBy(ZOOM_FACTOR), [zoomBy]);
@@ -649,15 +667,19 @@ export const GraphLog: React.FC<GraphLogProps> = ({
    *  window has nowhere to scroll, so it stays following rather than showing a
    *  Latest button that would do nothing.
    */
-  const setViewEndClamped = useCallback((next: number) => {
+  const clampViewEnd = useCallback((next: number): number | null => {
     const data = samplesRef.current;
-    if (data.length === 0) return;
+    if (data.length === 0) return null;
     const winMs = useGraphLogStore.getState().timeWindowSec * 1000;
     const lastT = data[data.length - 1].t;
     const earliestEnd = Math.min(lastT, data[0].t + winMs);
     const clamped = Math.max(next, earliestEnd);
-    setViewEnd(clamped >= lastT ? null : clamped);
+    return clamped >= lastT ? null : clamped;
   }, []);
+
+  const setViewEndClamped = useCallback((next: number) => {
+    setViewEnd(clampViewEnd(next));
+  }, [clampViewEnd]);
 
   /** Shift the view by a fraction of the visible window. */
   const panByFraction = useCallback(
@@ -666,9 +688,9 @@ export const GraphLog: React.FC<GraphLogProps> = ({
       if (data.length === 0) return;
       const winMs = useGraphLogStore.getState().timeWindowSec * 1000;
       const end = viewEndRef.current ?? data[data.length - 1].t;
-      setViewEndClamped(end + frac * winMs);
+      scheduleUi({ end: clampViewEnd(end + frac * winMs) });
     },
-    [setViewEndClamped],
+    [clampViewEnd, scheduleUi],
   );
 
   /** Drag origin: where the pointer went down, and the view edge at that moment. */
@@ -689,7 +711,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   const handlePanesMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const frac = (e.clientX - rect.left - PAD_L) / Math.max(1, rect.width - PAD_L - PAD_R);
-    setHoverFrac(frac >= 0 && frac <= 1 ? frac : null);
+    scheduleUi({ hover: frac >= 0 && frac <= 1 ? frac : null });
 
     const drag = dragRef.current;
     if (!drag) return;
@@ -700,8 +722,8 @@ export const GraphLog: React.FC<GraphLogProps> = ({
     drag.moved = true;
     const winMs = useGraphLogStore.getState().timeWindowSec * 1000;
     // Drag right pulls earlier time into view, the way dragging paper does.
-    setViewEndClamped(drag.end - (dx / drag.width) * winMs);
-  }, [setViewEndClamped]);
+    scheduleUi({ end: clampViewEnd(drag.end - (dx / drag.width) * winMs) });
+  }, [clampViewEnd, scheduleUi]);
 
   /** Set on mouseup when the gesture turned out to be a pan, so the click that
    *  follows does not also drop the data cursor where the drag ended. */
@@ -775,18 +797,26 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   const windowEnd = viewEnd !== null ? Math.min(viewEnd, latestT) : latestT;
   const windowStart = windowEnd - windowMs;
   const isFollowing = viewEnd === null;
-  const visible = useMemo(() => {
-    const startIdx = samples.findIndex((s) => s.t >= windowStart);
-    if (startIdx < 0) return [];
-    let endIdx = samples.length;
-    while (endIdx > startIdx && samples[endIdx - 1].t > windowEnd) endIdx--;
-    return samples.slice(startIdx, endIdx);
-  }, [samples, windowStart, windowEnd]);
 
   const cursorSample = useMemo(
     () => (cursorT !== null && samples.length > 0 ? samples[nearestIndex(samples, cursorT)] : null),
     [cursorT, samples],
   );
+
+  const visible = useMemo(() => {
+    // Binary-search the window bounds — a linear findIndex over every sample
+    // made pan feel sluggish on long logs (this runs on every drag frame).
+    let lo = 0;
+    let hi = samples.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (samples[mid].t < windowStart) lo = mid + 1;
+      else hi = mid;
+    }
+    let end = lo;
+    while (end < samples.length && samples[end].t <= windowEnd) end++;
+    return samples.slice(lo, end);
+  }, [samples, windowStart, windowEnd]);
 
   // How long the log is, in windows. 100% means it all fits and there is
   // nothing to scroll, so the bar sits inert at full width.
@@ -916,7 +946,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
         onMouseMove={handlePanesMouseMove}
         onMouseUp={endDrag}
         onMouseLeave={() => {
-          setHoverFrac(null);
+          scheduleUi({ hover: null });
           endDrag();
         }}
         onClick={handlePanesClick}
