@@ -13,6 +13,17 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-06 — Tune diff dialog: one scrollbar, auto-jump to first change
+
+The tune-mismatch difference report (LibreTune vs ECU) let each side scroll
+independently, so the two views drifted apart. Now the side-by-side panes
+share a single vertical scrollbar (`.tune-diff-columns` is the scroller, both
+panes are overflow-visible, pane headers are sticky), and after each page
+loads the scroller jumps straight to the first highlighted difference —
+previously you landed at the top of the page and had to hunt for what
+changed. Identical pages reset to the top instead of keeping the stale
+offset.
+
 ### 2026-10-06 — Startup dashboard chart merge & realtime decimation
 
 Removed the duplicate live-chart panels in the Startup dashboard and cut

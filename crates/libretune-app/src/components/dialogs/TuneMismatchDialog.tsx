@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Dialog, Button } from '../common';
 import DialogRenderer from './DialogRenderer';
@@ -114,6 +114,33 @@ export default function TuneMismatchDialog({
   const projectSource = useMemo(() => (view ? toSource(view, 'project') : null), [view]);
   const ecuSource = useMemo(() => (view ? toSource(view, 'ecu') : null), [view]);
 
+  const columnsRef = useRef<HTMLDivElement>(null);
+
+  // Focus the diff, not the top: after each page loads, scroll the shared
+  // diff scroller straight to the first highlighted change. When a page has
+  // no named differences, reset to the top instead of leaving the previous
+  // page's scroll position behind.
+  useEffect(() => {
+    const container = columnsRef.current;
+    if (!container) return;
+    if (!view) {
+      container.scrollTop = 0;
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      const target = container.querySelector<HTMLElement>('.tune-diff-changed');
+      if (!target) {
+        container.scrollTop = 0;
+        return;
+      }
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      container.scrollTop +=
+        targetRect.top - containerRect.top - container.clientHeight / 2 + targetRect.height / 2;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [view]);
+
   if (!isOpen || !mismatchInfo) return null;
 
   const apply = async (cmd: 'use_project_tune' | 'use_ecu_tune', after: () => void) => {
@@ -148,7 +175,7 @@ export default function TuneMismatchDialog({
           found in the ECU. Review each page, then choose which settings to keep.
         </p>
 
-        <div className="tune-diff-columns">
+        <div className="tune-diff-columns" ref={columnsRef}>
           <section className="tune-diff-pane">
             <h3>Current LibreTune Settings</h3>
             {view && projectSource && (
