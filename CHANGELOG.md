@@ -13,6 +13,31 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-10 — Startup dashboard rebuilt as an F1 broadcast telemetry face
+
+The Startup dashboard (previously colon-list readouts + an LED strip) was
+rebuilt in the flat, hairline-ruled, condensed-uppercase language of a race
+broadcast graphic — three vertical bands (engine / trace / fuel) plus a bottom
+session timeline. Live trace, Review mode, and the knock spectrogram overlay are
+unchanged and keep working; the "clean oscilloscope" graph variant is reused as
+the centre-band trace.
+
+#### Changed
+
+- **`StartupMonitor.tsx`** — rewritten as a three-band F1-style instrument face:
+  engine band (RPM hero with history delta, gear badge, speed, coolant,
+  battery/throttle bars, oil-pressure semicircle gauge), centre band (session
+  clock, live/review/spectro mode toggles, the trace, a cyan raw-telemetry
+  block, data-rate readout), fuel band (AFR hero with target offset, lambda,
+  timing, boost, injector-duty bar, fuel pressure, EGT, four mini circular
+  gauges), and a bottom session timeline with event markers. The dot-LED strip
+  and always-on warning band were folded into the banner + timeline markers.
+- **`StartupMonitor.css`** — full rewrite to the broadcast palette (flat
+  charcoal `#2e2e2e`, hairlines, blue `#4ea8dc` / gold `#f2c400` / cyan
+  `#4fc6d9` accents), a 3-band CSS grid, and a condensed display face.
+- **`themes/fonts.css`** — bundles `@fontsource/barlow-condensed` (300/400/600)
+  for the condensed display type (new dependency).
+
 ### 2026-10-09 — Startup live view: bare oscilloscope, not an analysis editor
 
 The Startup dashboard's live telemetry embedded `GraphLog` *unchanged*, so the
