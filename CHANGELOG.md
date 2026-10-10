@@ -13,6 +13,26 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-09 — Startup live view: bare oscilloscope, not an analysis editor
+
+The Startup dashboard's live telemetry embedded `GraphLog` *unchanged*, so the
+glance surface carried the whole log-analysis chrome — tab bar (+ add/close),
+zoom in/out, window label, "Latest" button, arrow-key data cursor, per-pane
+left/right channel pickers and per-pane gear buttons, plus the time scrollbar.
+A monitoring surface isn't an analysis editor: live mode now strips to a bare
+stacked-canvas oscilloscope, and the full chrome stays in Review.
+
+#### Changed
+
+- **`GraphLog.tsx`**: new `variant?: 'full' | 'live'` prop (default `full`).
+  Live mode renders a slim right-aligned header (window-duration pill + one
+  configure gear) instead of the tab bar, hides the per-pane track pickers and
+  gear buttons, drops the time scrollbar, disables zoom/pan/arrow-key cursor,
+  and always follows the newest sample (hover cursor only). The single gear
+  opens a combined "channels & scales" dialog covering every pane at once.
+- **`LiveGraphLog.tsx`**: passes `variant="live"`. `ReviewGraphLog` is
+  unchanged — it keeps the full analysis surface.
+
 ### 2026-10-08 — Startup live telemetry re-render hang fix
 
 The Startup dashboard's live telemetry hung low-power machines because the

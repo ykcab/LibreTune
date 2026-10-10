@@ -1,11 +1,12 @@
 /**
  * LiveGraphLog — the GraphLog strip charts fed by live ECU telemetry.
  *
- * Reuses GraphLog (and its persisted pane layouts) unchanged: instead of a
- * recording/playback sample array, samples are rebuilt from the realtime
- * history buffers on a slow tick. History buffers carry no timestamps, so
- * sample times are reconstructed backwards from now at the documented
- * CHANNEL_HISTORY_MS_PER_SAMPLE cadence.
+ * Reuses GraphLog (and its persisted pane layouts) in its `live` variant —
+ * a bare oscilloscope with no tab bar, zoom, per-pane pickers or arrow
+ * cursor. Instead of a recording/playback sample array, samples are rebuilt
+ * from the realtime history buffers on a slow tick. History buffers carry no
+ * timestamps, so sample times are reconstructed backwards from now at the
+ * documented CHANNEL_HISTORY_MS_PER_SAMPLE cadence.
  *
  * When disconnected the buffers are empty and GraphLog shows its empty
  * grid with the live hint below.
@@ -97,6 +98,7 @@ export const LiveGraphLog = memo(function LiveGraphLog() {
       samples={snapshot.samples}
       availableChannels={snapshot.channels}
       emptyHint="Connect to the ECU to stream live channel traces"
+      variant="live"
     />
   );
 });
