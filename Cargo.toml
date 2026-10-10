@@ -5,6 +5,15 @@ members = [
     "crates/libretune-app/src-tauri",
 ]
 
+# Dev builds ship line tables instead of full debug info. The `libretune-app`
+# crate links a ~750 MB debug binary (rlib + cdylib + staticlib) under full
+# debug info, which makes incremental codegen and the GNU ld link slow enough
+# to look hung on RAM-constrained machines. Line tables keep panic/backtrace
+# line numbers while shrinking the binary ~4-5x and speeding both codegen and
+# linking. Release builds are unaffected.
+[profile.dev]
+debug = "line-tables-only"
+
 [workspace.package]
 version = "0.1.1"
 edition = "2021"
