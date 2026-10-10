@@ -7,7 +7,7 @@
  * so this simply mirrors the accumulated session log: full refetch on mount
  * and channel-layout change, incremental refresh while recording.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import GraphLog, { type GraphSample } from './GraphLog';
 import { useGraphLogStore } from '../../stores/graphLogStore';
@@ -30,7 +30,7 @@ interface LogEntry {
   values: Record<string, number>;
 }
 
-export const ReviewGraphLog: React.FC = () => {
+export const ReviewGraphLog = memo(function ReviewGraphLog() {
   const tabs = useGraphLogStore((s) => s.tabs);
   const [snapshot, setSnapshot] = useState<{ samples: GraphSample[]; channels: string[] }>({
     samples: [],
@@ -93,6 +93,6 @@ export const ReviewGraphLog: React.FC = () => {
       emptyHint="No recorded session yet — record a log, then review it here"
     />
   );
-};
+});
 
 export default ReviewGraphLog;

@@ -56,6 +56,7 @@ function mockInvoke(rep: unknown = report()) {
     if (cmd === 'read_file_contents') return Promise.resolve(LOG);
     if (cmd === 'analyse_log') return Promise.resolve(rep);
     if (cmd === 'update_table_data') return Promise.resolve();
+    if (cmd === 'get_math_channels') return Promise.resolve([]);
     return Promise.resolve();
   });
 }
@@ -186,6 +187,7 @@ test('a log missing a required channel refuses to analyse and says which', async
   (invoke as unknown as any).mockImplementation((cmd: string) => {
     if (cmd === 'list_tunable_tables') return Promise.resolve(['veTable1Tbl']);
     if (cmd === 'get_table_data') return Promise.resolve(TABLE_DATA);
+    if (cmd === 'get_math_channels') return Promise.resolve([]);
     if (cmd === 'read_file_contents') {
       return Promise.resolve('Time,rpm,coolant\n0.1,2000,90\n0.2,2000,90\n');
     }

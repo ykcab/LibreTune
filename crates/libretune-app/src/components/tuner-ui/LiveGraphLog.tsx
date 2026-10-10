@@ -10,13 +10,14 @@
  * When disconnected the buffers are empty and GraphLog shows its empty
  * grid with the live hint below.
  */
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import GraphLog, { type GraphSample } from './GraphLog';
 import {
   CHANNEL_HISTORY_MS_PER_SAMPLE,
   getChannelHistoryBuffer,
   useRealtimeStore,
 } from '../../stores/realtimeStore';
+import { useGraphLogStore } from '../../stores/graphLogStore';
 
 /** Rebuild tick: fast enough to scroll smoothly, slow enough that a
  *  300-row × N-channel array rebuild never pressures the render loop. */
@@ -48,7 +49,13 @@ export function buildLiveSamples(
   return samples;
 }
 
-export const LiveGraphLog: React.FC = () => {
+/**
+ * Memoized: this component reads the realtime store imperatively (no props),
+ * so `React.memo` stops StartupMonitor's ~10 Hz channel re-render from
+ * cascading into the full GraphLog tree. It only re-renders on its own
+ * 500 ms snapshot rebuild.
+ */
+export const LiveGraphLog = memo(function LiveGraphLog() {
   const [snapshot, setSnapshot] = useState<{ samples: GraphSample[]; channels: string[] }>({
     samples: [],
     channels: [],
@@ -56,15 +63,28 @@ export const LiveGraphLog: React.FC = () => {
 
   useEffect(() => {
     const rebuild = () => {
-      const keys = Object.keys(useRealtimeStore.getState().channels).sort();
+      // Only assemble history for the channels the graph actually plots.
+      // Building 300 rows × the full stream (hundreds of channels on rusEFI)
+      // every tick was ~20 ms of allocation churn on weak machines. History
+      // for every channel is still kept in the store, so a newly-selected
+      // channel has its full 300-sample window on the very next rebuild.
+      const plotted = new Set<string>();
+      for (const tab of useGraphLogStore.getState().tabs) {
+        for (const pane of tab.panes) {
+          if (pane.left.channel) plotted.add(pane.left.channel);
+          if (pane.right.channel) plotted.add(pane.right.channel);
+        }
+      }
       const histories: Record<string, number[]> = {};
-      for (const k of keys) {
+      for (const k of plotted) {
         const h = getChannelHistoryBuffer(k);
         if (h.length > 0) histories[k] = h;
       }
       setSnapshot({
         samples: buildLiveSamples(histories, Date.now()),
-        channels: Object.keys(histories).sort(),
+        // The picker needs the full live channel set, not just the plotted
+        // few, so users can assign any streamed channel to a lane.
+        channels: Object.keys(useRealtimeStore.getState().channels).sort(),
       });
     };
     rebuild();
@@ -79,6 +99,6 @@ export const LiveGraphLog: React.FC = () => {
       emptyHint="Connect to the ECU to stream live channel traces"
     />
   );
-};
+});
 
 export default LiveGraphLog;

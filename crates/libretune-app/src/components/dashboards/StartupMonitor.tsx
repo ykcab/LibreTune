@@ -157,6 +157,39 @@ function TelemetryColumns({ channels }: { channels: Record<string, number> }) {
   );
 }
 
+/**
+ * Isolated realtime-rate readout. Subscribes to `lastUpdateTime` on its own so
+ * the ~10 Hz stream flush does not re-render the whole monitor body (columns,
+ * LEDs, graph host) purely to refresh this one number.
+ */
+function RateMeter() {
+  const lastUpdateTime = useRealtimeStore((s) => s.lastUpdateTime);
+  const [hz, setHz] = useState(0);
+  const lastTsRef = useRef(0);
+  const hzSamplesRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    if (!lastUpdateTime) return;
+    const prev = lastTsRef.current;
+    lastTsRef.current = lastUpdateTime;
+    if (!prev) return;
+    const dt = lastUpdateTime - prev;
+    if (dt <= 0 || dt > 2000) return;
+    const samples = hzSamplesRef.current;
+    samples.push(1000 / dt);
+    if (samples.length > 20) samples.shift();
+    const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
+    // Avoid re-rendering the whole monitor on every OCH tick for ±1 Hz noise.
+    setHz((prevHz) => (Math.abs(prevHz - avg) < 0.75 ? prevHz : avg));
+  }, [lastUpdateTime]);
+
+  return (
+    <span className="sm-stat">
+      RATE <strong>{hz > 0 ? hz.toFixed(0) : '—'}</strong> Hz
+    </span>
+  );
+}
+
 export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
   const channels = useChannels([
     'rpm', 'tps', 'map', 'lambda', 'afr', 'battery', 'coolant', 'iat', 'egt', 'egt1',
@@ -165,17 +198,13 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     'softLimit', 'hardLimit', 'launch', 'ase',
   ]);
   const isReceiving = useIsReceivingData();
-  const lastUpdateTime = useRealtimeStore((s) => s.lastUpdateTime);
 
   const [logging, setLogging] = useState(false);
   const [logDurationSec, setLogDurationSec] = useState(0);
-  const [hz, setHz] = useState(0);
   const [mode, setMode] = useState<'live' | 'review'>('live');
   const [showSpectrogram, setShowSpectrogram] = useState(false);
   /** Whether the unified chart panel is expanded. */
   const [showGraph, setShowGraph] = useState(true);
-  const lastTsRef = useRef(0);
-  const hzSamplesRef = useRef<number[]>([]);
 
   const battery = readChannel(channels, 'battery');
 
@@ -199,21 +228,6 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
       window.clearInterval(id);
     };
   }, []);
-
-  useEffect(() => {
-    if (!lastUpdateTime) return;
-    const prev = lastTsRef.current;
-    lastTsRef.current = lastUpdateTime;
-    if (!prev) return;
-    const dt = lastUpdateTime - prev;
-    if (dt <= 0 || dt > 2000) return;
-    const samples = hzSamplesRef.current;
-    samples.push(1000 / dt);
-    if (samples.length > 20) samples.shift();
-    const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
-    // Avoid re-rendering the whole monitor on every OCH tick for ±1 Hz noise.
-    setHz((prevHz) => (Math.abs(prevHz - avg) < 0.75 ? prevHz : avg));
-  }, [lastUpdateTime]);
 
   const warnings = useMemo(() => {
     const list: string[] = [];
@@ -261,9 +275,7 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
         <span className="sm-stat">
           BATT <strong>{fmt(battery, 1)}</strong> V
         </span>
-        <span className="sm-stat">
-          RATE <strong>{hz > 0 ? hz.toFixed(0) : '—'}</strong> Hz
-        </span>
+        <RateMeter />
         <span className={`sm-pill ${logging ? 'ok' : 'off'}`}>
           {logging ? `Logging ${logDurationSec}s` : 'Log Off'}
         </span>

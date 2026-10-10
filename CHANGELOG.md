@@ -13,6 +13,30 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-08 — Startup live telemetry re-render hang fix
+
+The Startup dashboard's live telemetry hung low-power machines because the
+monitor body re-rendered on every 100 ms realtime flush and dragged the
+4-pane GraphLog tree (and its full-channel lane pickers) along with it. Fixed
+by decoupling the graph from the realtime cadence.
+
+#### Changed
+
+- **`LiveGraphLog` / `ReviewGraphLog`** (`components/tuner-ui/`): both are
+  now `React.memo`-wrapped and read their stores imperatively, so a
+  `StartupMonitor` re-render no longer cascades into the graph tree — the
+  graph re-renders only on its own 500 ms snapshot tick, not on every 10 Hz
+  stream flush.
+- **`StartupMonitor.tsx`**: the `lastUpdateTime` subscription (and its Hz
+  rolling-average effect) moved into a small `RateMeter` child, so the
+  columns/LEDs/graph-host no longer re-render purely to refresh the `RATE`
+  readout.
+- **`LiveGraphLog.tsx`**: live samples are now built only for the channels
+  actually plotted in the graph lanes (matching `ReviewGraphLog`'s
+  `neededKey` behaviour). Building 300 rows × the full rusEFI channel set
+  cost ~20 ms of allocation per rebuild; the picker still gets the full live
+  channel list.
+
 ### 2026-10-06 — Tune diff dialog: one scrollbar, auto-jump to first change
 
 The tune-mismatch difference report (LibreTune vs ECU) let each side scroll
