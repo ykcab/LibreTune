@@ -13,6 +13,35 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-10 — Startup dashboard de-F1'd: purpose-built LiveScope centre
+
+The F1 broadcast face from the earlier 2026-10-10 pass was a dead end on the
+Startup surface: the "session clock" and session timeline are track-session
+concepts that belong to the Race dashboard, and the centre still hosted the
+generic `GraphLog` analysis chart. The Startup face is now a plain engine
+telemetry monitor — engine rail, a purpose-built multi-lane live scope, and a
+fuel/air rail — with a slim warning-chip footer that only appears when
+something needs attention.
+
+#### Added
+
+- **`dashboards/LiveScope.tsx`** (new): fixed 8-lane oscilloscope for live
+  telemetry (RPM, MAP, AFR, TPS, CLT, IAT, ADV, PW) with stable per-lane
+  colours, fixed ranges, and per-lane current-value readouts. It reads the
+  realtime history buffers imperatively on an 80 ms `requestAnimationFrame`
+  loop, so the 10 Hz channel stream never cascades into React — zero
+  re-renders after mount. `SCOPE_LANES` is the single source of truth for lane
+  colours, reused by the raw readouts.
+
+#### Changed
+
+- **`StartupMonitor.tsx` / `.css`** — F1 broadcast chrome removed: no session
+  clock, no session timeline; `f1-*` class vocabulary renamed to `sm-*`. The
+  live trace is now `LiveScope` instead of `LiveGraphLog`; Review mode keeps
+  the full `ReviewGraphLog` analysis surface.
+- **`commands/dash_layout.rs`** — the "Startup" dashboard template
+  description now describes the rails-around-a-scope face.
+
 ### 2026-10-10 — Serial "Permission denied" no longer misdiagnosed as a held port
 
 A TCP/WiFi session was blamed for what is, on Linux, a permissions problem.

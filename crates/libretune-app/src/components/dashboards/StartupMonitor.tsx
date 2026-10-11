@@ -1,10 +1,12 @@
 /**
- * Startup dashboard — F1 broadcast-style telemetry face.
+ * Startup dashboard — live engine telemetry monitor.
  *
- * Three vertical bands (engine / trace / fuel) plus a bottom session
- * timeline, in the flat-charcoal, hairline-ruled, condensed-uppercase
- * language of a race broadcast graphic. Composed instrument display,
- * not a gauge grid.
+ * Re-imagined (Oct 2026): the F1 broadcast chrome is gone. There is no
+ * "session" clock and no session timeline — those were track-session concepts
+ * that belong to the dedicated Race dashboard. The centre is now a
+ * purpose-built multi-lane live scope (LiveScope), flanked by an engine rail
+ * and a fuel/air rail, with a slim warning-chip footer that only appears when
+ * something needs attention.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -15,8 +17,8 @@ import {
   useRealtimeStore,
 } from '../../stores/realtimeStore';
 import { KnockSpectrogramView } from '../diagnostics/KnockSpectrogramView';
-import { LiveGraphLog } from '../tuner-ui/LiveGraphLog';
 import { ReviewGraphLog } from '../tuner-ui/ReviewGraphLog';
+import { LiveScope } from './LiveScope';
 import './StartupMonitor.css';
 
 export interface StartupMonitorProps {
@@ -108,13 +110,13 @@ function Hero({
   toneCls: string;
 }) {
   return (
-    <div className={`f1-hero ${toneCls}`} style={{ ['--f1-accent' as string]: accent }}>
-      <div className="f1-hero-label">{label}</div>
-      <div className="f1-hero-value">
+    <div className={`sm-hero ${toneCls}`} style={{ ['--sm-accent' as string]: accent }}>
+      <div className="sm-hero-label">{label}</div>
+      <div className="sm-hero-value">
         {value}
-        {unit ? <span className="f1-hero-unit">{unit}</span> : null}
+        {unit ? <span className="sm-hero-unit">{unit}</span> : null}
       </div>
-      {delta !== undefined ? <div className="f1-hero-delta">{delta}</div> : null}
+      {delta !== undefined ? <div className="sm-hero-delta">{delta}</div> : null}
     </div>
   );
 }
@@ -131,11 +133,11 @@ function Readout({
   toneCls: string;
 }) {
   return (
-    <div className="f1-readout">
-      <div className="f1-readout-label">{label}</div>
-      <div className={`f1-readout-value ${toneCls}`}>
+    <div className="sm-readout">
+      <div className="sm-readout-label">{label}</div>
+      <div className={`sm-readout-value ${toneCls}`}>
         {value}
-        {unit ? <span className="f1-readout-unit">{unit}</span> : null}
+        {unit ? <span className="sm-readout-unit">{unit}</span> : null}
       </div>
     </div>
   );
@@ -153,12 +155,12 @@ function Bar({
   color: string;
 }) {
   return (
-    <div className="f1-bar">
-      <div className="f1-bar-head">
+    <div className="sm-bar">
+      <div className="sm-bar-head">
         <span>{label}</span>
         <span>{value}</span>
       </div>
-      <div className="f1-bar-track">
+      <div className="sm-bar-track">
         <i style={{ width: `${clamp01(frac) * 100}%`, background: color }} />
       </div>
     </div>
@@ -178,9 +180,9 @@ function SemiGauge({
 }) {
   const f = clamp01(frac);
   return (
-    <div className="f1-semi">
+    <div className="sm-semi">
       <svg viewBox="0 0 120 66" role="img" aria-label={label}>
-        <path d={arcPath(60, 60, 52, 180, 360)} fill="none" stroke="var(--f1-track)" strokeWidth="9" />
+        <path d={arcPath(60, 60, 52, 180, 360)} fill="none" stroke="var(--sm-track)" strokeWidth="9" />
         {f > 0.001 && (
           <path
             d={arcPath(60, 60, 52, 180, 180 + 180 * f)}
@@ -189,11 +191,11 @@ function SemiGauge({
             strokeWidth="9"
           />
         )}
-        <text x="60" y="56" textAnchor="middle" className="f1-semi-value">
+        <text x="60" y="56" textAnchor="middle" className="sm-semi-value">
           {value}
         </text>
       </svg>
-      <div className="f1-semi-label">{label}</div>
+      <div className="sm-semi-label">{label}</div>
     </div>
   );
 }
@@ -211,9 +213,9 @@ function MiniGauge({
 }) {
   const f = clamp01(frac);
   return (
-    <div className="f1-mini">
+    <div className="sm-mini">
       <svg viewBox="0 0 40 40" role="img" aria-label={label}>
-        <circle cx="20" cy="20" r="16" fill="none" stroke="var(--f1-track)" strokeWidth="3" />
+        <circle cx="20" cy="20" r="16" fill="none" stroke="var(--sm-track)" strokeWidth="3" />
         <circle
           cx="20"
           cy="20"
@@ -225,11 +227,11 @@ function MiniGauge({
           strokeLinecap="round"
           transform="rotate(-90 20 20)"
         />
-        <text x="20" y="24" textAnchor="middle" className="f1-mini-value">
+        <text x="20" y="24" textAnchor="middle" className="sm-mini-value">
           {value}
         </text>
       </svg>
-      <div className="f1-mini-label">{label}</div>
+      <div className="sm-mini-label">{label}</div>
     </div>
   );
 }
@@ -242,17 +244,17 @@ function MiniGauge({
 function RateMeter() {
   const lastUpdateTime = useRealtimeStore((s) => s.lastUpdateTime);
   const [hz, setHz] = useState(0);
-  const lastTsRef = useRef(0);
-  const hzSamplesRef = useRef<number[]>([]);
+  const prevRef = useRef(0);
+  const samplesRef = useRef<number[]>([]);
 
   useEffect(() => {
     if (!lastUpdateTime) return;
-    const prev = lastTsRef.current;
-    lastTsRef.current = lastUpdateTime;
+    const prev = prevRef.current;
+    prevRef.current = lastUpdateTime;
     if (!prev) return;
     const dt = lastUpdateTime - prev;
     if (dt <= 0 || dt > 2000) return;
-    const samples = hzSamplesRef.current;
+    const samples = samplesRef.current;
     samples.push(1000 / dt);
     if (samples.length > 20) samples.shift();
     const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
@@ -260,10 +262,10 @@ function RateMeter() {
   }, [lastUpdateTime]);
 
   return (
-    <div className="f1-rate-value">
+    <span className="sm-rate-value">
       {hz > 0 ? hz.toFixed(0) : '—'}
-      <span className="f1-rate-unit">Hz</span>
-    </div>
+      <span className="sm-rate-unit">Hz</span>
+    </span>
   );
 }
 
@@ -271,7 +273,7 @@ function RateMeter() {
 
 export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
   const channels = useChannels([
-    'rpm', 'speed', 'gear', 'tps', 'map', 'lambda', 'afr', 'afrTarget', 'targetLambda',
+    'rpm', 'speed', 'gear', 'tps', 'lambda', 'afr', 'afrTarget', 'targetLambda',
     'battery', 'coolant', 'iat', 'egt', 'egt1', 'oilPressure', 'oilTemp',
     'fuelPressure', 'lowFuelPressure', 'highFuelPressure', 'rawHighFuelPressure',
     'boost', 'advance', 'pulseWidth', 'dutyCycle', 'flexPercent',
@@ -281,7 +283,6 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
 
   const [logging, setLogging] = useState(false);
   const [logDurationSec, setLogDurationSec] = useState(0);
-  const [sessionSec, setSessionSec] = useState(0);
   const [mode, setMode] = useState<'live' | 'review'>('live');
   const [showSpectrogram, setShowSpectrogram] = useState(false);
 
@@ -290,7 +291,6 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
   const speed = readChannel(channels, 'speed');
   const gear = readChannel(channels, 'gear');
   const tps = readChannel(channels, 'tps');
-  const map = readChannel(channels, 'map');
   const boost = readChannel(channels, 'boost');
   const coolant = readChannel(channels, 'coolant');
   const iat = readChannel(channels, 'iat');
@@ -341,10 +341,7 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
       }
     };
     void tick();
-    const id = window.setInterval(() => {
-      setSessionSec((s) => s + 1);
-      void tick();
-    }, 1000);
+    const id = window.setInterval(() => void tick(), 1000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -355,106 +352,129 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
     const list: string[] = [];
     if (!isConnected) return list;
     const rpmV = readChannel(channels, 'rpm');
-    const lambdaV = lambda;
-    const afrV = afr;
     const batt = readChannel(channels, 'battery');
     const clt = readChannel(channels, 'coolant');
     if (batt !== undefined && batt < 11.0) list.push(`Battery low (${batt.toFixed(1)} V)`);
     if (clt !== undefined && clt >= 110) list.push(`Coolant critical (${clt.toFixed(0)} °C)`);
-    if (lambdaV !== undefined && lambdaV < 0.75) {
-      list.push(`Lambda dangerously rich (${lambdaV.toFixed(3)})`);
+    if (lambda !== undefined && lambda < 0.75) {
+      list.push(`Lambda dangerously rich (${lambda.toFixed(3)})`);
     }
-    if (afrV !== undefined && afrV > 16.5 && (rpmV ?? 0) > 800) {
-      list.push(`AFR lean while running (${afrV.toFixed(1)})`);
+    if (afr !== undefined && afr > 16.5 && (rpmV ?? 0) > 800) {
+      list.push(`AFR lean while running (${afr.toFixed(1)})`);
     }
     return list;
   }, [channels, isConnected, lambda, afr]);
 
-  const timelineEvents = useMemo(() => {
-    const ev: { label: string; cls: string }[] = [];
+  const statusChips = useMemo(() => {
+    const chips: { label: string; cls: string }[] = [];
     if (engineRunning) {
       const cl = readChannel(channels, 'closedLoop');
-      if (cl !== undefined && cl < 0.5) ev.push({ label: 'OPEN LOOP', cls: 'blue' });
+      if (cl !== undefined && cl < 0.5) chips.push({ label: 'OPEN LOOP', cls: 'info' });
       const kn = readChannel(channels, 'knock');
-      if (kn !== undefined && kn > 0.5) ev.push({ label: 'KNOCK', cls: 'grey' });
+      if (kn !== undefined && kn > 0.5) chips.push({ label: 'KNOCK', cls: 'warn' });
     }
     for (const w of warnings) {
-      ev.push({ label: w.split('(')[0].trim().toUpperCase(), cls: 'gold' });
+      chips.push({ label: w.split('(')[0].trim().toUpperCase(), cls: 'warn' });
     }
-    return ev;
+    return chips;
   }, [channels, engineRunning, warnings]);
 
   const rpmTone = tone(rpm, { hi: 6500, crit: 7200 });
   const afrTone = tone(afr, { lo: 11.5, hi: 16.5 });
 
-  const bannerText = !isConnected
-    ? 'DISCONNECTED'
-    : warnings[0] ?? (engineRunning ? 'ENGINE RUNNING' : cranking ? 'CRANKING' : isReceiving ? 'READY' : 'WAITING');
-  const bannerCls = !isConnected
-    ? 'dim'
-    : warnings.length
-      ? 'warn'
-      : engineRunning || cranking || isReceiving
-        ? 'ok'
-        : 'dim';
+  const linkLabel = !isConnected ? 'DISCONNECTED' : isReceiving ? 'LIVE' : 'WAITING';
+  const linkCls = !isConnected ? 'dim' : isReceiving ? 'ok' : 'wait';
+  const engineState = !isConnected
+    ? ''
+    : engineRunning
+      ? 'ENGINE RUNNING'
+      : cranking
+        ? 'CRANKING'
+        : isReceiving
+          ? 'READY'
+          : '';
+  const engineStateCls = engineRunning || cranking ? 'ok' : 'dim';
 
   return (
     <div className="startup-monitor">
-      <header className="f1-header">
-        <span className="f1-header-title">LIBRETUNE</span>
-        <span className="f1-header-right">
-          {isConnected ? (isReceiving ? 'LIVE' : 'WAITING') : 'DISCONNECTED'} · {fmtClock(sessionSec)}
-        </span>
+      <header className="sm-header">
+        <span className="sm-title">LibreTune</span>
+        <div className="sm-status">
+          {logging && (
+            <span className="sm-chip sm-chip--rec">
+              <i className="sm-dot" /> REC {fmtClock(logDurationSec)}
+            </span>
+          )}
+          <span className={`sm-pill ${linkCls}`}>
+            <i className="sm-dot" /> {linkLabel}
+          </span>
+          <RateMeter />
+        </div>
       </header>
 
-      {/* ---------- left band: engine ---------- */}
-      <section className="f1-left">
-        <div className={`f1-banner ${bannerCls}`}>{bannerText}</div>
+      {/* ---------- left rail: engine ---------- */}
+      <section className="sm-left">
+        {engineState ? (
+          <div className={`sm-state ${engineStateCls}`}>{engineState}</div>
+        ) : (
+          <div className="sm-state dim">NO TELEMETRY</div>
+        )}
 
         <Hero
           label="ENGINE SPEED"
           value={fmt(rpm, 0)}
-          accent="var(--f1-blue)"
+          accent="var(--sm-amber)"
           toneCls={rpmTone}
           delta={rpmDelta !== undefined ? fmtSigned(rpmDelta, 0) : undefined}
         />
 
-        <div className="f1-gear">
-          <span className="f1-gear-badge">{fmt(gear, 0)}</span>
-          <span className="f1-label">GEAR</span>
+        <div className="sm-duo">
+          <div className="sm-gear">
+            <span className="sm-gear-badge">{fmt(gear, 0)}</span>
+            <span className="sm-minilabel">GEAR</span>
+          </div>
+          <Readout label="SPEED" value={fmt(speed, 0)} unit="km/h" toneCls="" />
         </div>
-
-        <Readout label="SPEED" value={fmt(speed, 0)} unit="km/h" toneCls="" />
-        <Readout label="COOLANT" value={fmt(coolant, 0)} unit="°C" toneCls={tone(coolant, { hi: 100, crit: 110 })} />
-
-        <Bar
-          label="BATTERY"
-          value={`${fmt(battery, 1)} V`}
-          frac={battery === undefined ? 0 : (battery - 10) / 5}
-          color="var(--f1-blue)"
-        />
-        <Bar label="THROTTLE" value={`${fmt(tps, 1)} %`} frac={(tps ?? 0) / 100} color="var(--f1-blue)" />
 
         <SemiGauge
           label="OIL PRESS"
           value={fmt(oilPressure, 0)}
           frac={(oilPressure ?? 0) / 400}
-          color="var(--f1-blue)"
+          color="var(--sm-blue)"
         />
+
+        <Readout
+          label="COOLANT"
+          value={fmt(coolant, 0)}
+          unit="°C"
+          toneCls={tone(coolant, { hi: 100, crit: 110 })}
+        />
+
+        <Bar
+          label="BATTERY"
+          value={`${fmt(battery, 1)} V`}
+          frac={battery === undefined ? 0 : (battery - 10) / 5}
+          color="var(--sm-blue)"
+        />
+        <Bar label="THROTTLE" value={`${fmt(tps, 1)} %`} frac={(tps ?? 0) / 100} color="var(--sm-blue)" />
       </section>
 
-      {/* ---------- centre band: trace + raw ---------- */}
-      <section className="f1-centre">
-        <div className="f1-centre-head">
-          <div>
-            <div className="f1-label">SESSION</div>
-            <div className="f1-session-time">{logging ? fmtClock(logDurationSec) : fmtClock(sessionSec)}</div>
-          </div>
-          <div className="f1-modes" role="tablist" aria-label="Trace mode">
-            <button type="button" className={mode === 'live' ? 'on' : ''} onClick={() => setMode('live')}>
+      {/* ---------- centre: live scope ---------- */}
+      <section className="sm-centre">
+        <div className="sm-centre-head">
+          <div className="sm-tabs" role="tablist" aria-label="Trace mode">
+            <button
+              type="button"
+              className={mode === 'live' ? 'on' : ''}
+              onClick={() => setMode('live')}
+            >
               LIVE
             </button>
-            <button type="button" className={mode === 'review' ? 'on' : ''} onClick={() => setMode('review')}>
+            <button
+              type="button"
+              className={mode === 'review' ? 'on' : ''}
+              onClick={() => setMode('review')}
+            >
               REVIEW
             </button>
             <button
@@ -467,41 +487,26 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
           </div>
         </div>
 
-        <div className="f1-trace">
-          {mode === 'live' ? <LiveGraphLog /> : <ReviewGraphLog />}
+        <div className="sm-trace">
+          {mode === 'live' ? <LiveScope /> : <ReviewGraphLog />}
           {showSpectrogram && (
-            <div className="f1-trace-overlay">
+            <div className="sm-trace-overlay">
               <KnockSpectrogramView isConnected={isConnected} embedded active={showSpectrogram} />
             </div>
           )}
-        </div>
-
-        <div className="f1-centre-foot">
-          <div className="f1-raw">
-            <div className="f1-label">RAW TELEMETRY DATA</div>
-            <div className="f1-raw-grid">
-              <span>rpm = {fmt(rpm, 0)}</span>
-              <span>clt = {fmt(coolant, 0)}</span>
-              <span>afr = {fmt(afr, 1)}</span>
-              <span>batt = {fmt(battery, 1)}</span>
-              <span>map = {fmt(map, 0)}</span>
-              <span>duty = {fmt(duty, 1)}</span>
-            </div>
-          </div>
-          <div className="f1-rate">
-            <div className="f1-label">DATA RATE</div>
-            <RateMeter />
-          </div>
+          {mode === 'live' && !isConnected && (
+            <div className="sm-trace-empty">Connect to the ECU to stream live traces</div>
+          )}
         </div>
       </section>
 
-      {/* ---------- right band: fuel ---------- */}
-      <section className="f1-right">
+      {/* ---------- right rail: fuel / air ---------- */}
+      <section className="sm-right">
         <Hero
           label="AIR FUEL RATIO"
           value={fmt(afr, 1)}
           unit=":1"
-          accent="var(--f1-gold)"
+          accent="var(--sm-green)"
           toneCls={afrTone}
           delta={afrDeltaLabel}
         />
@@ -510,40 +515,26 @@ export default function StartupMonitor({ isConnected }: StartupMonitorProps) {
         <Readout label="TIMING" value={fmt(timing, 1)} unit="°" toneCls="" />
         <Readout label="BOOST" value={fmt(boost, 0)} unit="kPa" toneCls={tone(boost, { hi: 220 })} />
 
-        <Bar label="INJ DUTY" value={`${fmt(duty, 1)} %`} frac={(duty ?? 0) / 100} color="var(--f1-gold)" />
+        <Bar label="INJ DUTY" value={`${fmt(duty, 1)} %`} frac={(duty ?? 0) / 100} color="var(--sm-pink)" />
         <Readout label="FUEL PRESS" value={fmt(fuelPressure, 0)} unit="kPa" toneCls="" />
         <Readout label="EGT" value={fmt(egt, 0)} unit="°C" toneCls={tone(egt, { hi: 850, crit: 950 })} />
 
-        <div className="f1-minis">
-          <MiniGauge label="OIL T" value={fmt(oilTemp, 0)} frac={(oilTemp ?? 0) / 150} color="var(--f1-gold)" />
-          <MiniGauge label="IAT" value={fmt(iat, 0)} frac={(iat ?? 0) / 60} color="var(--f1-gold)" />
-          <MiniGauge label="FUEL P" value={fmt(fuelPressure, 0)} frac={(fuelPressure ?? 0) / 400} color="var(--f1-gold)" />
-          <MiniGauge label="BATT" value={fmt(battery, 1)} frac={(battery ?? 0) / 15} color="var(--f1-gold)" />
+        <div className="sm-minis">
+          <MiniGauge label="OIL T" value={fmt(oilTemp, 0)} frac={(oilTemp ?? 0) / 150} color="var(--sm-amber)" />
+          <MiniGauge label="IAT" value={fmt(iat, 0)} frac={(iat ?? 0) / 60} color="var(--sm-green)" />
         </div>
       </section>
 
-      {/* ---------- bottom timeline ---------- */}
-      <div className="f1-timeline">
-        <div className="f1-label">SESSION TIMELINE</div>
-        <div className="f1-timeaxis">
-          {[0, 10, 20, 30, 40, 50].map((t) => (
-            <span key={t} className="f1-tick" style={{ left: `${(t / 60) * 100}%` }}>
-              {t}
+      {/* ---------- footer: status chips (only when something needs attention) ---------- */}
+      {statusChips.length > 0 && (
+        <footer className="sm-footer">
+          {statusChips.map((c, i) => (
+            <span key={`${c.label}-${i}`} className={`sm-chip sm-chip--${c.cls}`}>
+              {c.label}
             </span>
           ))}
-          <span className="f1-tick" style={{ left: '100%' }}>60 s</span>
-          {timelineEvents.slice(0, 4).map((ev, i) => (
-            <span
-              key={`${ev.label}-${i}`}
-              className={`f1-marker ${ev.cls}`}
-              style={{ left: `${82 - i * 8}%` }}
-            >
-              {ev.label}
-            </span>
-          ))}
-          <span className="f1-now" />
-        </div>
-      </div>
+        </footer>
+      )}
     </div>
   );
 }
