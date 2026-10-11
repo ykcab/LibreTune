@@ -1033,28 +1033,32 @@ function AppContent() {
       if (newStatus.state === "Connected" && newStatus.has_definition) {
         await doSync();
         
-        // Save the successful connection port to project config and app memory
-        if (currentProject) {
-          try {
-            await invoke("update_project_connection", {
-              port: portToUse,
-              baudRate: baudRate,
-            });
-            setCurrentProject({
-              ...currentProject,
-              connection: {
-                ...currentProject.connection,
-                port: portToUse,
-                baud_rate: baudRate,
-              },
-            });
-            console.log("Saved connection settings to project");
-          } catch (saveError) {
-            console.error("Failed to save connection settings:", saveError);
-          }
-        }
-
+        // Save the successful *serial* connection port to project config and app
+        // memory. A TCP/WiFi connection must not clobber the remembered serial
+        // port: `portToUse` is just the stale serial selection (often empty)
+        // in that case, and writing it back is how a TCP session quietly wiped
+        // the port the next USB session relied on.
         if (effectiveConnectionType !== "Tcp") {
+          if (currentProject) {
+            try {
+              await invoke("update_project_connection", {
+                port: portToUse,
+                baudRate: baudRate,
+              });
+              setCurrentProject({
+                ...currentProject,
+                connection: {
+                  ...currentProject.connection,
+                  port: portToUse,
+                  baud_rate: baudRate,
+                },
+              });
+              console.log("Saved connection settings to project");
+            } catch (saveError) {
+              console.error("Failed to save connection settings:", saveError);
+            }
+          }
+
           try {
             await invoke("update_setting", {
               key: "last_serial_port",
@@ -1076,7 +1080,12 @@ function AppContent() {
       await checkStatus();
       if (!options?.silent) {
         const msg = String(e);
-        if (/access is denied|access denied/i.test(msg)) {
+        if (/permission denied/i.test(msg)) {
+          // The backend resolves the device's actual owning group (dialout on
+          // Debian/Ubuntu, uucp on Arch/Manjaro) and embeds the exact usermod
+          // command — surface it verbatim instead of re-hardcoding "dialout".
+          showToast(msg, "warning");
+        } else if (/access is denied|access denied|device or resource busy/i.test(msg)) {
           try {
             await invoke("release_serial_port_blockers");
           } catch {

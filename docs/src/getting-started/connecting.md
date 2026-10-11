@@ -146,10 +146,9 @@ Set `RUST_LOG=error` to suppress most backend output.
 - Or update your ECU firmware to match the INI
 
 ### "Permission denied" (Linux)
-- Add your user to the `dialout` group:
-  ```bash
-  sudo usermod -a -G dialout $USER
-  ```
+- Add your user to the serial-port group for your distro:
+  - Debian / Ubuntu: `sudo usermod -a -G dialout $USER`
+  - Arch / Manjaro: `sudo usermod -a -G uucp $USER`
 - Log out and back in
 
 ## Next Steps

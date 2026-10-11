@@ -187,4 +187,8 @@ describe("isPortBusyError", () => {
     expect(isPortBusyError("Device or resource busy")).toBe(true);
     expect(isPortBusyError("The system cannot find the file specified.")).toBe(false);
   });
+
+  it("does not mistake a Linux permission error for a held port", () => {
+    expect(isPortBusyError("Permission denied")).toBe(false);
+  });
 });

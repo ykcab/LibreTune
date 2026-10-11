@@ -13,6 +13,34 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-10 — Serial "Permission denied" no longer misdiagnosed as a held port
+
+A TCP/WiFi session was blamed for what is, on Linux, a permissions problem.
+`open_port` annotated **any** open failure — including `EACCES` ("Permission
+denied") — as "held by another program (ts_shim/TunerStudio), connect via TCP".
+On Linux that error means the device node does not grant the current user
+access (missing `dialout`/`uucp` group), so the app sent users chasing a ts_shim
+that was never there, and the wizard offered a "Connect via TCP" button for it.
+
+#### Fixed
+
+- **`protocol/serial.rs`** — `annotate_serial_open_error` now splits the two
+  cases: "Permission denied" (`EACCES`) gets a fix-up message that resolves the
+  device's actual owning group on Linux (`dialout` on Debian/Ubuntu, `uucp` on
+  Arch/Manjaro) instead of hardcoding "dialout"; "busy" / "in use" / "access
+  denied" (held port, `EBUSY` or Windows exclusive COM) keep the ts_shim/TCP
+  suggestion.
+- **`App.tsx`** — the connect error handler routes "Permission denied" to a
+  verbatim backend message (which now names the correct group) instead of the
+  "COM port is blocked" path.
+- **`utils/connectEcuWizard.ts`** — `isPortBusyError` no longer treats
+  "Permission denied" as a busy/held port, so the wizard stops offering the TCP
+  workaround for it.
+- **`App.tsx`** — `connect()` only writes `update_project_connection` /
+  `last_serial_port` for Serial connections. A TCP/WiFi connect previously
+  saved `portToUse` (the stale serial selection, often empty) back into the
+  project config, quietly clobbering the port the next USB session relied on.
+
 ### 2026-10-10 — Startup dashboard rebuilt as an F1 broadcast telemetry face
 
 The Startup dashboard (previously colon-list readouts + an LED strip) was

@@ -64,10 +64,13 @@ Your INI file doesn't match your ECU firmware:
 
 ### Permission denied on Linux
 
-Add your user to the dialout group:
-```bash
-sudo usermod -a -G dialout $USER
-```
+Add your user to the serial-port group for your distro:
+
+| Distro | Group | Command |
+|---|---|---|
+| Debian / Ubuntu | `dialout` | `sudo usermod -a -G dialout $USER` |
+| Arch / Manjaro | `uucp` | `sudo usermod -a -G uucp $USER` |
+
 Then log out and back in.
 
 ## Table Editing

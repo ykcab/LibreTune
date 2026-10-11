@@ -156,11 +156,27 @@ pub fn open_port(name: &str, baud_rate: Option<u32>) -> Result<Box<dyn SerialPor
 }
 
 fn annotate_serial_open_error(name: &str, err: &str) -> String {
-    let busy = err.to_ascii_lowercase();
-    if busy.contains("access")
-        || busy.contains("denied")
-        || busy.contains("busy")
-        || busy.contains("in use")
+    let lower = err.to_ascii_lowercase();
+
+    // Linux reports `EACCES` as "Permission denied" — that is the device node
+    // not granting the current user access (a missing serial-port group
+    // membership), *not* another program holding the port. The held-port case
+    // is `EBUSY` ("Device or resource busy"), which the kernel returns for a
+    // TIOCEXCL lock. Conflating the two sent users down the "connect via TCP"
+    // path for a permissions problem they fix with one `usermod` command.
+    if lower.contains("permission denied") {
+        return format!(
+            "{err} The OS refused access to {name}.{}",
+            serial_permission_hint(name)
+        );
+    }
+
+    // Windows "Access is denied." and Linux "Device or resource busy" both mean
+    // another program already has the port open.
+    if lower.contains("busy")
+        || lower.contains("in use")
+        || lower.contains("access is denied")
+        || lower.contains("access denied")
     {
         format!(
             "{err} Port {name} is held by another program (often ts_shim or TunerStudio). \
@@ -169,6 +185,48 @@ fn annotate_serial_open_error(name: &str, err: &str) -> String {
     } else {
         err.to_string()
     }
+}
+
+/// Build the "how to fix the refused serial open" hint appended to a
+/// `Permission denied` error.
+///
+/// On Linux the owning group varies by distro — `dialout` on Debian/Ubuntu,
+/// `uucp` on Arch/Manjaro — so resolve the device node's actual group and name
+/// it directly rather than guessing. A hardcoded group name is exactly what
+/// produced `usermod: group 'dialout' does not exist` on Arch.
+#[cfg(target_os = "linux")]
+fn serial_permission_hint(name: &str) -> String {
+    use std::os::unix::fs::MetadataExt;
+
+    let group = std::fs::metadata(name)
+        .ok()
+        .and_then(|m| group_name_from_gid(m.gid()))
+        .unwrap_or_else(|| "dialout".to_string());
+
+    format!(
+        " On Linux, add your user to the `{group}` group \
+         (`sudo usermod -a -G {group} $USER`), then log out and back in."
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn group_name_from_gid(gid: u32) -> Option<String> {
+    // SAFETY: getgrgid returns a pointer into shared static storage. The name
+    // is copied out immediately, and the only caller is the connect path, which
+    // is serialized behind the connection-transition lock, so there is no
+    // practical race with another getgr* caller overwriting the buffer.
+    let entry = unsafe { libc::getgrgid(gid) };
+    if entry.is_null() {
+        return None;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr((*entry).gr_name) };
+    Some(name.to_string_lossy().into_owned())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn serial_permission_hint(_name: &str) -> String {
+    " Add your user to the serial-port group (`uucp` on macOS/BSD), then log out and back in."
+        .to_string()
 }
 
 /// Configure a serial port for ECU communication
@@ -275,5 +333,26 @@ mod tests {
             annotate_serial_open_error("COM31", "The system cannot find the file specified."),
             "The system cannot find the file specified."
         );
+    }
+
+    #[test]
+    fn linux_permission_denied_is_a_permissions_error_not_a_held_port() {
+        let msg = annotate_serial_open_error("/dev/libretune-no-such-port", "Permission denied");
+        assert!(msg.contains("Permission denied"), "{msg}");
+        assert!(!msg.contains("127.0.0.1:29001"), "{msg}");
+        assert!(!msg.contains("held by another program"), "{msg}");
+        // The hint must carry a real fix-up command, not the Debian-specific
+        // "dialout" guess that breaks on Arch/Manjaro.
+        #[cfg(target_os = "linux")]
+        assert!(msg.contains("usermod"), "{msg}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn group_name_resolves_from_gid() {
+        // gid 0 is the `root` group on every Linux system, so this exercises
+        // the getgrgid path deterministically without depending on the test
+        // machine's serial device group.
+        assert_eq!(group_name_from_gid(0).as_deref(), Some("root"));
     }
 }

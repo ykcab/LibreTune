@@ -63,6 +63,10 @@ export function paramsComplete(
 
 export function isPortBusyError(msg: string): boolean {
   const m = msg.toLowerCase();
+  // Linux `EACCES` ("Permission denied") is a missing dialout-group membership,
+  // not another process holding the port — don't offer the TCP workaround for
+  // it, or the user chases a ts_shim that isn't there.
+  if (m.includes("permission denied")) return false;
   return m.includes("access") || m.includes("denied") || m.includes("busy") || m.includes("in use");
 }
 
