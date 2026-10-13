@@ -53,9 +53,13 @@ describe('bands and tones', () => {
 
   it('walks ascending bands for a low-is-bad channel', () => {
     const oil = CHANNELS.oilPressure;
-    expect(toneFor(oil, 40)).toBe('crit');
-    expect(toneFor(oil, 90)).toBe('warn');
-    expect(toneFor(oil, 300)).toBe('ok');
+    // The static bands are the *safety floor* (below this, pressure is
+    // inadequate at any speed); the rpm-scaled warning lives in the session so a
+    // healthy hot idle is never flagged.
+    expect(toneFor(oil, 30)).toBe('crit');
+    expect(toneFor(oil, 60)).toBe('warn');
+    expect(toneFor(oil, 150)).toBe('ok');
+    expect(toneFor(oil, 120)).toBe('ok');
   });
 
   it('treats a missing reading as dim, never as healthy', () => {

@@ -16,6 +16,7 @@ import type {
   SessionEvent,
 } from './session';
 import type { ValueFormatter } from './useStartupTelemetry';
+import type { useDynoEstimate } from './useDynoEstimate';
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -350,7 +351,6 @@ export interface CoverageMapProps {
   map: number | undefined;
   fmt: ValueFormatter;
 }
-
 /**
  * Operating envelope: rpm (x) × manifold pressure (y), one cell per
  * 500 rpm × 20 kPa.
@@ -424,17 +424,19 @@ export const CoverageMap = memo(function CoverageMap({ coverage, rpm, map, fmt }
       }
     }
 
-    // Grid.
+    // Grid: lines every few cells, scaled to the grid that is actually in use.
     ctx.strokeStyle = withAlpha(text, 0.13);
     ctx.lineWidth = 1;
-    for (let rb = 0; rb <= coverage.rpmBins; rb += 4) {
+    const rpmEvery = Math.max(1, Math.round(coverage.rpmBins / 4));
+    for (let rb = 0; rb <= coverage.rpmBins; rb += rpmEvery) {
       const x = Math.round(padL + rb * cellW) + 0.5;
       ctx.beginPath();
       ctx.moveTo(x, padT);
       ctx.lineTo(x, padT + plotH);
       ctx.stroke();
     }
-    for (let mb = 0; mb <= coverage.mapBins; mb += 5) {
+    const mapEvery = Math.max(1, Math.round(coverage.mapBins / 3));
+    for (let mb = 0; mb <= coverage.mapBins; mb += mapEvery) {
       const y = Math.round(padT + plotH - mb * cellH) + 0.5;
       ctx.beginPath();
       ctx.moveTo(padL, y);
@@ -451,18 +453,22 @@ export const CoverageMap = memo(function CoverageMap({ coverage, rpm, map, fmt }
       ctx.strokeRect(padL + rb * cellW + 0.75, padT + plotH - (mb + 1) * cellH + 0.75, cellW - 1.5, cellH - 1.5);
     }
 
-    // Axis labels.
+    // Axis labels: the tick spacing follows the grid, and the axis maxima are the
+    // cells the engine has actually reached (so a reached 213 kPa shows, and the
+    // denominator in the header is a fraction of this car's real envelope).
     ctx.fillStyle = dim;
     ctx.font = '9px "IBM Plex Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    for (let rb = 0; rb <= coverage.rpmBins; rb += 4) {
+    const labelEvery = coverage.rpmBins > 20 ? 5 : 4;
+    for (let rb = 0; rb <= coverage.rpmBins; rb += labelEvery) {
       const value = rb * coverage.rpmStep;
       ctx.fillText(`${(value / 1000).toFixed(0)}k`, padL + rb * cellW, padT + plotH + 3);
     }
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    for (let mb = 0; mb <= coverage.mapBins; mb += 5) {
+    const mapLabelEvery = Math.max(1, Math.round(coverage.mapBins / 3));
+    for (let mb = 0; mb <= coverage.mapBins; mb += mapLabelEvery) {
       const label = fmt.boundary('kPa', 0, mb * coverage.mapStep);
       ctx.fillText(label.text, padL - 4, padT + plotH - mb * cellH);
     }
@@ -486,7 +492,9 @@ export const CoverageMap = memo(function CoverageMap({ coverage, rpm, map, fmt }
       <header className="sd-panel__head">
         <h3 className="sd-panel__title">OPERATING ENVELOPE</h3>
         <span className="sd-panel__meta">
-          {coverage.visited}/{coverage.total} CELLS · {coverageShare.toFixed(0)}%
+          {coverage.visited}/{coverage.total} CELLS · {coverageShare.toFixed(0)}% · 0–
+          {(coverage.rpmBins * coverage.rpmStep) / 1000}k rpm · 0–
+          {`${fmt.boundary('kPa', 0, coverage.mapBins * coverage.mapStep).text} ${fmt.boundary('kPa', 0, coverage.mapStep).unit}`}
         </span>
       </header>
       <div className="sd-coverage" ref={wrapRef}>
@@ -515,8 +523,86 @@ export const CoverageMap = memo(function CoverageMap({ coverage, rpm, map, fmt }
   );
 });
 
-function withAlpha(color: string, alpha: number): string {
-  const value = color.trim();
+/* --------------------------------------------------------------- performance */
+
+export interface DynoPanelProps {
+  estimate: ReturnType<typeof useDynoEstimate>;
+}
+
+/**
+ * Live power/torque estimate.
+ *
+ * The numbers come from the app's virtual dynamometer (see `useDynoEstimate`),
+ * so this panel is a *presentation* of that model — including its assumptions,
+ * which are printed rather than buried: an estimate that hides how it was made
+ * is worse than no estimate.
+ */
+export const DynoPanel = memo(function DynoPanel({ estimate }: DynoPanelProps) {
+  const profile = estimate.profile;
+  const mass = profile ? profile.weight_kg + profile.cargo_kg : undefined;
+
+  return (
+    <section className="sd-panel" aria-label="Performance estimate">
+      <header className="sd-panel__head">
+        <h3 className="sd-panel__title">PERFORMANCE (EST.)</h3>
+        <span className="sd-panel__meta">
+          {estimate.status === 'estimate' ? 'ACCELERATION MODEL' : `${estimate.samples} SAMPLES`}
+        </span>
+      </header>
+
+      {estimate.status === 'estimate' && estimate.peakPower ? (
+        <>
+          <div className="sd-perf">
+            <div className="sd-perf__cell">
+              <span className="sd-perf__value">
+                {estimate.peakPower.hp.toFixed(0)}
+                <span className="sd-perf__unit">hp</span>
+              </span>
+              <span className="sd-perf__label">peak power @ {estimate.peakPower.rpm.toFixed(0)} rpm</span>
+            </div>
+            <div className="sd-perf__cell">
+              <span className="sd-perf__value">
+                {estimate.peakTorque ? estimate.peakTorque.lbft.toFixed(0) : '—'}
+                <span className="sd-perf__unit">lb·ft</span>
+              </span>
+              <span className="sd-perf__label">
+                peak torque{estimate.peakTorque ? ` @ ${estimate.peakTorque.rpm.toFixed(0)} rpm` : ''}
+              </span>
+            </div>
+          </div>
+          <div className="sd-kv">
+            <span className="sd-kv__key">Curve at</span>
+            <span className="sd-kv__value">
+              {estimate.current
+                ? `${estimate.current.rpm.toFixed(0)} rpm → ${estimate.current.hp.toFixed(0)} hp · ${estimate.current.lbft.toFixed(0)} lb·ft`
+                : '—'}
+            </span>
+          </div>
+          {profile && mass !== undefined && (
+            <p className="sd-panel__foot">
+              Wheel estimate from vehicle acceleration ({mass.toFixed(0)} kg, Cd {profile.drag_coefficient.toFixed(2)},{' '}
+              {profile.drivetrain_loss_pct.toFixed(0)} % drivetrain loss) — the Virtual Dyno model, not a dyno.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="sd-panel__empty">
+          {estimate.status === 'idle'
+            ? 'Estimation starts when the ECU is streaming.'
+            : estimate.status === 'running'
+              ? 'Computing the curve…'
+              : (estimate.reason ?? 'Collecting data…')}
+        </p>
+      )}
+
+      {estimate.warnings.length > 0 && (
+        <p className="sd-panel__foot sd-tone-warn">{estimate.warnings[0]}</p>
+      )}
+    </section>
+  );
+});
+
+function withAlpha(color: string, alpha: number): string {  const value = color.trim();
   const hex = value.startsWith('#') ? value.slice(1) : null;
   if (hex) {
     const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex;

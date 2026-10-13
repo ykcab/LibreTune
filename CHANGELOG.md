@@ -13,6 +13,70 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-13 — Startup dashboard: adjustable limits, rpm-scaled oil floor, dynamic envelope, bank split, performance estimate
+
+Follow-up to the review pass, working through the known weaknesses that pass
+recorded. Nothing here writes to the ECU; all of it is display, alarm and
+analysis behaviour.
+
+#### Added
+
+- **Adjustable alarm limits (`startup/limits.ts`, `startup/LimitsDialog.tsx`).**
+  The catalogue's thresholds were documented defaults, right for most
+  Speeduino/rusEFI/FOME/epicEFI installs and wrong for some engines (a diesel, a
+  track car with a hotter thermostat, an engine whose hot idle sits near 1 bar of
+  oil pressure). **LIMITS** in the status strip opens an editor with a warn and a
+  critical value per adjustable channel, entered in the user's display units and
+  stored in local storage. One override drives the printed thresholds, the
+  meters, the alarm rules and the derived rules at once, and the editor refuses
+  the two-sided channels (battery warns low *and* on overcharge; fuel trim warns
+  rich at 85 % and calls >115 % critical) because a single pair cannot express
+  them — better documented than lossy.
+- **rpm-scaled oil-pressure alarm.** A fixed low-pressure floor false-alarms on
+  any engine whose hot idle sits near 1 bar, so the live rule now scales with
+  engine speed (~69 kPa per 1000 rpm, armed above 1200 rpm, 2 s dwell so a shift
+  cannot trip it, critical below 60 % of the scaled minimum). The catalogue keeps
+  only a safety floor for the meter (40/70 kPa), the tile's detail prints the
+  minimum the rule is comparing against *right now*, and setting a limit in the
+  editor replaces the rule with the driver's fixed floor.
+- **Bank-to-bank lambda split.** A second wideband (`lambdaValue2`,
+  `RealLambdaValue2`, …) gets its own tile, a scope lane and a rule: a split above
+  0.06 λ under load warns (0.12 λ is critical), naming the leaner bank. An
+  averaged lambda hides exactly this failure. The split reads in λ regardless of
+  the AFR/λ preference, because a difference of ratios is not a ratio.
+- **Dynamic operating-envelope grid (`CoverageGrid`).** The rpm axis is sized from
+  the ECU's rev limit and the pressure axis grows with the boost actually seen, so
+  "cells visited" is a fraction of the envelope this car can reach instead of a
+  fixed 0–8000 rpm × 0–300 kPa grid. Growth appends whole rows, so recorded counts
+  survive, and a grid never shrinks mid-session.
+- **Performance estimate from the app's virtual dynamometer.** A rolling window of
+  live samples is fed to the existing `compute_virtual_dyno` backend command, with
+  the same stored vehicle profile the Virtual Dyno tab uses, and shown as
+  **PERFORMANCE (EST.)** in the analysis strip: peak power/torque with their rpm,
+  the curve value at the current rpm, and the model's assumptions printed
+  underneath ("wheel estimate from vehicle acceleration … the Virtual Dyno model,
+  not a dyno"). When it cannot estimate it says why — no speed channel, no
+  profile, no pull in the window, or the model's own error.
+
+#### Fixed
+
+- **Alarm thresholds now name the edge that matters per band.** The rule generator
+  used a single direction for a channel, so a low-is-bad intermediate band printed
+  the wrong boundary (oil pressure warned "threshold 50" when the number that
+  mattered was 90) and a mixed channel got one of its edges wrong. The edge is now
+  chosen per band from whichever neighbour is less dangerous.
+- **`limitFields` lookups by index returned the wrong channel.** `limitFields`
+  always returns the whole catalogue (its argument only supplies overrides), so
+  the editor's "clean on apply" step indexed into the list and compared the wrong
+  channel's defaults — an edited limit was silently dropped. Caught by a new
+  interaction test and fixed with an explicit `limitField(id, override)`.
+
+#### Changed
+
+- **`docs/src/features/dashboards.md`** — documents the limit editor, the
+  rpm-scaled oil rule, the bank split and the performance estimate, and repeats
+  that the face never writes to the ECU.
+
 ### 2026-10-13 — Startup dashboard: design + code review pass
 
 Two independent reviews (a visual/UX critique against rendered screenshots and a

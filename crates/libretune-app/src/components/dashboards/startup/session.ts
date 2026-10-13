@@ -26,9 +26,11 @@ import {
   FLAGS,
   fuelRatio,
   isGap,
+  type Band,
   type ChannelSpec,
 } from './channels';
-import type { EventKind, Severity } from './types';
+import { applyLimitOverrides, type LimitOverrides } from './limits';
+import type { EventKind, Severity, Tone } from './types';
 
 export interface SessionEvent {
   id: number;
@@ -107,6 +109,9 @@ export interface CoverageStats {
   /** Worst-lean and worst-rich cells, with the operating point that produced them. */
   worstLeanCell: { error: number; rpm: number; map: number } | null;
   worstRichCell: { error: number; rpm: number; map: number } | null;
+  /** How far the engine has actually been, for honest axis labelling. */
+  rpmMaxBin: number;
+  mapMaxBin: number;
 }
 
 export interface SessionExtremes {
@@ -149,10 +154,140 @@ export interface SessionSnapshot {
 }
 /* --------------------------------------------------------------- bin geometry */
 
+/**
+ * The operating-envelope grid.
+ *
+ * Geometry is derived from the engine rather than fixed, so "cells visited" is a
+ * fraction of the envelope this car can actually reach:
+ *  - **rpm axis**: sized from the ECU's rev limit when it publishes one
+ *    (rounded up to the next bin), otherwise 8000 rpm — set once per session.
+ *  - **map axis**: starts at a naturally-aspirated range and *grows* when the
+ *    engine is observed above it. Growth appends whole rows, so the existing
+ *    counts (row-major, rpm fastest) are preserved exactly.
+ *
+ * A grid never shrinks inside a session: a run that briefly sees 250 kPa should
+ * not silently re-bin itself the moment boost falls away.
+ */
+export class CoverageGrid {
+  readonly rpmStep = COVERAGE_RPM_STEP;
+  readonly mapStep = COVERAGE_MAP_STEP;
+  rpmBins = COVERAGE_RPM_DEFAULT_BINS;
+  mapBins = COVERAGE_MAP_DEFAULT_BINS;
+
+  counts = new Uint32Array(this.rpmBins * this.mapBins);
+  errorSum = new Float64Array(this.rpmBins * this.mapBins);
+  errorCounts = new Uint32Array(this.rpmBins * this.mapBins);
+
+  visited = 0;
+  samples = 0;
+  current = -1;
+  peak = 0;
+
+  /** Set the rpm axis once, from the ECU's own rev limit. */
+  setRpmLimit(limit: number | undefined): void {
+    if (limit === undefined || !Number.isFinite(limit) || limit <= 0) return;
+    const bins = Math.max(
+      COVERAGE_RPM_DEFAULT_BINS,
+      Math.min(COVERAGE_RPM_MAX_BINS, Math.ceil(limit / this.rpmStep) + 1),
+    );
+    if (bins <= this.rpmBins) return;
+    const counts = new Uint32Array(bins * this.mapBins);
+    const errorSum = new Float64Array(bins * this.mapBins);
+    const errorCounts = new Uint32Array(bins * this.mapBins);
+    for (let row = 0; row < this.mapBins; row++) {
+      counts.set(this.counts.subarray(row * this.rpmBins, (row + 1) * this.rpmBins), row * bins);
+      errorSum.set(this.errorSum.subarray(row * this.rpmBins, (row + 1) * this.rpmBins), row * bins);
+      errorCounts.set(this.errorCounts.subarray(row * this.rpmBins, (row + 1) * this.rpmBins), row * bins);
+    }
+    this.rpmBins = bins;
+    this.counts = counts;
+    this.errorSum = errorSum;
+    this.errorCounts = errorCounts;
+    this.current = -1;
+  }
+
+  /** Grow the map axis to hold `mapKpa` (whole rows are appended). */
+  ensureMapBins(mapKpa: number): void {
+    const needed = Math.min(COVERAGE_MAP_MAX_BINS, Math.ceil(mapKpa / this.mapStep) + 1);
+    if (needed <= this.mapBins) return;
+    const cells = this.rpmBins * needed;
+    const counts = new Uint32Array(cells);
+    const errorSum = new Float64Array(cells);
+    const errorCounts = new Uint32Array(cells);
+    counts.set(this.counts);
+    errorSum.set(this.errorSum);
+    errorCounts.set(this.errorCounts);
+    this.mapBins = needed;
+    this.counts = counts;
+    this.errorSum = errorSum;
+    this.errorCounts = errorCounts;
+  }
+
+  /** Record one operating point (plus its fuelling error, when there is one). */
+  add(rpm: number, mapKpa: number, error: number | null): void {
+    this.ensureMapBins(mapKpa);
+    const rb = Math.floor(rpm / this.rpmStep);
+    const mb = Math.floor(mapKpa / this.mapStep);
+    if (rb < 0 || rb >= this.rpmBins || mb < 0 || mb >= this.mapBins) {
+      this.current = -1;
+      return;
+    }
+    const index = mb * this.rpmBins + rb;
+    if (this.counts[index] === 0) this.visited++;
+    this.counts[index]++;
+    this.samples++;
+    this.current = index;
+    if (this.counts[index] > this.peak) this.peak = this.counts[index];
+    if (error !== null) {
+      this.errorSum[index] += error;
+      this.errorCounts[index]++;
+    }
+  }
+
+  /** Highest bin that carries a sample (for axis labelling). */
+  get rpmMaxBin(): number {
+    for (let rb = this.rpmBins - 1; rb >= 0; rb--) {
+      for (let mb = 0; mb < this.mapBins; mb++) {
+        if (this.counts[mb * this.rpmBins + rb] > 0) return rb;
+      }
+    }
+    return 0;
+  }
+
+  get mapMaxBin(): number {
+    for (let mb = this.mapBins - 1; mb >= 0; mb--) {
+      for (let rb = 0; rb < this.rpmBins; rb++) {
+        if (this.counts[mb * this.rpmBins + rb] > 0) return mb;
+      }
+    }
+    return 0;
+  }
+
+  /** Mean fuelling error per cell (null where no load sample landed). */
+  errorMeans(): (number | null)[] {
+    const out: (number | null)[] = new Array(this.errorCounts.length);
+    for (let i = 0; i < this.errorCounts.length; i++) {
+      out[i] = this.errorCounts[i] > 0 ? this.errorSum[i] / this.errorCounts[i] : null;
+    }
+    return out;
+  }
+
+  errorSamplesCopy(): Uint32Array {
+    return this.errorCounts.slice();
+  }
+
+  countsCopy(): Uint32Array {
+    return this.counts.slice();
+  }
+}
+
 export const COVERAGE_RPM_STEP = 500;
-export const COVERAGE_RPM_BINS = 16; // 0 – 8000 rpm
+/** Axis defaults: 0–8000 rpm × 0–120 kPa, grown as the engine is observed. */
+export const COVERAGE_RPM_DEFAULT_BINS = 16;
+export const COVERAGE_RPM_MAX_BINS = 24; // 0 – 12 000 rpm
 export const COVERAGE_MAP_STEP = 20;
-export const COVERAGE_MAP_BINS = 15; // 0 – 300 kPa
+export const COVERAGE_MAP_DEFAULT_BINS = 6; // 0 – 120 kPa (naturally aspirated)
+export const COVERAGE_MAP_MAX_BINS = 16; // 0 – 320 kPa (hard boost)
 
 /** Engine is genuinely running (oil pressure, duty, thermal, fueling rules). */
 const RUNNING_RPM = 400;
@@ -194,41 +329,78 @@ interface Rule {
   evaluate: (ctx: RuleContext) => { value?: number; boundary?: number; note?: string } | null;
 }
 
+/** Tone severity, for choosing which band edge is the meaningful limit. */
+const TONE_RANK: Record<Tone, number> = { ok: 0, dim: 0, info: 1, warn: 1, crit: 2 };
+
+/**
+ * The edge of a band that a tuner would call "the limit".
+ *
+ * A band is entered from whichever neighbour is *less* dangerous, so that
+ * transition is the number to name: coolant warms into `warn` at 105 °C (its
+ * lower edge), while oil pressure falls into `warn` at 90 kPa (its upper edge).
+ * Mixed channels (battery: low *and* high warnings) resolve per band, not per
+ * channel.
+ */
+function limitEdge(
+  bands: Band[],
+  index: number,
+): number | undefined {
+  const band = bands[index];
+  const rank = TONE_RANK[band.tone];
+  const previous = index > 0 ? bands[index - 1] : undefined;
+  const next = index + 1 < bands.length ? bands[index + 1] : undefined;
+  const lowerIsSafer = previous === undefined || TONE_RANK[previous.tone] < rank;
+  const upperIsSafer = next === undefined || TONE_RANK[next.tone] < rank;
+  const lo = previous?.max ?? Number.NEGATIVE_INFINITY;
+  const hi = band.max;
+  if (lowerIsSafer && !upperIsSafer) return Number.isFinite(lo) ? lo : hi;
+  if (upperIsSafer && !lowerIsSafer) return Number.isFinite(hi) ? hi : lo;
+  return Number.isFinite(lo) ? lo : hi;
+}
+
 /** Build limit rules from the catalogue's bands: each non-ok band is an alarm. */
-function bandRules(): Rule[] {
+function bandRules(specs: Record<string, ChannelSpec>, overrides: LimitOverrides): Rule[] {
   const rules: Rule[] = [];
   for (const spec of CHANNEL_LIST) {
-    if (!spec.bands) continue;
-    if (spec.id === 'sync') continue; // dedicated rule below
-    let lower = Number.NEGATIVE_INFINITY;
-    for (const band of spec.bands) {
-      const lo = lower;
+    const effective = specs[spec.id] ?? spec;
+    if (!effective.bands) continue;
+    if (effective.id === 'sync') continue; // dedicated rule below
+    // Oil pressure is judged against an rpm-scaled minimum unless the user has
+    // set their own floor (see `oilPressureRule`).
+    if (effective.id === 'oilPressure' && !overrides.oilPressure) continue;
+    effective.bands.forEach((band, index) => {
+      const previous = index > 0 ? effective.bands?.[index - 1] : undefined;
+      const lo = previous?.max ?? Number.NEGATIVE_INFINITY;
       const hi = band.max;
-      if (band.tone === 'warn' || band.tone === 'crit') {
-        const boundary = lo === Number.NEGATIVE_INFINITY ? hi : lo;
-        rules.push({
-          id: `band:${spec.id}:${band.tone}`,
-          kind: 'limit',
-          severity: band.tone,
-          channelId: spec.id,
-          // Knock is a discrete event: raise on the first frame, don't wait.
-          forMs: spec.id === 'knock' ? 0 : 600,
-          evaluate: (ctx) => {
-            if (!ctx.running) return null;
-            const value = ctx.get(spec);
-            if (value === undefined) return null;
-            if (!(value > lo && value <= hi)) return null;
-            return { value, boundary, note: band.label };
-          },
-        });
-      }
-      lower = hi;
-    }
+      if (band.tone !== 'warn' && band.tone !== 'crit') return;
+      const boundary = limitEdge(effective.bands!, index) ?? hi;
+      rules.push({
+        id: `band:${effective.id}:${band.tone}`,
+        kind: 'limit',
+        severity: band.tone,
+        channelId: effective.id,
+        // Knock is a discrete event: raise on the first frame, don't wait.
+        forMs: effective.id === 'knock' ? 0 : 600,
+        evaluate: (ctx) => {
+          if (!ctx.running) return null;
+          const value = ctx.get(effective);
+          if (value === undefined) return null;
+          if (!(value > lo && value <= hi)) return null;
+          return { value, boundary, note: band.label };
+        },
+      });
+    });
   }
   return rules;
 }
 
-const customRules: Rule[] = [
+/**
+ * The rules that are not derived from a band: fuelling error, trigger sync and
+ * overboost. `boostCeiling` is the user's own boost limit, used only when the
+ * ECU publishes no commanded boost target.
+ */
+function customRules(boostCeiling: number | undefined): Rule[] {
+  return [
   {
     id: 'fueling:lean',
     kind: 'fueling',
@@ -280,12 +452,122 @@ const customRules: Rule[] = [
     channelId: 'boost',
     forMs: 300,
     evaluate: (ctx) => {
-      if (ctx.boost === undefined || ctx.boostTarget === undefined || ctx.boostTarget <= 0) return null;
-      if (ctx.boost <= ctx.boostTarget + 20) return null;
-      return { value: ctx.boost, boundary: ctx.boostTarget, note: 'OVER BOOST TARGET' };
+      if (ctx.boost === undefined) return null;
+      // The ECU's commanded target wins; failing that, the driver's own ceiling.
+      const ceiling = ctx.boostTarget !== undefined && ctx.boostTarget > 0 ? ctx.boostTarget : boostCeiling;
+      if (ceiling === undefined || ceiling <= 0) return null;
+      if (ctx.boost <= ceiling + 20) return null;
+      return {
+        value: ctx.boost,
+        boundary: ceiling,
+        note:
+          ctx.boostTarget !== undefined && ctx.boostTarget > 0
+            ? 'OVER BOOST TARGET'
+            : 'OVER YOUR BOOST CEILING',
+      };
     },
   },
-];
+  ];
+}
+
+/**
+ * Oil pressure: minimum pressure scales with engine speed.
+ *
+ * A fixed floor (the catalogue used to warn below 110 kPa) false-alarms on any
+ * engine whose hot idle sits near 1 bar. The rule of thumb this implements is the
+ * long-standing "≈10 psi per 1000 rpm" (69 kPa), armed above 1200 rpm so idle and
+ * cranking are never judged, with a 2 s dwell so a shift or a throttle lift
+ * cannot trip it. Below 60 % of the scaled minimum it is critical.
+ *
+ * A user override replaces this with their own fixed floor — predictable, and
+ * their engine's numbers win over a rule of thumb.
+ */
+const OIL_MIN_KPA_PER_1000RPM = 69;
+const OIL_MIN_ARM_RPM = 1200;
+export { OIL_MIN_KPA_PER_1000RPM, OIL_MIN_ARM_RPM };
+
+function oilPressureRule(): Rule {
+  return {
+    id: 'oilp:scaled',
+    kind: 'limit',
+    severity: 'warn',
+    channelId: 'oilPressure',
+    forMs: 2000,
+    clearMs: 2000,
+    evaluate: (ctx) => {
+      const spec = CHANNELS.oilPressure;
+      if (!ctx.has(spec)) return null;
+      const rpm = ctx.rpm;
+      if (rpm === undefined || rpm < OIL_MIN_ARM_RPM) return null;
+      const value = ctx.get(spec);
+      if (value === undefined) return null;
+      const minimum = (OIL_MIN_KPA_PER_1000RPM * rpm) / 1000;
+      if (value >= minimum) return null;
+      const critical = value < minimum * 0.6;
+      return {
+        value,
+        boundary: minimum,
+        note: critical
+          ? `BELOW ${minimum.toFixed(0)} kPa NEEDED AT ${rpm.toFixed(0)} RPM`
+          : `LOW FOR ${rpm.toFixed(0)} RPM (MIN ${minimum.toFixed(0)} kPa)`,
+      };
+    },
+  };
+}
+
+/**
+ * Bank-to-bank lambda split.
+ *
+ * With two widebands fitted the insight is the difference between them: a
+ * partly blocked injector or a dead coil on one bank shows as a step that an
+ * averaged lambda hides. Only meaningful under load, where fuel demand is high.
+ */
+const BANK_SPLIT_WARN = 0.06;
+const BANK_SPLIT_CRIT = 0.12;
+
+function bankSplitRules(): Rule[] {
+  return [
+    {
+      id: 'bank:split:warn',
+      kind: 'fueling',
+      severity: 'warn',
+      channelId: 'lambdaBank2',
+      forMs: 800,
+      evaluate: (ctx) => {
+        const first = ctx.get(CHANNELS.lambda);
+        const second = ctx.get(CHANNELS.lambdaBank2);
+        if (first === undefined || second === undefined || !ctx.loaded) return null;
+        const split = second - first;
+        const magnitude = Math.abs(split);
+        if (magnitude < BANK_SPLIT_WARN || magnitude >= BANK_SPLIT_CRIT) return null;
+        return {
+          value: split,
+          boundary: BANK_SPLIT_WARN,
+          note: `${split > 0 ? 'BANK 2' : 'BANK 1'} LEANER BY ${magnitude.toFixed(3)} λ`,
+        };
+      },
+    },
+    {
+      id: 'bank:split:crit',
+      kind: 'fueling',
+      severity: 'crit',
+      channelId: 'lambdaBank2',
+      forMs: 800,
+      evaluate: (ctx) => {
+        const first = ctx.get(CHANNELS.lambda);
+        const second = ctx.get(CHANNELS.lambdaBank2);
+        if (first === undefined || second === undefined || !ctx.loaded) return null;
+        const split = second - first;
+        if (Math.abs(split) < BANK_SPLIT_CRIT) return null;
+        return {
+          value: split,
+          boundary: BANK_SPLIT_CRIT,
+          note: `${split > 0 ? 'BANK 2' : 'BANK 1'} LEANER BY ${Math.abs(split).toFixed(3)} λ`,
+        };
+      },
+    },
+  ];
+}
 
 /** Dropout rules: a channel the ECU publishes that has collapsed to raw 0. */
 function dropoutRules(): Rule[] {
@@ -318,23 +600,20 @@ interface RuntimeState {
 }
 
 export class TelemetrySession {
-  private readonly rules: Rule[] = [...bandRules(), ...customRules, ...dropoutRules()];
+  private rules: Rule[] = [];
   private runtime = new Map<string, RuntimeState>();
   private events: SessionEvent[] = [];
   private nextEventId = 1;
+  /** Effective catalogue (catalogue + user limit overrides). */
+  private specs: Record<string, ChannelSpec> = { ...CHANNELS };
+  private overrides: LimitOverrides = {};
 
   /** spec id → resolved stream key. */
   private resolved = new Map<string, string>();
   /** Channel names the ECU publishes (INI channel list ∪ live stream keys). */
   private knownChannels = new Set<string>();
 
-  private coverageCounts = new Uint32Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
-  private coverageVisited = 0;
-  private coverageSamples = 0;
-  private coverageCurrent = -1;
-  private coveragePeak = 0;
-  private errorSum = new Float64Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
-  private errorCounts = new Uint32Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
+  private grid = new CoverageGrid();
   private worstLeanCell: { error: number; rpm: number; map: number } | null = null;
   private worstRichCell: { error: number; rpm: number; map: number } | null = null;
 
@@ -363,7 +642,40 @@ export class TelemetrySession {
     error: null,
   };
 
-  constructor(private readonly stoichProvider: () => number = () => 14.7) {}
+  constructor(private readonly stoichProvider: () => number = () => 14.7) {
+    this.rebuildRules();
+  }
+
+  /**
+   * Apply the user's threshold overrides.
+   *
+   * Rule ids are stable, so latching state survives a threshold change; only the
+   * comparison changes. A stopped engine still raises nothing: every gated rule
+   * re-checks `running`/`turning` on each frame.
+   */
+  setLimitOverrides(overrides: LimitOverrides): void {
+    this.overrides = overrides;
+    this.specs = applyLimitOverrides(CHANNELS, overrides);
+    this.rebuildRules();
+  }
+
+  /** The effective catalogue (with overrides applied) — the UI renders this. */
+  get effectiveSpecs(): Record<string, ChannelSpec> {
+    return this.specs;
+  }
+
+  private rebuildRules(): void {
+    const boostCeiling = this.overrides.boost?.warn;
+    this.rules = [
+      ...bandRules(this.specs, this.overrides),
+      ...customRules(boostCeiling),
+      // Default oil rule is rpm-scaled; a user floor replaces it (bandRules adds
+      // the band rule back for that channel when an override exists).
+      ...(this.overrides.oilPressure ? [] : [oilPressureRule()]),
+      ...bankSplitRules(),
+      ...dropoutRules(),
+    ];
+  }
 
   /** Register the channel names the ECU publishes (INI list, then live keys). */
   syncChannels(names: Iterable<string>): void {
@@ -401,7 +713,9 @@ export class TelemetrySession {
 
   /** How many rules of each kind are being watched (documents the monitoring). */
   get monitorBreakdown(): Record<EventKind, number> {
-    return { ...this.breakdown };
+    const out: Record<EventKind, number> = { limit: 0, fueling: 0, dropout: 0, sync: 0, boost: 0 };
+    for (const rule of this.rules) out[rule.kind]++;
+    return out;
   }
 
   /**
@@ -425,18 +739,15 @@ export class TelemetrySession {
       if (rule.channelId !== undefined && !this.resolved.has(rule.channelId)) continue;
       // Rules that pair two channels need both halves to be useful.
       if (rule.kind === 'fueling' && !(hasMeasuredRatio && hasCommandedRatio)) continue;
+      if (rule.id.startsWith('bank:') && !(this.resolved.has('lambda') && this.resolved.has('lambdaBank2'))) {
+        continue;
+      }
       if (rule.kind === 'boost' && !(this.resolved.has('boost') && hasBoostTarget)) continue;
       byKind[rule.kind]++;
     }
     const total = Object.values(byKind).reduce((sum, value) => sum + value, 0);
     return { total, byKind, gated };
   }
-
-  private readonly breakdown: Record<EventKind, number> = (() => {
-    const out: Record<EventKind, number> = { limit: 0, fueling: 0, dropout: 0, sync: 0, boost: 0 };
-    for (const rule of this.rules) out[rule.kind]++;
-    return out;
-  })();
 
   hasChannel(id: string): boolean {
     return this.resolved.has(id);
@@ -451,13 +762,7 @@ export class TelemetrySession {
     this.runtime = new Map();
     this.events = [];
     this.nextEventId = 1;
-    this.coverageCounts = new Uint32Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
-    this.coverageVisited = 0;
-    this.coverageSamples = 0;
-    this.coverageCurrent = -1;
-    this.coveragePeak = 0;
-    this.errorSum = new Float64Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
-    this.errorCounts = new Uint32Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
+    this.grid = new CoverageGrid();
     this.worstLeanCell = null;
     this.worstRichCell = null;
     this.fuelSamples = 0;
@@ -596,34 +901,21 @@ export class TelemetrySession {
     // Operating envelope (rpm × MAP dwell + fuelling error per cell).
     const mapValue = get(CHANNELS.map);
     if (rpm !== undefined && mapValue !== undefined) {
-      const rb = Math.floor(rpm / COVERAGE_RPM_STEP);
-      const mb = Math.floor(mapValue / COVERAGE_MAP_STEP);
-      if (rb >= 0 && rb < COVERAGE_RPM_BINS && mb >= 0 && mb < COVERAGE_MAP_BINS) {
-        const idx = mb * COVERAGE_RPM_BINS + rb;
-        if (this.coverageCounts[idx] === 0) this.coverageVisited++;
-        this.coverageCounts[idx]++;
-        this.coverageSamples++;
-        this.coverageCurrent = idx;
-        if (this.coverageCounts[idx] > this.coveragePeak) this.coveragePeak = this.coverageCounts[idx];
-        if (fueling) {
-          this.errorSum[idx] += fueling.error;
-          this.errorCounts[idx]++;
-          const rpmBin = Math.floor(rpm / COVERAGE_RPM_STEP) * COVERAGE_RPM_STEP;
-          const mapBin = Math.floor(mapValue / COVERAGE_MAP_STEP) * COVERAGE_MAP_STEP;
-          if (!this.worstLeanCell || fueling.error > this.worstLeanCell.error) {
-            this.worstLeanCell = { error: fueling.error, rpm: rpmBin, map: mapBin };
-          }
-          if (!this.worstRichCell || fueling.error < this.worstRichCell.error) {
-            this.worstRichCell = { error: fueling.error, rpm: rpmBin, map: mapBin };
-          }
+      this.grid.add(rpm, mapValue, fueling ? fueling.error : null);
+      if (fueling) {
+        const rpmBin = Math.floor(rpm / this.grid.rpmStep) * this.grid.rpmStep;
+        const mapBin = Math.floor(mapValue / this.grid.mapStep) * this.grid.mapStep;
+        if (!this.worstLeanCell || fueling.error > this.worstLeanCell.error) {
+          this.worstLeanCell = { error: fueling.error, rpm: rpmBin, map: mapBin };
         }
-      } else {
-        this.coverageCurrent = -1;
+        if (!this.worstRichCell || fueling.error < this.worstRichCell.error) {
+          this.worstRichCell = { error: fueling.error, rpm: rpmBin, map: mapBin };
+        }
       }
     } else {
       // No operating point this frame (engine stopped, or MAP in a gap): the
       // "current cell" must stop claiming a position that is no longer true.
-      this.coverageCurrent = -1;
+      this.grid.current = -1;
     }
 
     // Session extremes (documented in the UI as "this session").
@@ -724,11 +1016,6 @@ export class TelemetrySession {
       }
     }
 
-    const errorMean: (number | null)[] = new Array(this.errorCounts.length);
-    for (let i = 0; i < this.errorCounts.length; i++) {
-      errorMean[i] = this.errorCounts[i] > 0 ? this.errorSum[i] / this.errorCounts[i] : null;
-    }
-
     return {
       revision: this.revision,
       startedAt: this.startedAt,
@@ -753,22 +1040,24 @@ export class TelemetrySession {
         worstRich: this.fuelWorstRich,
       },
       coverage: {
-        counts: this.coverageCounts.slice(),
-        rpmBins: COVERAGE_RPM_BINS,
-        mapBins: COVERAGE_MAP_BINS,
-        rpmStep: COVERAGE_RPM_STEP,
-        mapStep: COVERAGE_MAP_STEP,
+        counts: this.grid.countsCopy(),
+        rpmBins: this.grid.rpmBins,
+        mapBins: this.grid.mapBins,
+        rpmStep: this.grid.rpmStep,
+        mapStep: this.grid.mapStep,
         rpmMin: 0,
         mapMin: 0,
-        visited: this.coverageVisited,
-        total: COVERAGE_RPM_BINS * COVERAGE_MAP_BINS,
-        samples: this.coverageSamples,
-        current: this.coverageCurrent,
-        peak: this.coveragePeak,
-        errorMean,
-        errorSamples: this.errorCounts.slice(),
+        visited: this.grid.visited,
+        total: this.grid.rpmBins * this.grid.mapBins,
+        samples: this.grid.samples,
+        current: this.grid.current,
+        peak: this.grid.peak,
+        errorMean: this.grid.errorMeans(),
+        errorSamples: this.grid.errorSamplesCopy(),
         worstLeanCell: this.worstLeanCell ? { ...this.worstLeanCell } : null,
         worstRichCell: this.worstRichCell ? { ...this.worstRichCell } : null,
+        rpmMaxBin: this.grid.rpmMaxBin,
+        mapMaxBin: this.grid.mapMaxBin,
       },
       extremes: { ...this.extremes },
     };

@@ -231,6 +231,30 @@ export const CHANNELS: Record<string, ChannelSpec> = {
     zeroIsGap: true,
     group: 'fuel',
   },
+  // Second wideband, for a V engine or a dual-bank setup. Exists as its own
+  // entry so it gets a tile and a scope lane; the *insight* is the split, which
+  // the session computes (a dead injector on one bank shows up as a step).
+  lambdaBank2: {
+    id: 'lambdaBank2',
+    keys: [
+      'lambdaValue2',
+      'RealLambdaValue2',
+      'lambda2',
+      'Lambda2',
+      'lambdaBank2',
+      'wbo2Bank2',
+      'lambda1_2',
+    ],
+    label: 'λ BANK 2',
+    title: 'Second wideband lambda (bank 2 / other cylinder bank)',
+    unit: 'λ',
+    digits: 3,
+    min: 0.7,
+    max: 1.25,
+    bands: [ok(1.05, 'NOMINAL'), warn(1.15, 'LEAN'), crit(INF, 'VERY LEAN')],
+    zeroIsGap: true,
+    group: 'fuel',
+  },
   afrTarget: {
     id: 'afrTarget',
     keys: ['afrTarget', 'targetAFR', 'targetAfr', 'AFRTarget'],
@@ -421,13 +445,16 @@ export const CHANNELS: Record<string, ChannelSpec> = {
     id: 'oilPressure',
     keys: ['oilPressure', 'OilPressure', 'oilpress'],
     label: 'OIL P',
-    title: 'Oil pressure',
+    title:
+      'Oil pressure. The live low-pressure alarm is scaled with engine speed (about 69 kPa per 1000 rpm above 1200 rpm), so a healthy hot idle is never flagged.',
     unit: 'kPa',
     digits: 0,
     min: 0,
     max: 700,
-    // Below ~110 kPa the bearings are at risk; below 60 kPa shut it down.
-    bands: [crit(60, 'CRITICAL'), warn(110, 'LOW'), ok(INF, 'NOMINAL')],
+    // The *safety* floor only: below this, pressure is inadequate at any speed.
+    // The rpm-scaled warning lives in the session's rules, because a fixed floor
+    // false-alarms on engines whose hot idle sits near 1 bar.
+    bands: [crit(40, 'CRITICAL'), warn(70, 'LOW'), ok(INF, 'NOMINAL')],
     zeroIsGap: true,
     group: 'engine',
     color: '--sd-trace-oilp',

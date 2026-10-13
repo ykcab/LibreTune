@@ -10,13 +10,8 @@
  * clock proves nothing about latch and hysteresis windows.
  */
 import { describe, expect, it } from 'vitest';
-import {
-  COVERAGE_MAP_BINS,
-  COVERAGE_MAP_STEP,
-  COVERAGE_RPM_BINS,
-  COVERAGE_RPM_STEP,
-  TelemetrySession,
-} from '../session';
+import { CoverageGrid, TelemetrySession } from '../session';
+import { CHANNELS } from '../channels';
 
 const T0 = 1_700_000_000_000;
 const warmed = () => new TelemetrySession(() => 14.7);
@@ -252,14 +247,45 @@ describe('operating envelope coverage', () => {
   it('bins samples by rpm × MAP and tracks the current cell', () => {
     const session = warmed();
     session.push(frame({ rpm: 3200, map: 120 }), T0);
-    const rb = Math.floor(3200 / COVERAGE_RPM_STEP);
-    const mb = Math.floor(120 / COVERAGE_MAP_STEP);
-    const expected = mb * COVERAGE_RPM_BINS + rb;
     const coverage = session.snapshot(T0).coverage;
+    const rb = Math.floor(3200 / coverage.rpmStep);
+    const mb = Math.floor(120 / coverage.mapStep);
+    const expected = mb * coverage.rpmBins + rb;
     expect(coverage.visited).toBe(1);
     expect(coverage.current).toBe(expected);
     expect(coverage.counts[expected]).toBe(1);
-    expect(coverage.total).toBe(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
+    expect(coverage.total).toBe(coverage.rpmBins * coverage.mapBins);
+  });
+
+  it('sizes the rpm axis from the ECU’s rev limit', () => {
+    const session = warmed();
+    // A 7200 rpm limit must not be graded against an 8000 rpm grid.
+    session.push(frame({ rpm: 3000, map: 100, rpmHardLimit: 7200 }), T0);
+    const coverage = session.snapshot(T0).coverage;
+    expect(coverage.rpmBins).toBeLessThanOrEqual(16);
+    expect(coverage.rpmBins * coverage.rpmStep).toBeGreaterThanOrEqual(7200);
+  });
+
+  it('grows the pressure axis when boost exceeds the starting range', () => {
+    const session = warmed();
+    session.push(frame({ rpm: 3000, map: 100 }), T0);
+    const narrow = session.snapshot(T0).coverage;
+    expect(narrow.mapBins * narrow.mapStep).toBeLessThanOrEqual(140);
+    session.push(frame({ rpm: 3000, map: 240 }), T0 + 100);
+    const wide = session.snapshot(T0 + 100).coverage;
+    expect(wide.mapBins).toBeGreaterThan(narrow.mapBins);
+    expect(wide.mapBins * wide.mapStep).toBeGreaterThanOrEqual(240);
+    // Growth keeps what was already recorded.
+    expect(wide.visited).toBe(2);
+    expect(wide.samples).toBe(2);
+  });
+
+  it('never shrinks the grid inside a session', () => {
+    const session = warmed();
+    session.push(frame({ rpm: 3000, map: 260 }), T0);
+    const after = session.snapshot(T0).coverage.mapBins;
+    session.push(frame({ rpm: 3000, map: 60 }), T0 + 100);
+    expect(session.snapshot(T0 + 100).coverage.mapBins).toBe(after);
   });
 
   it('counts a cell once however long it is occupied, and tracks dwell', () => {
@@ -293,9 +319,9 @@ describe('operating envelope coverage', () => {
     // ~10 % lean at 3000 rpm / 120 kPa.
     const t = run(session, 10, { lambda: 0.935, targetLambda: 0.85 });
     const coverage = session.snapshot(t).coverage;
-    const rb = Math.floor(3000 / COVERAGE_RPM_STEP);
-    const mb = Math.floor(120 / COVERAGE_MAP_STEP);
-    const index = mb * COVERAGE_RPM_BINS + rb;
+    const rb = Math.floor(3000 / coverage.rpmStep);
+    const mb = Math.floor(120 / coverage.mapStep);
+    const index = mb * coverage.rpmBins + rb;
     expect(coverage.errorSamples[index]).toBe(10);
     expect(coverage.errorMean[index]).toBeCloseTo(0.1, 3);
     expect(coverage.worstLeanCell?.error).toBeCloseTo(0.1, 3);
@@ -303,6 +329,38 @@ describe('operating envelope coverage', () => {
     expect(coverage.worstLeanCell?.map).toBe(120);
     // Cells driven off-boost carry no judgement at all.
     expect(coverage.errorMean[0]).toBeNull();
+  });
+
+  it('reports how far the engine actually reached, for honest axis labels', () => {
+    const session = warmed();
+    const t = run(session, 5, { rpm: 5800, map: 200 });
+    const coverage = session.snapshot(t).coverage;
+    expect(coverage.rpmMaxBin).toBe(Math.floor(5800 / coverage.rpmStep));
+    expect(coverage.mapMaxBin).toBe(Math.floor(200 / coverage.mapStep));
+  });
+});
+
+describe('CoverageGrid', () => {
+  it('appends whole rows without disturbing existing counts', () => {
+    const grid = new CoverageGrid();
+    const rowFor = (map: number) => Math.floor(map / grid.mapStep);
+    grid.add(3000, 100, 0.05);
+    grid.add(3000, 100, 0.05);
+    const rb = Math.floor(3000 / grid.rpmStep);
+    const before = grid.counts[(rowFor(100)) * grid.rpmBins + rb];
+    expect(before).toBe(2);
+    grid.add(3000, 240, null);
+    expect(grid.counts[(rowFor(100)) * grid.rpmBins + rb]).toBe(2);
+    expect(grid.counts[(rowFor(240)) * grid.rpmBins + rb]).toBe(1);
+    expect(grid.samples).toBe(3);
+    expect(grid.visited).toBe(2);
+  });
+
+  it('ignores samples outside the grid instead of throwing', () => {
+    const grid = new CoverageGrid();
+    grid.add(20000, 100, null);
+    expect(grid.current).toBe(-1);
+    expect(grid.visited).toBe(0);
   });
 });
 
@@ -352,7 +410,8 @@ describe('monitoring breakdown', () => {
     const breakdown = session.monitorBreakdown;
     expect(breakdown.limit).toBeGreaterThan(10);
     expect(breakdown.dropout).toBeGreaterThan(5);
-    expect(breakdown.fueling).toBe(2);
+    // Two fuelling-error rules plus two bank-split rules.
+    expect(breakdown.fueling).toBe(4);
     expect(breakdown.sync).toBe(1);
     expect(breakdown.boost).toBe(1);
     expect(session.monitorCount).toBe(
@@ -382,5 +441,129 @@ describe('monitoring breakdown', () => {
     const armed = session.armedBreakdown;
     expect(armed.gated).toBe(true);
     expect(armed.total).toBe(0);
+  });
+});
+
+describe('oil pressure: minimum scales with engine speed', () => {
+  it('does not flag a healthy hot idle', () => {
+    const session = warmed();
+    // 900 rpm at 120 kPa is perfectly normal; a fixed 110 kPa floor would alarm.
+    const t = run(session, 40, { rpm: 900, map: 35, tps: 2, oilPressure: 120 }, T0, 100);
+    expect(session.snapshot(t).events).toHaveLength(0);
+  });
+
+  it('flags pressure that is low for the engine speed', () => {
+    const session = warmed();
+    // 3000 rpm needs ~207 kPa; 150 kPa is 27 % below that.
+    const t = run(session, 40, { rpm: 3000, map: 150, oilPressure: 150 });
+    const events = session.snapshot(t).events;
+    expect(events.some((e) => e.channelId === 'oilPressure')).toBe(true);
+    expect(events[0].boundary).toBeCloseTo(207, 0);
+    expect(events[0].note).toContain('3000 RPM');
+  });
+
+  it('calls out the critical case in the note', () => {
+    const session = warmed();
+    // 6000 rpm needs ~414 kPa; 100 kPa is far below 60 % of that.
+    const t = run(session, 40, { rpm: 6000, map: 180, oilPressure: 100 });
+    const event = session.snapshot(t).events.find((e) => e.channelId === 'oilPressure');
+    expect(event?.note).toContain('BELOW');
+  });
+
+  it('stays quiet below the arming speed and while stopped', () => {
+    const session = warmed();
+    let t = run(session, 40, { rpm: 900, map: 35, oilPressure: 55 });
+    expect(session.snapshot(t).events).toHaveLength(0);
+    t = run(session, 40, { rpm: 0, map: 30, oilPressure: 0 }, t + 100);
+    expect(session.snapshot(t).events).toHaveLength(0);
+  });
+
+  it('lets a user floor replace the scaled rule', () => {
+    const session = warmed();
+    session.setLimitOverrides({ oilPressure: { warn: 90, crit: 50 } });
+    // 3000 rpm at 150 kPa: below the user's 90 kPa? No — and the scaled rule is
+    // gone, so nothing fires.
+    let t = run(session, 40, { rpm: 3000, map: 150, oilPressure: 150 });
+    expect(session.snapshot(t).events).toHaveLength(0);
+    // ...but 80 kPa is below their floor.
+    t = run(session, 20, { oilPressure: 80 }, t + 100);
+    const event = session.snapshot(t).events.find((e) => e.channelId === 'oilPressure');
+    expect(event?.boundary).toBe(90);
+  });
+});
+
+describe('cylinder bank split', () => {
+  it('is silent with a single wideband', () => {
+    const session = warmed();
+    const t = run(session, 40, { lambda: 0.86 });
+    expect(session.snapshot(t).events.some((e) => e.id?.toString().startsWith('bank'))).toBe(false);
+    expect(session.armedBreakdown.byKind.fueling).toBe(2);
+  });
+
+  it('flags a growing split under load and names the leaner bank', () => {
+    const session = warmed();
+    const t = run(session, 40, { lambda: 0.86, lambdaBank2: 0.96 });
+    const event = session.snapshot(t).events.find((e) => e.rule.startsWith('bank:'));
+    expect(event).toBeDefined();
+    expect(event?.note).toContain('BANK 2 LEANER');
+  });
+
+  it('escalates a large split to critical', () => {
+    const session = warmed();
+    const t = run(session, 40, { lambda: 0.86, lambdaBank2: 1.05 });
+    const event = session.snapshot(t).events.find((e) => e.rule === 'bank:split:crit');
+    expect(event?.severity).toBe('crit');
+  });
+
+  it('ignores a split off-load', () => {
+    const session = warmed();
+    const t = run(session, 40, { rpm: 900, map: 35, tps: 2, lambda: 0.99, lambdaBank2: 1.12 });
+    expect(session.snapshot(t).events.some((e) => e.rule.startsWith('bank:'))).toBe(false);
+  });
+});
+
+describe('user limit overrides', () => {
+  it('moves the boundary an alarm compares against', () => {
+    const session = warmed();
+    // Default coolant warn fires above 105 °C.
+    let t = run(session, 20, { coolant: 103 });
+    expect(session.snapshot(t).events).toHaveLength(0);
+    // A track car with a 110 °C thermostat sets its own floor.
+    session.setLimitOverrides({ coolant: { warn: 110, crit: 120 } });
+    t = run(session, 20, { coolant: 106 }, t + 100);
+    expect(session.snapshot(t).events).toHaveLength(0);
+    t = run(session, 20, { coolant: 112 }, t + 100);
+    const event = session.snapshot(t).events.find((e) => e.channelId === 'coolant');
+    expect(event?.boundary).toBe(110);
+    expect(event?.severity).toBe('warn');
+  });
+
+  it('applies the override to the effective catalogue the UI renders', () => {
+    const session = warmed();
+    session.setLimitOverrides({ egt: { warn: 700, crit: 800 } });
+    expect(session.effectiveSpecs.egt.bands?.[0].max).toBe(700);
+    expect(session.effectiveSpecs.egt.bands?.[1].max).toBe(800);
+    // The shipped catalogue is untouched.
+    expect(CHANNELS.egt.bands?.[0].max).toBe(850);
+  });
+
+  it('uses a user boost ceiling when the ECU publishes no target', () => {
+    const session = warmed();
+    let t = run(session, 20, { boost: 230 });
+    expect(session.snapshot(t).events.some((e) => e.kind === 'boost')).toBe(false);
+    session.setLimitOverrides({ boost: { warn: 200, crit: 250 } });
+    t = run(session, 20, { boost: 230 }, t + 100);
+    const event = session.snapshot(t).events.find((e) => e.kind === 'boost');
+    expect(event?.boundary).toBe(200);
+    expect(event?.note).toContain('YOUR BOOST CEILING');
+  });
+
+  it('still prefers the ECU’s own target over a ceiling', () => {
+    const session = warmed();
+    session.setLimitOverrides({ boost: { warn: 300, crit: 320 } });
+    const t = run(session, 20, { boost: 220, boostTarget: 180 });
+    const event = session.snapshot(t).events.find((e) => e.kind === 'boost');
+    expect(event?.boundary).toBe(180);
+    expect(event?.note).toContain('BOOST TARGET');
   });
 });

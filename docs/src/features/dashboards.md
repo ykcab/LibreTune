@@ -58,7 +58,8 @@ canvas, because it makes promises a generic gauge cannot keep.
 | **Engine rail** | Derived engine phase (off / cranking / idle / over-run / running / load, with limiter and launch flags winning over the derivation), engine speed with the ECU's rev limit marked when it publishes one, MAP and boost (derived from MAP − baro when the ECU has no boost channel), throttle, pedal, baro, intake air temperature, coolant, oil pressure, oil temperature, battery, trigger sync, and this session's extremes. |
 | **Live trace** | A multi-channel oscilloscope. Every lane prints the range it is drawing, the current value and its unit, and the threshold zones that apply. |
 | **Fuel rail** | Measured fuel ratio against the commanded target with a rich/lean error meter, then fuel trim, injector duty, pulse width, fuel pressure, VE, ethanol content, fuel level, ignition advance, dwell, knock, knock retard and EGT, followed by the ECU's own state flags. |
-| **Analysis strip** | Detected events (grouped per rule, with counts, thresholds and ages), fuelling accuracy against the commanded ratio over load cells, and the operating-envelope map (rpm × MAP) for this session — cell tint = mean fuelling error (amber lean, blue rich), cell opacity = dwell, with the worst cell named underneath. |
+| **Analysis strip** | Detected events (grouped per rule, with counts, thresholds and ages), fuelling accuracy against the commanded ratio over load cells, the operating-envelope map (rpm × MAP) for this session — cell tint = mean fuelling error (amber lean, blue rich), cell opacity = dwell, with the worst cell named underneath — and the live performance estimate. |
+| **Cylinder banks** | When a second wideband is fitted: the bank-2 lambda readout and the bank-to-bank split (always in λ, because a difference of ratios is not a ratio). A growing split points at one bank. |
 
 ### Scope controls
 
@@ -92,6 +93,40 @@ canvas, because it makes promises a generic gauge cannot keep.
   while a large excursion sits in the session's worst case.
 - Show a light-mode screen where the labels are unreadable: the component carries
   its own contrast-safe tokens for the light theme.
+- Write anything to the ECU. The Startup face is read-only apart from the internal
+  logger; limits, lanes and unit preferences are local display settings.
+
+### Limits, and why they are adjustable
+
+The dashboard's thresholds are documented engine-protection numbers (coolant,
+IAT, oil pressure, battery, EGT, injector duty, fuel trim, knock; manifold
+pressure, boost and ignition advance have **no** invented limits — a boost
+ceiling only appears when the ECU publishes a boost target). Every one of them is
+printed under its tile as a number.
+
+They are also *defaults*, not gospel: **LIMITS** in the status strip opens an
+editor where each adjustable channel gets a warn and a critical value, entered in
+your current display units and stored per channel. The overrides apply to the
+printed thresholds, the meters, the alarms and the derived rules at once. Fuel
+trim and battery are deliberately not offered — they warn on both sides of a
+normal band, and one warn/critical pair cannot express that.
+
+**Oil pressure is the exception that proves the rule.** A fixed low-pressure
+floor false-alarms on any engine whose hot idle sits near 1 bar, so the live alarm
+is scaled with engine speed (about 69 kPa per 1000 rpm, armed above 1200 rpm, with
+a 2 s dwell so a shift cannot trip it). The tile prints the number the rule is
+comparing against right now; setting your own floor in the editor replaces that
+rule with your fixed numbers.
+
+### Performance estimate
+
+The **PERFORMANCE (EST.)** panel shows peak power and torque from a rolling window
+of live acceleration, computed by the same virtual dynamometer the Virtual Dyno
+tab uses (vehicle weight, drag, gearing and drivetrain loss from your stored
+vehicle profile) — it is an estimate from vehicle acceleration, labelled as such,
+with the assumptions printed under the numbers. It needs a vehicle-speed channel,
+a stored profile, and a wide-open-throttle pull; when any of those is missing the
+panel says which.
 
 ### Units
 

@@ -28,9 +28,14 @@ import {
   toneFor,
   type ChannelSpec,
 } from './channels';
+import { applyLimitOverrides } from './limits';
 import EngineScope from './EngineScope';
+import LimitsDialog from './LimitsDialog';
 import { buildLanes, DEFAULT_LANE_IDS } from './lanes';
-import { CoverageMap, EventsPanel, FuelingPanel } from './panels';
+import { CoverageMap, DynoPanel, EventsPanel, FuelingPanel } from './panels';
+import { loadLimitOverrides, saveLimitOverrides, type LimitOverrides } from './limits';
+import { OIL_MIN_ARM_RPM, OIL_MIN_KPA_PER_1000RPM } from './session';
+import { useDynoEstimate } from './useDynoEstimate';
 import {
   useDashStatus,
   useStartupTelemetry,
@@ -85,6 +90,33 @@ export interface StartupDashProps {
 /** Stable empty default: a fresh array here would re-run effects every render. */
 const NO_CHANNELS: ChannelMeta[] = [];
 
+/**
+ * Derived tile: |λ bank 2 − λ bank 1|.
+ *
+ * The average lambda that the fuel ratio uses hides a split between banks, so the
+ * gap gets its own readout with tolerance bands, and the detail names which bank
+ * is leaner (that is the actionable half).
+ *
+ * The unit is deliberately empty: a *difference* of ratios is not a ratio, so
+ * converting it to the AFR preference would scale the value while leaving the
+ * tolerance bands in λ. It always reads in λ, and says so.
+ */
+const BANK_SPLIT_TILE = {
+  label: 'BANK SPLIT',
+  title:
+    'Absolute difference between the two widebands under load, always in λ. A growing split points at one bank — injector, coil, or a manifold/runner difference.',
+  unit: '',
+  digits: 3,
+  min: 0,
+  max: 0.2,
+  bands: [
+    { max: 0.03, tone: 'ok' as const, label: 'MATCHED' },
+    { max: 0.06, tone: 'ok' as const, label: 'CLOSE' },
+    { max: 0.12, tone: 'warn' as const, label: 'SPLIT' },
+    { max: Number.POSITIVE_INFINITY, tone: 'crit' as const, label: 'BANK FAULT' },
+  ],
+};
+
 /** True for the startup face (`Startup.ltdash.xml`). */
 export function isStartupDashPath(path: string | null | undefined): boolean {
   if (!path) return false;
@@ -120,9 +152,10 @@ interface StatusStripProps {
   onToggleLogging: () => void;
   logBusy: boolean;
   logError: string | null;
+  onOpenLimits: () => void;
 }
 
-function StatusStrip({ identity, logging, snapshot, isConnected, onToggleLogging, logBusy, logError }: StatusStripProps) {
+function StatusStrip({ identity, logging, snapshot, isConnected, onToggleLogging, logBusy, logError, onOpenLimits }: StatusStripProps) {
   const rate = snapshot.rateHz;
   const stale = snapshot.staleMs;
   const live = isConnected && stale < 1000;
@@ -164,6 +197,14 @@ function StatusStrip({ identity, logging, snapshot, isConnected, onToggleLogging
       </div>
 
       <div className="sd-status__zone sd-status__zone--right">
+        <button
+          type="button"
+          className="sd-status__log"
+          onClick={onOpenLimits}
+          title="Adjust the dashboard's alarm limits for your engine"
+        >
+          LIMITS
+        </button>
         {identity.hasTune && (
           <span className={`sd-status__pill sd-tone-${identity.tuneModified ? 'warn' : 'dim'}`} title="Tune file state">
             {identity.tuneModified ? 'UNSAVED CHANGES' : 'TUNE SAVED'}
@@ -238,6 +279,13 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState('');
   const [mode, setMode] = useState<'live' | 'review'>('live');
+  const [limitsOpen, setLimitsOpen] = useState(false);
+  const [overrides, setOverrides] = useState<LimitOverrides>(loadLimitOverrides);
+
+  useEffect(() => {
+    saveLimitOverrides(overrides);
+    session.setLimitOverrides(overrides);
+  }, [overrides, session]);
 
   useEffect(() => {
     try {
@@ -271,8 +319,9 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
       const declared = declaredUnits.get(key);
       if (spec && declared) out[id] = adaptSpecToUnit(spec, declared);
     }
-    return out;
-  }, [channelMeta, resolvedKeys]);
+    // ...then the driver's own thresholds on top.
+    return applyLimitOverrides(out, overrides);
+  }, [channelMeta, resolvedKeys, overrides]);
 
   const lanes = useMemo(
     () => buildLanes(laneIds, resolvedKeys, specs, channelMeta, unitDisplay),
@@ -285,6 +334,15 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
   const limitKey = resolveKeys(specs.rpm.reference?.keys ?? [], available);
   const boostTargetKey = resolveKeys(['boostTarget', 'targetBoost', 'boostControlTarget'], available);
   const boostKey = session.keyFor('boost');
+  // LIVE bank-wideband readouts for the split tile (the rule lives in the session).
+  const liveLambda = useChannel(session.keyFor('lambda') ?? '__no_lambda__');
+  const liveLambda2 = useChannel(session.keyFor('lambdaBank2') ?? '__no_lambda2__');
+  const bankSplit = useMemo(() => {
+    if (liveLambda === undefined || liveLambda2 === undefined) return null;
+    if (liveLambda < 0.5 || liveLambda2 < 0.5) return null;
+    const split = liveLambda2 - liveLambda;
+    return { magnitude: Math.abs(split), leaner: split > 0 ? '2' : '1' };
+  }, [liveLambda, liveLambda2]);
   // Reference/target channels are not part of the catalogue snapshot, so they
   // are subscribed to directly (they change rarely, so a dash-level re-render
   // is cheap and keeps the derived tiles honest).
@@ -322,6 +380,9 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
     return out;
   }, [session, snapshot, boostKey, boostTargetKey]);
   const boost = useMemo(() => effectiveBoost(rawValues, available), [rawValues, available]);
+  // Power/torque from the app's virtual dynamometer, fed by the live stream.
+  const hasSpeed = session.keyFor('speed') !== undefined;
+  const dyno = useDynoEstimate(isConnected, hasSpeed);
 
   const preferAfr = preferences.afr;
   const fuelUnit = preferAfr === 'Lambda' ? 'λ' : 'AFR';
@@ -393,6 +454,7 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
         onToggleLogging={() => void status.toggleLogging()}
         logBusy={status.logBusy}
         logError={status.logError}
+        onOpenLimits={() => setLimitsOpen(true)}
       />
 
       <div className="sd__main">
@@ -462,7 +524,20 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
               <ChannelTile spec={specs.coolant} channelKey={session.keyFor('coolant') ?? 'coolant'} fmt={fmt} compact />
             )}
             {present.has('oilPressure') && (
-              <ChannelTile spec={specs.oilPressure} channelKey={session.keyFor('oilPressure') ?? 'oilPressure'} fmt={fmt} compact />
+              <ChannelTile
+                spec={specs.oilPressure}
+                channelKey={session.keyFor('oilPressure') ?? 'oilPressure'}
+                fmt={fmt}
+                compact
+                // The tile's meter shows the safety floor; the *live* alarm is
+                // scaled with engine speed, so the detail quotes the number the
+                // rule is comparing against right now.
+                detailFor={() =>
+                  liveRpm !== undefined && liveRpm >= OIL_MIN_ARM_RPM
+                    ? `needs ≥ ${((OIL_MIN_KPA_PER_1000RPM * liveRpm) / 1000).toFixed(0)} kPa @ ${liveRpm.toFixed(0)} rpm`
+                    : 'floor 70 kPa'
+                }
+              />
             )}
             {present.has('oilTemp') && <ChannelTile spec={specs.oilTemp} channelKey={session.keyFor('oilTemp') ?? 'oilTemp'} fmt={fmt} compact />}
             {present.has('battery') && <ChannelTile spec={specs.battery} channelKey={session.keyFor('battery') ?? 'battery'} fmt={fmt} compact />}
@@ -716,6 +791,30 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
               ))
             )}
           </div>
+
+          {present.has('lambdaBank2') && (
+            <>
+              <SectionLabel aside="TWO WIDEBANDS">CYLINDER BANKS</SectionLabel>
+              <div className="sd-grid2">
+                <ChannelTile
+                  spec={specs.lambdaBank2}
+                  channelKey={session.keyFor('lambdaBank2') ?? 'lambdaBank2'}
+                  fmt={fmt}
+                  compact
+                />
+                {bankSplit && (
+                  <StatTile
+                    channel={BANK_SPLIT_TILE}
+                    value={bankSplit.magnitude}
+                    fmt={fmt}
+                    compact
+                    unitOverride="λ"
+                    detail={`bank ${bankSplit.leaner} leaner`}
+                  />
+                )}
+              </div>
+            </>
+          )}
         </aside>
       </div>
 
@@ -743,7 +842,17 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
           map={liveMap}
           fmt={fmt}
         />
+        <DynoPanel estimate={dyno} />
       </div>
+
+      <LimitsDialog
+        open={limitsOpen}
+        onClose={() => setLimitsOpen(false)}
+        overrides={overrides}
+        onChange={setOverrides}
+        fmt={fmt}
+        display={unitDisplay}
+      />
     </div>
   );
 }

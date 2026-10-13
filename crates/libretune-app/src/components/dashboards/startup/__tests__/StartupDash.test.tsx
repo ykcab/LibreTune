@@ -16,6 +16,7 @@ const channelMeta: ChannelMeta[] = [
   { name: 'rpm', label: 'RPM', units: '' },
   { name: 'map', label: 'MAP', units: 'kPa' },
   { name: 'coolant', label: 'CLT', units: '°C' },
+  { name: 'oilPressure', label: 'Oil pressure', units: 'kPa' },
   { name: 'lambda', label: 'Lambda', units: 'λ' },
   { name: 'targetLambda', label: 'Lambda target', units: 'λ' },
   { name: 'vvtIntake', label: 'VVT intake', units: 'deg' },
@@ -78,7 +79,7 @@ describe('rendering', () => {
     // Oil pressure at 0 kPa is physically impossible while running: the tile must
     // not print a confident 0 next to a sensor-dropout event.
     push({ rpm: 3000, oilPressure: 0 }, 3);
-    const tile = screen.getByTitle('Oil pressure').querySelector('.sd-tile__value');
+    const tile = screen.getByTitle(/Oil pressure/).querySelector('.sd-tile__value');
     expect(tile?.textContent).toContain('—');
     // ...while a channel where 0 is legitimate still prints 0.
     push({ rpm: 3000, oilPressure: 0, coolant: 0 }, 2);
@@ -88,9 +89,11 @@ describe('rendering', () => {
   it('renders only the channels the ECU publishes', () => {
     renderDash();
     expect(screen.getByTitle(/Engine speed/)).toBeInTheDocument();
+    // In this definition (rpm, map, coolant, oil pressure, lambda, target, VVT):
+    expect(screen.getByTitle(/Oil pressure/)).toBeInTheDocument();
     // Not in this INI: no tile, no empty tile.
-    expect(screen.queryByTitle(/Oil pressure/)).toBeNull();
     expect(screen.queryByTitle(/Injector duty cycle/)).toBeNull();
+    expect(screen.queryByTitle(/Exhaust gas temperature/)).toBeNull();
   });
 
   it('shows live values and tones them by the catalogue limits', () => {
@@ -208,6 +211,52 @@ describe('scope controls', () => {
     renderDash();
     act(() => screen.getByTitle('Choose which channels are plotted').click());
     expect(screen.getByText('VVT intake')).toBeInTheDocument();
+  });
+});
+
+describe('limits, banks and performance', () => {
+  it('opens the limit editor from the status strip', () => {
+    renderDash();
+    act(() => screen.getByTitle(/Adjust the dashboard's alarm limits/).click());
+    expect(screen.getByText('Dashboard limits')).toBeInTheDocument();
+    // The editor offers adjustable channels with accessible field labels.
+    expect(screen.getByLabelText('Coolant temperature warning threshold')).toBeInTheDocument();
+    expect(screen.getByLabelText('Exhaust gas temperature critical threshold')).toBeInTheDocument();
+    act(() => screen.getByText('CANCEL').click());
+    expect(screen.queryByText('Dashboard limits')).toBeNull();
+  });
+
+  it('persists an edited limit and prints it on the tile', () => {
+    renderDash();
+    expect(screen.getByTitle('Coolant temperature').querySelector('.sd-meter__scale-label')?.textContent).toBe('105');
+    act(() => screen.getByTitle(/Adjust the dashboard's alarm limits/).click());
+    const warn = screen.getByLabelText('Coolant temperature warning threshold') as HTMLInputElement;
+    act(() => {
+      fireEvent.change(warn, { target: { value: '112' } });
+    });
+    act(() => screen.getByText('APPLY').click());
+    // The tile now prints the driver's limit, and the choice survived.
+    expect(screen.getByTitle('Coolant temperature').querySelector('.sd-meter__scale-label')?.textContent).toBe('112');
+    const stored = JSON.parse(window.localStorage.getItem('libretune-startup-limits') ?? '{}');
+    expect(stored.coolant?.warn).toBe(112);
+  });
+
+  it('shows the second wideband and the bank split only when both exist', () => {
+    renderDash(false, [
+      ...channelMeta,
+      { name: 'lambdaValue2', label: 'Lambda 2', units: 'λ' },
+    ]);
+    expect(screen.getByText('CYLINDER BANKS')).toBeInTheDocument();
+    push({ rpm: 3000, map: 150, tps: 80, lambda: 0.86, lambdaValue2: 0.93 }, 5);
+    const split = screen.getByTitle(/Absolute difference between the two widebands/);
+    expect(split.querySelector('.sd-tile__value')?.textContent).toContain('0.070');
+    expect(split.querySelector('.sd-tile__detail')?.textContent).toContain('bank 2 leaner');
+  });
+
+  it('explains why performance cannot be estimated when there is no speed channel', () => {
+    renderDash();
+    expect(screen.getByText('PERFORMANCE (EST.)')).toBeInTheDocument();
+    expect(screen.getByText(/definitions? publishes no vehicle-speed channel|Estimation starts when the ECU is streaming/)).toBeInTheDocument();
   });
 });
 

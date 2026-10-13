@@ -683,7 +683,7 @@
 
 .sd__strip {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.95fr) minmax(0, 1.15fr);
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.92fr) minmax(0, 1.05fr) minmax(0, 0.98fr);
   border-top: 1px solid var(--sd-line);
   min-height: 0;
   max-height: 28vh;
@@ -802,8 +802,132 @@
   white-space: nowrap;
 }
 
-/* ----------------------------------------------------------------- verdict */
+/* ------------------------------------------------------------ performance */
 
+.sd-perf {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 12px;
+  align-items: baseline;
+}
+.sd-perf__cell {
+  display: flex;
+  flex-direction: column;
+}
+.sd-perf__value {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--sd-text);
+}
+.sd-perf__unit {
+  margin-left: 3px;
+  font-family: var(--font-sans);
+  font-size: 9px;
+  color: var(--sd-dim);
+}
+.sd-perf__label {
+  font-size: 9px;
+  color: var(--sd-dim);
+}
+
+/* -------------------------------------------------------------- limit editor */
+
+.sd-limits__intro {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.sd-limits__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 92px 52px;
+  gap: 4px 8px;
+  align-items: center;
+  max-height: 52vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.sd-limits__head {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 3px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-surface);
+}
+.sd-limits__row {
+  display: contents;
+}
+.sd-limits__name {
+  font-size: 11px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.sd-limits__unit {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+.sd-limits__hint {
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  padding: 0 3px;
+}
+.sd-limits__field input {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  color: var(--text-primary);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 5px;
+}
+.sd-limits__field input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.sd-limits__reset {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 2px;
+}
+.sd-limits__reset:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+.sd-limits__reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.sd-limits__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ----------------------------------------------------------------- verdict */
 .sd-verdict {
   font-family: var(--font-mono);
   font-size: 13px;
@@ -942,8 +1066,9 @@
   .sd__rail--right .sd-kvlist {
     grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   }
-  .sd__strip { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); max-height: 42vh; overflow-y: auto; }
-  .sd-panel:nth-child(3) { border-left: none; border-top: 1px solid var(--sd-line); grid-column: 1 / -1; }
+  .sd__strip { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); max-height: 46vh; overflow-y: auto; }
+  .sd-panel:nth-child(3) { border-left: none; border-top: 1px solid var(--sd-line); }
+  .sd-panel:nth-child(4) { border-left: 1px solid var(--sd-line); border-top: 1px solid var(--sd-line); }
 }
 
 /* Single column: everything stacks and the whole body scrolls. */
