@@ -13,6 +13,27 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-13 — Dead Startup-dash experiment files removed
+
+With the Startup dashboard rebuilt from scratch, the live-trace experiment that
+fed the previous version has no importers left, and two stylesheets from earlier
+deletions were still in the tree. Nothing here changes behaviour.
+
+#### Removed
+
+- **`tuner-ui/LiveGraphLog.tsx`** and **`tuner-ui/__tests__/LiveGraphLog.test.tsx`** —
+  the live strip-chart feed for the old Startup monitor (`GraphLog` with
+  `variant="live"`). Nothing imports `LiveGraphLog` any more; the new
+  `StartupDash` uses `ReviewGraphLog` for review mode only.
+- **`tuner-ui/AutoTuneLive.css`** — orphaned when `AutoTuneLive.tsx` was deleted
+  in the Phase 7 cleanup.
+- **`tuner-ui/Gauges.css`** — superseded by the per-gauge styling under
+  `components/gauges/`; nothing references its `.gauge` class.
+
+Note: `GraphLog`'s `variant="live"` prop is now unused too, but it is a
+documented `GraphLog` capability, defaults to `full`, and costs nothing at
+runtime, so it was kept.
+
 ### 2026-10-13 — Startup dashboard: adjustable limits, rpm-scaled oil floor, dynamic envelope, bank split, performance estimate
 
 Follow-up to the review pass, working through the known weaknesses that pass
