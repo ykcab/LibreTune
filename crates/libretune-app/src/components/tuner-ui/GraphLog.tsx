@@ -39,13 +39,6 @@ export interface GraphLogProps {
   cursorPosition?: number | null;
   /** Empty-grid hint override (defaults to the record-prompt copy) */
   emptyHint?: string;
-  /**
-   * `full` — the log-analysis surface (tab bar, zoom, per-pane pickers,
-   * pan/arrow-cursor, time scrollbar). `live` — a bare oscilloscope: strips
-   * only, a single window pill + configure gear, hover cursor only, always
-   * following the newest sample.
-   */
-  variant?: 'full' | 'live';
 }
 
 const AXIS_TICKS = 5;
@@ -539,9 +532,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   isRecording = false,
   cursorPosition = null,
   emptyHint,
-  variant = 'full',
 }) => {
-  const isLive = variant === 'live';
   const tabs = useGraphLogStore((s) => s.tabs);
   const activeTab = useGraphLogStore(selectActiveTab);
   const timeWindowSec = useGraphLogStore((s) => s.timeWindowSec);
@@ -638,7 +629,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   // (all ignored while typing in a form field)
   useEffect(() => {
     // Live mode is a read-only scope: no zoom keys, no arrow-key cursor.
-    if (isLive) return;
+
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
@@ -657,11 +648,11 @@ export const GraphLog: React.FC<GraphLogProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [zoomIn, zoomOut, stepCursor, isLive]);
+  }, [zoomIn, zoomOut, stepCursor]);
 
   /** Click on the graphs places the data cursor at the nearest sample */
   const handlePanesClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (isLive) return;
+
     if (draggedRef.current) {
       draggedRef.current = false;
       return;
@@ -676,7 +667,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
     const end = viewEndRef.current ?? lastT;
     const t = end - winMs * (1 - frac);
     setCursorT(data[nearestIndex(data, t)].t);
-  }, [isLive]);
+);
 
   /** Move the right edge of the view to `next`, clamped to the recorded span.
    *
@@ -716,7 +707,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   const dragRef = useRef<{ x: number; end: number; width: number; moved: boolean } | null>(null);
 
   const handlePanesMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (isLive || e.button !== 0 || samplesRef.current.length === 0) return;
+    if (e.button !== 0 || samplesRef.current.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const data = samplesRef.current;
     dragRef.current = {
@@ -725,7 +716,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
       width: Math.max(1, rect.width - PAD_L - PAD_R),
       moved: false,
     };
-  }, [isLive]);
+);
 
   const handlePanesMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -762,7 +753,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
     const el = panesRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (isLive || samplesRef.current.length === 0) return;
+      if (samplesRef.current.length === 0) return;
       e.preventDefault();
       const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
       if (e.shiftKey) {
@@ -773,7 +764,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [zoomBy, panByFraction, isLive]);
+  }, [zoomBy, panByFraction]);
 
   // A real scrollbar for the time axis. Built on a native overflow container
   // rather than a drawn widget, so it gets the platform's thumb, click-the-
@@ -887,20 +878,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
 
   return (
     <div className="graphlog" ref={containerRef}>
-      {isLive ? (
-        <div className="graphlog-minbar">
-          <span className="graphlog-window-label" title="Live window duration">
-            {formatWindow(timeWindowSec)}
-          </span>
-          <button
-            type="button"
-            title="Configure channels & scales"
-            onClick={() => setConfigAll(true)}
-          >
-            <Settings2 size={13} />
-          </button>
-        </div>
-      ) : (
+      <!-- removed live branch --><!-
         <div className="graphlog-tabbar">
         {tabs.map((tab) => (
           <div
@@ -975,7 +953,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
       <div
         ref={panesRef}
         className="graphlog-panes"
-        title={isLive ? undefined : "Drag to scroll - wheel to zoom - Shift+wheel to scroll - click to place the cursor"}
+        title="Drag to scroll - wheel to zoom - Shift+wheel to scroll - click to place the cursor"
         onMouseDown={handlePanesMouseDown}
         onMouseMove={handlePanesMouseMove}
         onMouseUp={endDrag}
@@ -1012,7 +990,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
               onPickChannel={(side, channel) =>
                 updateSlot(activeTab.id, paneIndex, side, { channel })
               }
-              controls={!isLive}
+              controls={true}
             />
           );
         })}
@@ -1027,76 +1005,3 @@ export const GraphLog: React.FC<GraphLogProps> = ({
 
       {/* Width of the inner strip sets the thumb size: the track is one window
           wide, so the strip is as many windows long as the log lasts. */}
-      {!isLive && (
-        <div
-          ref={hScrollRef}
-          className="graphlog-hscroll"
-          onScroll={handleHScroll}
-          title="Scroll through the log"
-        >
-          <div style={{ width: `${scrollStripPercent}%` }} />
-        </div>
-      )}
-
-      <Dialog
-        open={configPane !== null}
-        onClose={() => setConfigPane(null)}
-        title={`Graph ${configPane !== null ? configPane + 1 : ''} — channels & scales`}
-        size="sm"
-        className="graphlog-config-dialog"
-      >
-        <Dialog.Body>
-          {configPane !== null && (
-            <>
-              <SlotConfig
-                label="Left axis"
-                slot={activeTab.panes[configPane].left}
-                availableChannels={availableChannels}
-                onChange={(patch) => updateSlot(activeTab.id, configPane, 'left', patch)}
-              />
-              <SlotConfig
-                label="Right axis"
-                slot={activeTab.panes[configPane].right}
-                availableChannels={availableChannels}
-                onChange={(patch) => updateSlot(activeTab.id, configPane, 'right', patch)}
-              />
-            </>
-          )}
-        </Dialog.Body>
-      </Dialog>
-
-      <Dialog
-        open={configAll}
-        onClose={() => setConfigAll(false)}
-        title="Live telemetry — channels & scales"
-        size="sm"
-        className="graphlog-config-dialog"
-      >
-        <Dialog.Body>
-          {visiblePanes.map((pane) => {
-            const paneIndex = activeTab.panes.indexOf(pane);
-            return (
-              <div key={paneIndex}>
-                <div className="graphlog-live-pane-title">Graph {paneIndex + 1}</div>
-                <SlotConfig
-                  label="Left axis"
-                  slot={pane.left}
-                  availableChannels={availableChannels}
-                  onChange={(patch) => updateSlot(activeTab.id, paneIndex, 'left', patch)}
-                />
-                <SlotConfig
-                  label="Right axis"
-                  slot={pane.right}
-                  availableChannels={availableChannels}
-                  onChange={(patch) => updateSlot(activeTab.id, paneIndex, 'right', patch)}
-                />
-              </div>
-            );
-          })}
-        </Dialog.Body>
-      </Dialog>
-    </div>
-  );
-};
-
-export default GraphLog;
