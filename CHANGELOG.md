@@ -13,6 +13,245 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-13 — Startup dashboard: adjustable limits, rpm-scaled oil floor, dynamic envelope, bank split, performance estimate
+
+Follow-up to the review pass, working through the known weaknesses that pass
+recorded. Nothing here writes to the ECU; all of it is display, alarm and
+analysis behaviour.
+
+#### Added
+
+- **Adjustable alarm limits (`startup/limits.ts`, `startup/LimitsDialog.tsx`).**
+  The catalogue's thresholds were documented defaults, right for most
+  Speeduino/rusEFI/FOME/epicEFI installs and wrong for some engines (a diesel, a
+  track car with a hotter thermostat, an engine whose hot idle sits near 1 bar of
+  oil pressure). **LIMITS** in the status strip opens an editor with a warn and a
+  critical value per adjustable channel, entered in the user's display units and
+  stored in local storage. One override drives the printed thresholds, the
+  meters, the alarm rules and the derived rules at once, and the editor refuses
+  the two-sided channels (battery warns low *and* on overcharge; fuel trim warns
+  rich at 85 % and calls >115 % critical) because a single pair cannot express
+  them — better documented than lossy.
+- **rpm-scaled oil-pressure alarm.** A fixed low-pressure floor false-alarms on
+  any engine whose hot idle sits near 1 bar, so the live rule now scales with
+  engine speed (~69 kPa per 1000 rpm, armed above 1200 rpm, 2 s dwell so a shift
+  cannot trip it, critical below 60 % of the scaled minimum). The catalogue keeps
+  only a safety floor for the meter (40/70 kPa), the tile's detail prints the
+  minimum the rule is comparing against *right now*, and setting a limit in the
+  editor replaces the rule with the driver's fixed floor.
+- **Bank-to-bank lambda split.** A second wideband (`lambdaValue2`,
+  `RealLambdaValue2`, …) gets its own tile, a scope lane and a rule: a split above
+  0.06 λ under load warns (0.12 λ is critical), naming the leaner bank. An
+  averaged lambda hides exactly this failure. The split reads in λ regardless of
+  the AFR/λ preference, because a difference of ratios is not a ratio.
+- **Dynamic operating-envelope grid (`CoverageGrid`).** The rpm axis is sized from
+  the ECU's rev limit and the pressure axis grows with the boost actually seen, so
+  "cells visited" is a fraction of the envelope this car can reach instead of a
+  fixed 0–8000 rpm × 0–300 kPa grid. Growth appends whole rows, so recorded counts
+  survive, and a grid never shrinks mid-session.
+- **Performance estimate from the app's virtual dynamometer.** A rolling window of
+  live samples is fed to the existing `compute_virtual_dyno` backend command, with
+  the same stored vehicle profile the Virtual Dyno tab uses, and shown as
+  **PERFORMANCE (EST.)** in the analysis strip: peak power/torque with their rpm,
+  the curve value at the current rpm, and the model's assumptions printed
+  underneath ("wheel estimate from vehicle acceleration … the Virtual Dyno model,
+  not a dyno"). When it cannot estimate it says why — no speed channel, no
+  profile, no pull in the window, or the model's own error.
+
+#### Fixed
+
+- **Alarm thresholds now name the edge that matters per band.** The rule generator
+  used a single direction for a channel, so a low-is-bad intermediate band printed
+  the wrong boundary (oil pressure warned "threshold 50" when the number that
+  mattered was 90) and a mixed channel got one of its edges wrong. The edge is now
+  chosen per band from whichever neighbour is less dangerous.
+- **`limitFields` lookups by index returned the wrong channel.** `limitFields`
+  always returns the whole catalogue (its argument only supplies overrides), so
+  the editor's "clean on apply" step indexed into the list and compared the wrong
+  channel's defaults — an edited limit was silently dropped. Caught by a new
+  interaction test and fixed with an explicit `limitField(id, override)`.
+
+#### Changed
+
+- **`docs/src/features/dashboards.md`** — documents the limit editor, the
+  rpm-scaled oil rule, the bank split and the performance estimate, and repeats
+  that the face never writes to the ECU.
+
+### 2026-10-13 — Startup dashboard: design + code review pass
+
+Two independent reviews (a visual/UX critique against rendered screenshots and a
+code audit) were run over the rebuild above and their findings were worked
+through. Every item below is a defect that was confirmed in the code, not a
+matter of taste.
+
+#### Fixed
+
+- **A dead sensor can no longer masquerade as a reading on the tiles.** The
+  catalogue's zero-is-a-gap rule was applied in the scope, the alarm rules and
+  the fuel-ratio pairing, but *not* on the tile path: a coolant or oil-pressure
+  channel collapsed to raw 0 rendered a confident "0" in a healthy tone, next to
+  a sensor-dropout event and a broken trace. `ChannelTile` now routes values
+  through `isGap`, and the tile tone rule was unified with the catalogue's
+  (`toneOf` deleted).
+- **0 °C is no longer treated as a dead sensor.** `zeroIsGap` was set on the
+  temperature channels, which manufactured dropout events and broken traces for
+  an ordinary winter reading. It now applies only where a raw zero is physically
+  impossible (pressures, voltages, λ).
+- **"TRIGGER SYNC LOST" was driven by the MAP-validity bit.** `isMapValid` was
+  in the `sync` key list *and* in the backend's canonical alias table, so on
+  rusEFI/FOME/epicEFI the dashboard raised a **critical** trigger-sync event
+  whenever the MAP sensor was merely out of range. Removed from both.
+- **"Boost vs commanded boost" could compare a channel with itself.**
+  `boostControlTarget` was the first candidate for the measured `boost` channel
+  in the alias table, so the measured value *was* the target and overboost was
+  undetectable. The measured list now holds pressure channels only (the target
+  stays available as the reference), and the dashboard guards the same case at
+  render time.
+- **Threshold ticks are printed, not implied.** Compact rail tiles printed no
+  boundary numbers, so an amber value (EGT 916 °C) sat next to a bare hairline
+  and the 850 °C limit appeared nowhere. Every tile now prints its limit (one
+  label on a compact tile, choosing the boundary that fires first), ticks are
+  dashed so they cannot be confused with the value marker, a fractional limit
+  (the knock band at 0.5) no longer rounds to "1", and a limit near either end
+  of the track is clamped inside the tile.
+- **The session verdict can no longer read "ON TARGET" above a 14 % lean tail.**
+  The headline is now worst-case aware (`LEAN — WORST 14.1 %` outranks a
+  healthy mean), and the app's own alert tolerances (4 % lean / 12 % rich) are
+  printed on the error meter instead of an unexplained ±15 %.
+- **The operating-envelope map now answers a fuelling question.** It encoded
+  dwell only; cells now carry the mean fuelling error against the commanded
+  ratio (amber lean, blue rich; no tint where no load sample landed), and the
+  worst lean/rich cell is named with its operating point underneath.
+- **Scope: markers, freeze and repaint.** Anomaly markers took the *oldest* 24
+  events in the window (`slice(-24)` on a newest-first array) instead of those at
+  the live edge; pausing and then changing the lane set drew the wrong channel
+  under each label (frozen windows are now keyed by lane id); and the rAF loop
+  was torn down and the canvas backing store reallocated ~4×/s because the
+  sample-interval EWMA was an effect dependency (now a ref).
+- **One "now" per screen.** The scope's right-hand gutters and the measurement
+  box read the last buffer sample while the tiles read the store, so the same
+  channel could show two different current values. Gutters and the fuel hero now
+  read the live store value; the engine-phase badge, the boost derivation and the
+  coverage footer do too.
+- **A stale operating point is no longer claimed.** `coverage.current` kept
+  outlining the last cell after the engine stopped, and the panel's "Now:" line
+  quoted the last known MAP. Both reset when a frame carries no operating point.
+- **Honest alarm accounting.** "44 rules monitored" was the size of the rule
+  list, including rules whose channels this definition does not publish (and all
+  of them are engine-gated, so a definition without an rpm channel would show
+  everything monitored and nothing armed). The panel now reports *armed* rules
+  per kind and says so when the engine-speed channel is missing.
+- **Overboost events carry their channel**, so the value is converted and
+  labelled in the user's units like every other number.
+- **The channel picker** gained a filter (rusEFI-size INIs have hundreds of
+  channels and the list was silently truncated at 200), closes on `Escape`, and
+  focuses the filter on open.
+- **A defaulted prop could spin.** `channelMeta = []` created a fresh array on
+  every render; `TsDashboard` passes `Object.values(channelInfoMap)`, so the
+  effect that syncs channels could re-run on every parent render. The default is
+  now a module-level constant.
+- **Accessibility:** the canvas is `aria-describedby`-linked to the value table,
+  keyboard cursor moves are announced through a polite live region (pointer
+  movement stays silent and re-render-free), and the focus ring is 2 px at a
+  negative offset so it survives the surrounding `overflow: hidden`.
+- **Light theme legibility.** The base theme's muted greys fail 4.5:1 on the
+  dashboard background (2.0:1 and 1.4:1 measured), which made every label and
+  the amber warning the hardest things to read. The component now overrides its
+  secondary text, tones and hairlines for the light theme.
+- **Rails, spacing and copy.** Tiles are laid out in fixed pairs so a row of
+  meters can be read across and no group ends with an orphan; the value→meter→
+  detail order keeps meters on a shared baseline; the duplicated log readouts in
+  the rail were removed (the status strip owns the recorder) as was the
+  redundant per-tile "max" line (session extremes are listed once); the recorder
+  uses the accent colour instead of the fault red; the tune-state chip no longer
+  looks like a button; the implementation-rationale footnotes were replaced with
+  user-facing text; and the pause/resume glyphs are lucide icons.
+- **Tests**: 92 (up from 76). New coverage for tile gap semantics, a 0 °C
+  reading, the removed `isMapValid` mapping, armed-rule accounting, per-cell
+  fuelling error, marker ordering, the coverage reset, overboost units, the
+  picker filter, and review mode. The accumulator's test clock is now threaded
+  monotonically — the previous helper rewound time between phases, so the latch
+  and hysteresis assertions proved less than they claimed.
+
+#### Changed
+
+- **`realtime_stream.rs`** — the canonical alias table no longer maps
+  `isMapValid` to `sync`, and `boost` no longer prefers `boostControlTarget`
+  over measured pressure channels.
+- **`docs/src/features/dashboards.md`** — documents the fuelling-error map and
+  the printed thresholds.
+
+### 2026-10-13 — Startup dashboard rebuilt from scratch as a live calibration instrument
+
+The Startup face was the weakest surface in the app: four previous passes
+(F1-broadcast replica, de-F1 pass, purpose-built `LiveScope`, Motorsport
+monitor) all produced pictures of a dashboard — fixed lane sets, fixed °C/kPa,
+a footer of warning chips, and no answer to the question a tuner actually asks
+on glance: *is the engine doing what the tune asked for?* It was rewritten from
+nothing around three rules: measured-vs-commanded is the primary read, only the
+channels the loaded INI publishes are ever drawn, and every threshold is printed
+as a number next to the value it judges (`startup/README.md` is the design
+record).
+
+#### Added
+
+- **`dashboards/startup/channels.ts`** — the channel catalogue: canonical ids,
+  candidate stream keys for each ECU dialect, source units, display ranges,
+  ascending threshold bands (documented: coolant 105/115 °C, IAT 60/80 °C, oil
+  pressure 110/60 kPa, battery 12.5/11.5 V, EGT 850/950 °C, duty 85/95 %,
+  fuel trim ±15 %…), zero-is-a-gap semantics, trace accents, the engine-state
+  derivation (with its basis string) and the measured/commanded fuel-ratio
+  pairing. No limits are invented for load channels (MAP/boost/advance): a boost
+  ceiling is only ever the ECU's own commanded target.
+- **`dashboards/startup/session.ts`** — `TelemetrySession`: a React-free
+  accumulator fed one frame per stream tick. Owns latched/hysteretic event rules
+  (limit bands, fuelling error vs the commanded ratio above 100 kPa/1500 rpm,
+  sensor dropouts, sync loss, overboost), the rpm × MAP operating-envelope dwell
+  map, fuelling statistics (mean, spread, worst lean/rich), session extremes and
+  link health (rate, sample interval, staleness).
+- **`dashboards/startup/EngineScope.tsx`** — canvas oscilloscope: right-aligned
+  lanes, printed ranges (auto-ranged for channels the catalogue does not know),
+  threshold-zone shading, broken traces + gap ticks on dead sensors, dashed
+  commanded trace with a lean/rich fill on the fuel lane, anomaly markers as
+  their own layer, pointer **and keyboard** cursor with a measurement box, and a
+  pause that freezes the exact window on screen while the stream keeps running.
+  It reads the history buffers imperatively on a throttled `requestAnimationFrame`
+  loop and performs zero React re-renders while running or while the cursor moves.
+- **`dashboards/startup/lanes.ts`**, **`panels.tsx`**, **`widgets.tsx`**,
+  **`StartupDash.tsx`** + stylesheets — lane model with unit conversion
+  (ranges, bands and labels all converted, so the canvas can never show °C while
+  the tiles show °F), bullet meters, the status strip (project/ECU/link/rate/log
+  control/tune state), the two rails, the analysis strip (events · fuelling vs
+  target · operating envelope) and the channel picker.
+- **Logging control on the startup face** — the logger status/start/stop path is
+  wired to the status strip, so a session can be recorded without hunting menus.
+- **76 unit/render tests** for the catalogue, the accumulator, the lane
+  conversion and the dashboard (`startup/__tests__/`), including the invariants
+  that matter: a stopped engine raises nothing, a raw 0 never renders as a value
+  on a channel where 0 is impossible, and channel tiles are only drawn for
+  channels the INI publishes.
+- **Screenshot harness** (`harness/`, untracked) that renders the real component
+  with a deterministic driving profile through a stubbed Tauri IPC layer for
+  visual review at 1600×900 / 1440×900 / 1280×800 / 1024×720 / 900×700.
+
+#### Changed
+
+- **`TsDashboard.tsx`** — renders `StartupDash` and passes the INI channel
+  catalogue (`channelInfoMap`) down, so the dashboard and its channel picker know
+  every channel the loaded definition publishes.
+- **`setupTests.ts`** — the jsdom canvas stub now covers the whole 2D surface
+  (state stack, transforms, dash, text metrics), so canvas-heavy components can
+  be rendered in tests.
+- **`docs/src/features/dashboards.md`** — default dashboard list corrected and
+  the Startup monitor documented (layout, scope controls, limits, what it refuses
+  to show).
+
+#### Removed
+
+- **`dashboards/StartupMonitor.tsx` / `.css`** and **`dashboards/LiveScope.tsx` /
+  `.css`** — replaced by the rewrite above. The F1-derived vocabulary is gone
+  from the Startup surface entirely.
+
 ### 2026-10-10 — Startup dashboard de-F1'd: purpose-built LiveScope centre
 
 The F1 broadcast face from the earlier 2026-10-10 pass was a dead end on the

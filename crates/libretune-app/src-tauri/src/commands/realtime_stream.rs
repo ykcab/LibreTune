@@ -77,8 +77,10 @@ const REALTIME_CHANNEL_ALIASES: &[(&str, &[&str])] = &[
     (
         "boost",
         &[
-            "boostControlTarget",
-            "boostOutput",
+            // Measured boost pressure only. `boostControlTarget` is the *commanded*
+            // value and `boostOutput` is a solenoid duty on rusEFI/FOME — mapping
+            // either of them here made "boost vs target" compare a channel with
+            // itself and made overboost undetectable.
             "boostPressure",
             "boost",
             "Boost",
@@ -187,7 +189,15 @@ const REALTIME_CHANNEL_ALIASES: &[(&str, &[&str])] = &[
     ),
     (
         "sync",
-        &["isMapValid", "sync", "engineSync", "hasSync", "triggerSync"],
+        &[
+            // Trigger/crank sync only. `isMapValid` is a MAP-plausibility bit that
+            // several INIs publish; treating it as sync raised a critical "trigger
+            // sync lost" event whenever the MAP sensor was merely out of range.
+            "sync",
+            "engineSync",
+            "hasSync",
+            "triggerSync",
+        ],
     ),
 ];
 
