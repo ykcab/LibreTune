@@ -29,6 +29,21 @@ deletions were still in the tree. Nothing here changes behaviour.
   in the Phase 7 cleanup.
 - **`tuner-ui/Gauges.css`** — superseded by the per-gauge styling under
   `components/gauges/`; nothing references its `.gauge` class.
+- **`components/ActionManagement.ts`, `components/ActionRecorder.tsx/.css`** —
+  orphaned (no imports in the frontend; appears to be unused Action Engine UI
+  scaffolding).
+- **`components/dashboards/IndicatorRow.tsx/.css`** — orphaned dashboard
+  indicator row component (unused in the active dashboard stack).
+- **`components/dialogs/OpenTuneDialog.tsx/.css`** — orphaned tune-open dialog
+  (unused).
+- **`components/dialogs/QuickStartGuide.tsx/.css`** — orphaned quick-start
+  guide dialog (unused).
+- **`components/tuner-ui/AnnotationsPanel.tsx/.css`** — orphaned tune
+  annotations panel (unused).
+- **`themes/fonts.css`** — font styles not imported by the app (only imported
+  by the `harness/` preview app, which references the app source; removing it
+  prevents an unused asset dependency — the harness can continue to import it
+  via its relative path or we can drop that import later).
 
 Note: `GraphLog`'s `variant="live"` prop is now unused too, but it is a
 documented `GraphLog` capability, defaults to `full`, and costs nothing at
