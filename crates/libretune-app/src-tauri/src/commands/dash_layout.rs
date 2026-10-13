@@ -411,7 +411,7 @@ pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, Str
             id: "startup".to_string(),
             name: "Startup".to_string(),
             description:
-                "Fixed live telemetry monitor: engine and fuel/air rails around a multi-lane live scope"
+                "Live calibration monitor: measured-vs-commanded rails around a multi-channel scope, with event detection and an operating-envelope map"
                     .to_string(),
         },
         DashboardTemplateInfo {

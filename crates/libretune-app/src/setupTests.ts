@@ -33,31 +33,54 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 
 // Provide a minimal CanvasRenderingContext2D stub to silence jsdom warnings
 // Install a robust stub unconditionally so gauge components don't trigger 'Not implemented'
-// errors in CI/jsdom environments.
+// errors in CI/jsdom environments. The full 2D surface is stubbed (state stack,
+// transforms, text metrics, path ops) so canvas-heavy components — gauges,
+// strip charts, the startup scope and its coverage map — can be exercised in
+// jsdom without a real rasteriser.
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - test environment stub
 HTMLCanvasElement.prototype.getContext = function () {
   return {
+    // state stack + transforms
+    save: () => {},
+    restore: () => {},
     setTransform: () => {},
+    resetTransform: () => {},
+    translate: () => {},
+    rotate: () => {},
     scale: () => {},
+    // rects
     clearRect: () => {},
     fillRect: () => {},
+    strokeRect: () => {},
+    // paths
     beginPath: () => {},
+    closePath: () => {},
     arc: () => {},
-    stroke: () => {},
-    fill: () => {},
-    fillText: () => {},
-    strokeText: () => {},
-    measureText: (text: string) => ({ width: String(text).length * 6 }),
-    createLinearGradient: () => ({ addColorStop: () => {} }),
-    getImageData: () => ({ data: new Uint8ClampedArray(0) }),
-    putImageData: () => {},
-    setLineDash: () => {},
-    // Path drawing helpers used by gauges
+    arcTo: () => {},
+    ellipse: () => {},
     moveTo: () => {},
     lineTo: () => {},
     quadraticCurveTo: () => {},
-    closePath: () => {},
+    bezierCurveTo: () => {},
+    rect: () => {},
+    stroke: () => {},
+    fill: () => {},
+    clip: () => {},
+    // text
+    fillText: () => {},
+    strokeText: () => {},
+    measureText: (text: string) => ({ width: String(text).length * 6 }),
+    // paint
+    createLinearGradient: () => ({ addColorStop: () => {} }),
+    createRadialGradient: () => ({ addColorStop: () => {} }),
+    createPattern: () => null,
+    drawImage: () => {},
+    getImageData: () => ({ data: new Uint8ClampedArray(0) }),
+    putImageData: () => {},
+    // line/dash/style state
+    setLineDash: () => {},
+    getLineDash: () => [],
   } as unknown as CanvasRenderingContext2D;
 };
 

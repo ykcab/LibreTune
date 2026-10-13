@@ -13,6 +13,77 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-13 — Startup dashboard rebuilt from scratch as a live calibration instrument
+
+The Startup face was the weakest surface in the app: four previous passes
+(F1-broadcast replica, de-F1 pass, purpose-built `LiveScope`, Motorsport
+monitor) all produced pictures of a dashboard — fixed lane sets, fixed °C/kPa,
+a footer of warning chips, and no answer to the question a tuner actually asks
+on glance: *is the engine doing what the tune asked for?* It was rewritten from
+nothing around three rules: measured-vs-commanded is the primary read, only the
+channels the loaded INI publishes are ever drawn, and every threshold is printed
+as a number next to the value it judges (`startup/README.md` is the design
+record).
+
+#### Added
+
+- **`dashboards/startup/channels.ts`** — the channel catalogue: canonical ids,
+  candidate stream keys for each ECU dialect, source units, display ranges,
+  ascending threshold bands (documented: coolant 105/115 °C, IAT 60/80 °C, oil
+  pressure 110/60 kPa, battery 12.5/11.5 V, EGT 850/950 °C, duty 85/95 %,
+  fuel trim ±15 %…), zero-is-a-gap semantics, trace accents, the engine-state
+  derivation (with its basis string) and the measured/commanded fuel-ratio
+  pairing. No limits are invented for load channels (MAP/boost/advance): a boost
+  ceiling is only ever the ECU's own commanded target.
+- **`dashboards/startup/session.ts`** — `TelemetrySession`: a React-free
+  accumulator fed one frame per stream tick. Owns latched/hysteretic event rules
+  (limit bands, fuelling error vs the commanded ratio above 100 kPa/1500 rpm,
+  sensor dropouts, sync loss, overboost), the rpm × MAP operating-envelope dwell
+  map, fuelling statistics (mean, spread, worst lean/rich), session extremes and
+  link health (rate, sample interval, staleness).
+- **`dashboards/startup/EngineScope.tsx`** — canvas oscilloscope: right-aligned
+  lanes, printed ranges (auto-ranged for channels the catalogue does not know),
+  threshold-zone shading, broken traces + gap ticks on dead sensors, dashed
+  commanded trace with a lean/rich fill on the fuel lane, anomaly markers as
+  their own layer, pointer **and keyboard** cursor with a measurement box, and a
+  pause that freezes the exact window on screen while the stream keeps running.
+  It reads the history buffers imperatively on a throttled `requestAnimationFrame`
+  loop and performs zero React re-renders while running or while the cursor moves.
+- **`dashboards/startup/lanes.ts`**, **`panels.tsx`**, **`widgets.tsx`**,
+  **`StartupDash.tsx`** + stylesheets — lane model with unit conversion
+  (ranges, bands and labels all converted, so the canvas can never show °C while
+  the tiles show °F), bullet meters, the status strip (project/ECU/link/rate/log
+  control/tune state), the two rails, the analysis strip (events · fuelling vs
+  target · operating envelope) and the channel picker.
+- **Logging control on the startup face** — the logger status/start/stop path is
+  wired to the status strip, so a session can be recorded without hunting menus.
+- **76 unit/render tests** for the catalogue, the accumulator, the lane
+  conversion and the dashboard (`startup/__tests__/`), including the invariants
+  that matter: a stopped engine raises nothing, a raw 0 never renders as a value
+  on a channel where 0 is impossible, and channel tiles are only drawn for
+  channels the INI publishes.
+- **Screenshot harness** (`harness/`, untracked) that renders the real component
+  with a deterministic driving profile through a stubbed Tauri IPC layer for
+  visual review at 1600×900 / 1440×900 / 1280×800 / 1024×720 / 900×700.
+
+#### Changed
+
+- **`TsDashboard.tsx`** — renders `StartupDash` and passes the INI channel
+  catalogue (`channelInfoMap`) down, so the dashboard and its channel picker know
+  every channel the loaded definition publishes.
+- **`setupTests.ts`** — the jsdom canvas stub now covers the whole 2D surface
+  (state stack, transforms, dash, text metrics), so canvas-heavy components can
+  be rendered in tests.
+- **`docs/src/features/dashboards.md`** — default dashboard list corrected and
+  the Startup monitor documented (layout, scope controls, limits, what it refuses
+  to show).
+
+#### Removed
+
+- **`dashboards/StartupMonitor.tsx` / `.css`** and **`dashboards/LiveScope.tsx` /
+  `.css`** — replaced by the rewrite above. The F1-derived vocabulary is gone
+  from the Startup surface entirely.
+
 ### 2026-10-10 — Startup dashboard de-F1'd: purpose-built LiveScope centre
 
 The F1 broadcast face from the earlier 2026-10-10 pass was a dead end on the

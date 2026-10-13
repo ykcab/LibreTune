@@ -29,7 +29,7 @@ import { useDashboardScale } from './hooks/useDashboardScale';
 import { useDashboardValidation } from './hooks/useDashboardValidation';
 import { useDashboardCRUD } from './hooks/useDashboardCRUD';
 import { useGaugeRangeSync } from './hooks/useGaugeRangeSync';
-import StartupMonitor, { isStartupMonitorPath } from './StartupMonitor';
+import StartupDash, { isStartupDashPath } from './startup/StartupDash';
 import RaceMonitor, { isRaceMonitorPath } from './RaceMonitor';
 import './TsDashboard.css';
 
@@ -383,7 +383,7 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
     );
   }
 
-  const isStartupMonitor = isStartupMonitorPath(selectedPath);
+  const isStartupMonitor = isStartupDashPath(selectedPath);
   const isRaceMonitor = isRaceMonitorPath(selectedPath);
 
   const cluster = dashFile.gauge_cluster;
@@ -488,7 +488,7 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
       {isStartupMonitor || isRaceMonitor ? (
         <div className="ts-dashboard-startup-host">
           {isStartupMonitor ? (
-            <StartupMonitor isConnected={isConnected} />
+            <StartupDash isConnected={isConnected} channelMeta={Object.values(channelInfoMap)} />
           ) : (
             <RaceMonitor isConnected={isConnected} />
           )}

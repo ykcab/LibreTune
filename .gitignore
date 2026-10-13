@@ -19,6 +19,10 @@ Thumbs.db
 node_modules/
 dist/
 
+# Component screenshot harness build output (see
+# crates/libretune-app/harness — a local visual-QA tool, not shipped)
+crates/libretune-app/harness/dist-harness/
+
 # Logs
 *.log
 

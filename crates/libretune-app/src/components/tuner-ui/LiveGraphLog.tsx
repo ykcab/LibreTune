@@ -52,9 +52,8 @@ export function buildLiveSamples(
 
 /**
  * Memoized: this component reads the realtime store imperatively (no props),
- * so `React.memo` stops StartupMonitor's ~10 Hz channel re-render from
- * cascading into the full GraphLog tree. It only re-renders on its own
- * 500 ms snapshot rebuild.
+ * so `React.memo` stops a parent's ~10 Hz channel re-render from cascading into
+ * the full GraphLog tree. It only re-renders on its own 500 ms snapshot rebuild.
  */
 export const LiveGraphLog = memo(function LiveGraphLog() {
   const [snapshot, setSnapshot] = useState<{ samples: GraphSample[]; channels: string[] }>({

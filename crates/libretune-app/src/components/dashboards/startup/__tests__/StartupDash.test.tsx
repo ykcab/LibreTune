@@ -1,0 +1,191 @@
+/**
+ * Startup dashboard render + interaction tests.
+ *
+ * The point of these is the promise the component makes: it draws only what the
+ * ECU publishes, every control does something real, and the numbers on screen
+ * come from the stream.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { UnitPreferencesProvider } from '../../../../contexts/useUnitPreferences';
+import { useRealtimeStore } from '../../../../stores/realtimeStore';
+import StartupDash, { isStartupDashPath } from '../StartupDash';
+import type { ChannelMeta } from '../types';
+
+const channelMeta: ChannelMeta[] = [
+  { name: 'rpm', label: 'RPM', units: '' },
+  { name: 'map', label: 'MAP', units: 'kPa' },
+  { name: 'coolant', label: 'CLT', units: '°C' },
+  { name: 'lambda', label: 'Lambda', units: 'λ' },
+  { name: 'targetLambda', label: 'Lambda target', units: 'λ' },
+  { name: 'vvtIntake', label: 'VVT intake', units: 'deg' },
+];
+
+function renderDash(isConnected = true, meta: ChannelMeta[] = channelMeta) {
+  return render(
+    <UnitPreferencesProvider>
+      <StartupDash isConnected={isConnected} channelMeta={meta} />
+    </UnitPreferencesProvider>,
+  );
+}
+
+/** Push a frame through the store the way the realtime listener does. */
+function push(values: Record<string, number>, repeats = 1) {
+  act(() => {
+    for (let i = 0; i < repeats; i++) useRealtimeStore.getState().updateChannels(values);
+  });
+}
+
+beforeEach(() => {
+  useRealtimeStore.getState().clearChannels();
+  window.localStorage.clear();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe('isStartupDashPath', () => {
+  it('matches the startup face on any platform path form', () => {
+    expect(isStartupDashPath('C:/dashes/Startup.ltdash.xml')).toBe(true);
+    expect(isStartupDashPath('C:\\dashes\\startup.ltdash.xml')).toBe(true);
+    expect(isStartupDashPath('/dashes/Startup.tuning.ltdash.xml')).toBe(true);
+    expect(isStartupDashPath('/dashes/Tuning.ltdash.xml')).toBe(false);
+    expect(isStartupDashPath(null)).toBe(false);
+  });
+});
+
+describe('rendering', () => {
+  it('renders the status strip, the scope and the analysis strip', () => {
+    renderDash();
+    expect(screen.getByText('LIBRETUNE')).toBeInTheDocument();
+    expect(screen.getByText('LIVE TRACE')).toBeInTheDocument();
+    expect(screen.getByText('EVENTS')).toBeInTheDocument();
+    expect(screen.getByText('FUELING vs TARGET')).toBeInTheDocument();
+    expect(screen.getByText('OPERATING ENVELOPE')).toBeInTheDocument();
+  });
+
+  it('shows a dash (never a fabricated zero) for channels with no data', () => {
+    renderDash();
+    // Coolant is published by the INI but has produced no frame yet.
+    const coolantTile = screen.getByTitle('Coolant temperature');
+    expect(coolantTile.querySelector('.sd-tile__value')?.textContent).toContain('—');
+  });
+
+  it('renders only the channels the ECU publishes', () => {
+    renderDash();
+    expect(screen.getByTitle(/Engine speed/)).toBeInTheDocument();
+    // Not in this INI: no tile, no empty tile.
+    expect(screen.queryByTitle(/Oil pressure/)).toBeNull();
+    expect(screen.queryByTitle(/Injector duty cycle/)).toBeNull();
+  });
+
+  it('shows live values and tones them by the catalogue limits', () => {
+    renderDash();
+    push({ rpm: 3200, map: 120, coolant: 118, lambda: 0.86, targetLambda: 0.85 }, 3);
+    const coolant = screen.getByTitle('Coolant temperature').querySelector('.sd-tile__value');
+    expect(coolant?.textContent).toContain('118');
+    expect(coolant?.className).toContain('sd-tone-crit');
+  });
+
+  it('keeps the accessible value table in sync with the scope', () => {
+    vi.useFakeTimers();
+    try {
+      renderDash();
+      push({ rpm: 4321, map: 100, coolant: 90, lambda: 0.9, targetLambda: 0.85 }, 3);
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      const table = screen.getByText('Current value of every scope channel').closest('table');
+      expect(table?.textContent).toContain('4321');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tells the user what is being monitored while nothing has fired', () => {
+    renderDash();
+    expect(screen.getByText('Nothing detected this session.')).toBeInTheDocument();
+    expect(screen.getByText('sensor dropout channels')).toBeInTheDocument();
+  });
+
+  it('explains an offline dashboard instead of blaming the INI', () => {
+    renderDash(false);
+    expect(screen.getByText('DISCONNECTED')).toBeInTheDocument();
+    expect(screen.getByText(/Waiting for a live stream/)).toBeInTheDocument();
+  });
+});
+
+describe('scope controls', () => {
+  it('changes the window when a window button is pressed', () => {
+    renderDash();
+    const tenSeconds = screen.getByTitle('Show the last 10 seconds');
+    act(() => tenSeconds.click());
+    expect(tenSeconds.className).toContain('is-on');
+    expect(screen.getByTitle('Show the last 20 seconds').className).not.toContain('is-on');
+  });
+
+  it('pauses and resumes the live window', () => {
+    renderDash();
+    push({ rpm: 3000, map: 100 }, 5);
+    const pause = screen.getByTitle(/Freeze the window/);
+    act(() => pause.click());
+    expect(screen.getByTitle(/Resume the live window/)).toBeInTheDocument();
+  });
+
+  it('opens the channel picker and lets a lane be added', () => {
+    renderDash();
+    // The INI resolves five catalogue channels; the default lane set plots three
+    // of them (the rest are offered but not plotted).
+    expect(screen.getByTitle('Choose which channels are plotted').textContent).toContain('(3)');
+    act(() => screen.getByTitle('Choose which channels are plotted').click());
+    const coolant = screen
+      .getAllByRole('checkbox')
+      .find((box) => box.closest('label')?.textContent?.toUpperCase().includes('COOLANT'));
+    expect(coolant).toBeDefined();
+    act(() => (coolant as HTMLInputElement).click());
+    expect(screen.getByTitle('Choose which channels are plotted').textContent).toContain('(4)');
+  });
+
+  it('remembers the lane selection between mounts', () => {
+    const first = renderDash();
+    act(() => screen.getByTitle('Choose which channels are plotted').click());
+    const boxes = screen.getByText('Tuning channels').closest('.sd-picker__col')!
+      .querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    act(() => boxes[0].click()); // remove the first plotted lane
+    // The selection keeps channels this ECU does not publish, so switching back
+    // to an ECU that does publish them restores the lane.
+    const stored = JSON.parse(window.localStorage.getItem('libretune-startup-lanes') ?? '[]') as string[];
+    expect(stored).not.toContain('rpm');
+    expect(screen.getByTitle('Choose which channels are plotted').textContent).toContain('(2)');
+    first.unmount();
+    renderDash();
+    expect(screen.getByTitle('Choose which channels are plotted').textContent).toContain('(2)');
+  });
+
+  it('offers the INI’s own channels, not just the curated set', () => {
+    renderDash();
+    act(() => screen.getByTitle('Choose which channels are plotted').click());
+    expect(screen.getByText('VVT intake')).toBeInTheDocument();
+  });
+});
+
+describe('events', () => {
+  it('raises a live event once a limit is held', () => {
+    vi.useFakeTimers();
+    try {
+      renderDash();
+      // 30 frames of an overheating engine: the latch (600 ms) is satisfied.
+      for (let i = 0; i < 30; i++) {
+        push({ rpm: 3000, map: 120, tps: 60, coolant: 120, lambda: 0.86, targetLambda: 0.85 });
+        act(() => {
+          vi.advanceTimersByTime(60);
+        });
+      }
+      expect(screen.getAllByText(/CRITICAL|HIGH/).length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
