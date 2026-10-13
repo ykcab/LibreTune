@@ -25,7 +25,7 @@
  * - Anomalies detected by the session are drawn as their own layer (markers),
  *   not folded into the traces.
  */
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { getChannelHistoryBuffer, useRealtimeStore } from '../../../stores/realtimeStore';
 import { formatNumber } from './channels';
 import type { SessionMarker, SessionSnapshot } from './session';
@@ -58,8 +58,9 @@ const SANS = '"IBM Plex Sans", system-ui, sans-serif';
 
 interface FrozenWindow {
   at: number;
-  lanes: number[][];
-  targets: number[][];
+  /** Frozen samples keyed by lane id, so changing the lane set cannot mis-align. */
+  lanes: Map<string, number[]>;
+  targets: Map<string, number[]>;
 }
 
 interface RangeCacheEntry {
@@ -170,6 +171,8 @@ interface PaintArgs {
   lanes: ScopeLane[];
   data: number[][];
   targets: number[][];
+  /** Live channel values (store), used for the "now" column. */
+  liveValues: Record<string, number>;
   windowSamples: number;
   intervalMs: number;
   cursor: number | null;
@@ -180,9 +183,11 @@ interface PaintArgs {
   connected: boolean;
 }
 
+const EMPTY: number[] = [];
+
 function paint(args: PaintArgs): void {
   const {
-    canvas, ctx, w, h, lanes, data, targets, windowSamples, intervalMs,
+    canvas, ctx, w, h, lanes, data, targets, liveValues, windowSamples, intervalMs,
     cursor, markers, now, frozenAt, ranges, connected,
   } = args;
 
@@ -219,11 +224,15 @@ function paint(args: PaintArgs): void {
     acc += value;
   }
 
-  // Vertical time gridlines every 5 s, drawn behind every lane.
+  // Vertical time gridlines every 5 s, drawn behind every lane, with the offset
+  // printed so a trace can be tied to the event list's ages.
   const gridStep = traceW / Math.max(1, windowSamples - 1);
   const windowMs = (windowSamples - 1) * intervalMs;
   ctx.strokeStyle = grid;
   ctx.lineWidth = 1;
+  ctx.font = `9px ${MONO}`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
   for (let ms = 5000; ms <= windowMs; ms += 5000) {
     const x = Math.round(traceRight - (ms / intervalMs) * gridStep) + 0.5;
     if (x <= traceLeft) break;
@@ -231,6 +240,8 @@ function paint(args: PaintArgs): void {
     ctx.moveTo(x, 0);
     ctx.lineTo(x, h);
     ctx.stroke();
+    ctx.fillStyle = dim;
+    ctx.fillText(`-${(ms / 1000).toFixed(0)}s`, x - 3, h - 2);
   }
 
   for (let i = 0; i < lanes.length; i++) {
@@ -411,9 +422,15 @@ function paint(args: PaintArgs): void {
       }
     }
 
-    // ---- right gutter: live value, or the cursor value when inspecting
+    // ---- right gutter: live value from the store (never the throttled canvas's
+    // last buffer sample), or the cursor value when inspecting
     const cursorIndex = cursor !== null ? n - 1 - cursor : -1;
-    const shownRaw = cursorIndex >= 0 && cursorIndex < n ? samples[cursorIndex] : samples[n - 1];
+    const liveRaw = liveValues[lane.channel];
+    const shownRaw = cursorIndex >= 0 && cursorIndex < n
+      ? samples[cursorIndex]
+      : liveRaw !== undefined
+        ? liveRaw
+        : samples[n - 1];
     const missing = shownRaw === undefined || isGapSample(lane, shownRaw);
     ctx.textAlign = 'right';
     ctx.fillStyle = missing ? dim : laneColor;
@@ -424,8 +441,10 @@ function paint(args: PaintArgs): void {
     ctx.fillText(lane.unit || '—', w - 8, Math.min(bottom - 3, top + (compact ? 24 : 30)));
   }
 
-  // ---- anomaly markers: their own layer, spanning every lane
-  const visibleMarkers = markers.slice(-24);
+  // ---- anomaly markers: their own layer, spanning every lane.
+  // `markers` is newest-first, so the first entries are the ones nearest the
+  // live edge (the older ones fall off the trace anyway).
+  const visibleMarkers = markers.slice(0, 24);
   for (const marker of visibleMarkers) {
     const msAgo = now - marker.at;
     if (msAgo < 0 || msAgo > windowMs) continue;
@@ -566,6 +585,7 @@ export default function EngineScope({
 }: EngineScopeProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tableId = useId();
   const cursorRef = useRef<number | null>(null);
   const dirtyRef = useRef(true);
   const frozenRef = useRef<FrozenWindow | null>(null);
@@ -577,20 +597,25 @@ export default function EngineScope({
   const pausedRef = useRef(paused);
   const liveRef = useRef(live);
   liveRef.current = live;
+  const intervalMsRef = useRef(intervalMs);
+  intervalMsRef.current = intervalMs;
 
   const windowSamples = useMemo(() => {
     const requested = Math.round((windowSec * 1000) / Math.max(20, intervalMs));
     return Math.max(20, Math.min(BUFFER_SAMPLES, requested));
   }, [windowSec, intervalMs]);
 
-  // Freeze the exact window that is on screen when pause is engaged.
+  // Freeze the exact window that is on screen when pause is engaged. Keyed by
+  // lane id: adding or removing a lane while paused must not shift the traces.
   useEffect(() => {
     if (paused && !pausedRef.current) {
-      frozenRef.current = {
-        at: Date.now(),
-        lanes: lanes.map((lane) => laneSamples(lane, windowSamples)),
-        targets: lanes.map((lane) => targetSamples(lane, windowSamples)),
-      };
+      const laneData = new Map<string, number[]>();
+      const targetData = new Map<string, number[]>();
+      for (const lane of lanes) {
+        laneData.set(lane.id, laneSamples(lane, windowSamples));
+        targetData.set(lane.id, targetSamples(lane, windowSamples));
+      }
+      frozenRef.current = { at: Date.now(), lanes: laneData, targets: targetData };
       dirtyRef.current = true;
     } else if (!paused && pausedRef.current) {
       frozenRef.current = null;
@@ -602,6 +627,10 @@ export default function EngineScope({
   useEffect(() => {
     dirtyRef.current = true;
   }, [lanes, markers, windowSamples, intervalMs, paused]);
+
+  // Publishes the lane values as text for assistive tech, and announces the
+  // cursor position to keyboard users (pointer users get the on-canvas box).
+  const [announcement, setAnnouncement] = useState('');
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -641,8 +670,15 @@ export default function EngineScope({
       lastDraw = now;
 
       const currentLanes = lanesRef.current;
-      const data = frozen ? frozen.lanes : currentLanes.map((lane) => laneSamples(lane, windowSamples));
-      const targets = frozen ? frozen.targets : currentLanes.map((lane) => targetSamples(lane, windowSamples));
+      const data = currentLanes.map((lane) =>
+        frozen ? (frozen.lanes.get(lane.id) ?? EMPTY) : laneSamples(lane, windowSamples),
+      );
+      const targets = currentLanes.map((lane) =>
+        frozen ? (frozen.targets.get(lane.id) ?? EMPTY) : targetSamples(lane, windowSamples),
+      );
+      // Live values straight from the store so the right-hand gutter and the DOM
+      // tiles can never disagree about "now".
+      const live = useRealtimeStore.getState().channels;
 
       paint({
         canvas,
@@ -652,8 +688,9 @@ export default function EngineScope({
         lanes: currentLanes,
         data,
         targets,
+        liveValues: live,
         windowSamples,
-        intervalMs,
+        intervalMs: intervalMsRef.current,
         cursor: cursorRef.current,
         markers: markersRef.current,
         now: Date.now(),
@@ -668,7 +705,11 @@ export default function EngineScope({
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
-  }, [windowSamples, intervalMs, isConnected]);
+    // `intervalMs` is deliberately not a dependency: it is an EWMA that changes
+    // with every stream frame, and re-creating the canvas (which clears and
+    // reallocates the backing store) several times a second is pure waste. The
+    // ref below keeps the time axis current without touching the rAF loop.
+  }, [windowSamples, isConnected]);
 
   const samplesFromPointer = useCallback(
     (clientX: number): number | null => {
@@ -723,15 +764,29 @@ export default function EngineScope({
           break;
         case 'Escape':
           cursorRef.current = null;
+          setAnnouncement('cursor cleared');
           break;
         case ' ':
           onPausedChange(!paused);
-          break;
+          return;
         default:
           return;
       }
       event.preventDefault();
       dirtyRef.current = true;
+      if (cursorRef.current !== null) {
+        const seconds = ((cursorRef.current * intervalMsRef.current) / 1000).toFixed(1);
+        const parts: string[] = [`${seconds} seconds ago`];
+        for (const lane of lanesRef.current) {
+          const raw = getChannelHistoryBuffer(lane.channel);
+          const index = raw.length - 1 - (cursorRef.current ?? 0);
+          if (index < 0 || index >= raw.length) continue;
+          const value = raw[index];
+          if (isGapSample(lane, value)) continue;
+          parts.push(`${lane.label} ${formatNumber(value * lane.scale + lane.offset, lane.digits)} ${lane.unit}`);
+        }
+        setAnnouncement(parts.join(', '));
+      }
     },
     [onPausedChange, paused, windowSamples],
   );
@@ -762,14 +817,20 @@ export default function EngineScope({
         className="sd-scope__canvas"
         tabIndex={0}
         role="img"
+        aria-describedby={tableId}
         aria-label={`Live telemetry scope: ${lanes.length} channels over the last ${windowSec} seconds. Arrow keys inspect values, shift+arrow jumps, space pauses.`}
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         onKeyDown={handleKeyDown}
       />
+      {/* Cursor position for keyboard/screen-reader users who cannot read the
+          canvas measurement box. */}
+      <div className="sd-sr-only" role="status" aria-live="polite">
+        {announcement}
+      </div>
       {/* Visually hidden, but its own box must stay 1×1: a table element ignores
           a 1px width, so the wrapper carries the sr-only class and clips it. */}
-      <div className="sd-sr-only">
+      <div className="sd-sr-only" id={tableId}>
         <table>
           <caption>Current value of every scope channel</caption>
           <tbody>

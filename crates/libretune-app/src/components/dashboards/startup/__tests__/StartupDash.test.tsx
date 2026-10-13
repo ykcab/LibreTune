@@ -6,7 +6,7 @@
  * come from the stream.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { UnitPreferencesProvider } from '../../../../contexts/useUnitPreferences';
 import { useRealtimeStore } from '../../../../stores/realtimeStore';
 import StartupDash, { isStartupDashPath } from '../StartupDash';
@@ -60,7 +60,7 @@ describe('rendering', () => {
   it('renders the status strip, the scope and the analysis strip', () => {
     renderDash();
     expect(screen.getByText('LIBRETUNE')).toBeInTheDocument();
-    expect(screen.getByText('LIVE TRACE')).toBeInTheDocument();
+    expect(screen.getByTitle('Live multi-channel scope')).toBeInTheDocument();
     expect(screen.getByText('EVENTS')).toBeInTheDocument();
     expect(screen.getByText('FUELING vs TARGET')).toBeInTheDocument();
     expect(screen.getByText('OPERATING ENVELOPE')).toBeInTheDocument();
@@ -71,6 +71,18 @@ describe('rendering', () => {
     // Coolant is published by the INI but has produced no frame yet.
     const coolantTile = screen.getByTitle('Coolant temperature');
     expect(coolantTile.querySelector('.sd-tile__value')?.textContent).toContain('—');
+  });
+
+  it('shows a dash for a channel that has collapsed to raw zero', () => {
+    renderDash();
+    // Oil pressure at 0 kPa is physically impossible while running: the tile must
+    // not print a confident 0 next to a sensor-dropout event.
+    push({ rpm: 3000, oilPressure: 0 }, 3);
+    const tile = screen.getByTitle('Oil pressure').querySelector('.sd-tile__value');
+    expect(tile?.textContent).toContain('—');
+    // ...while a channel where 0 is legitimate still prints 0.
+    push({ rpm: 3000, oilPressure: 0, coolant: 0 }, 2);
+    expect(screen.getByTitle('Coolant temperature').querySelector('.sd-tile__value')?.textContent).toContain('0');
   });
 
   it('renders only the channels the ECU publishes', () => {
@@ -107,7 +119,7 @@ describe('rendering', () => {
   it('tells the user what is being monitored while nothing has fired', () => {
     renderDash();
     expect(screen.getByText('Nothing detected this session.')).toBeInTheDocument();
-    expect(screen.getByText('sensor dropout channels')).toBeInTheDocument();
+    expect(screen.getByText('sensor channels')).toBeInTheDocument();
   });
 
   it('explains an offline dashboard instead of blaming the INI', () => {
@@ -134,6 +146,18 @@ describe('scope controls', () => {
     expect(screen.getByTitle(/Resume the live window/)).toBeInTheDocument();
   });
 
+  it('switches the centre to the recorded session and back', () => {
+    renderDash();
+    act(() => screen.getByTitle('Scrub the recorded session (the logger keeps recording)').click());
+    // Live-only controls are gone (they would do nothing in review mode) ...
+    expect(screen.queryByTitle(/Freeze the window/)).toBeNull();
+    expect(screen.queryByTitle('Choose which channels are plotted')).toBeNull();
+    expect(screen.getByText('recorded session · the rails stay live')).toBeInTheDocument();
+    // ...and the live scope comes back with them.
+    act(() => screen.getByTitle('Live multi-channel scope').click());
+    expect(screen.getByTitle('Choose which channels are plotted')).toBeInTheDocument();
+  });
+
   it('opens the channel picker and lets a lane be added', () => {
     renderDash();
     // The INI resolves five catalogue channels; the default lane set plots three
@@ -151,7 +175,7 @@ describe('scope controls', () => {
   it('remembers the lane selection between mounts', () => {
     const first = renderDash();
     act(() => screen.getByTitle('Choose which channels are plotted').click());
-    const boxes = screen.getByText('Tuning channels').closest('.sd-picker__col')!
+    const boxes = screen.getByText(/^Tuning channels/).closest('.sd-picker__col')!
       .querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
     act(() => boxes[0].click()); // remove the first plotted lane
     // The selection keeps channels this ECU does not publish, so switching back
@@ -162,6 +186,22 @@ describe('scope controls', () => {
     first.unmount();
     renderDash();
     expect(screen.getByTitle('Choose which channels are plotted').textContent).toContain('(2)');
+  });
+
+  it('filters the channel picker and closes on Escape', () => {
+    renderDash();
+    act(() => screen.getByTitle('Choose which channels are plotted').click());
+    const filter = screen.getByLabelText('Filter channels') as HTMLInputElement;
+    act(() => {
+      fireEvent.change(filter, { target: { value: 'cool' } });
+    });
+    expect(screen.getByText(/^Tuning channels \(1\)/)).toBeInTheDocument();
+    act(() => {
+      filter
+        .closest('.sd-picker')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(screen.queryByLabelText('Filter channels')).toBeNull();
   });
 
   it('offers the INI’s own channels, not just the curated set', () => {

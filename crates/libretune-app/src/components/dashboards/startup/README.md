@@ -63,25 +63,38 @@ poster. So it was rebuilt around three ideas:
 
 - `channels.ts` — the channel catalogue: canonical ids, candidate stream keys,
   source unit, display range, ascending threshold bands, gap semantics, trace
-  accent. Pure functions for resolution, tone, band lookup, engine-state
-  derivation and unit-aware formatting. Everything else is table-driven.
+  accent, and `adaptSpecToUnit`, which re-expresses a spec (unit, range **and
+  bands**) in the unit the loaded INI actually declares — a MegaSquirt
+  definition publishing coolant in °F must not be judged against 105 °C. Pure
+  functions for resolution, tone, band lookup, engine-state derivation and
+  unit-aware formatting. Everything else is table-driven.
 - `session.ts` — `TelemetrySession`: a frame-rate-independent accumulator fed
   one sample per stream tick. Owns event detection (band rules + fueling error
-  + dropouts + sync loss), the operating-envelope heat map, fuel-error
-  statistics, session extremes and link health (rate, staleness).
+  + dropouts + sync loss + overboost), the operating-envelope heat map
+  (dwell **and** mean fuelling error per rpm × MAP cell), fuel-error statistics,
+  session extremes, link health (rate, staleness) and armed-rule accounting.
 - `EngineScope.tsx` — canvas scope: right-aligned lanes, fixed curated ranges
   (auto-range with a printed range for unknown channels), measured/target
-  overlay, shaped anomaly markers, pointer + keyboard cursor, pause and window
-  control.
+  overlay, shaped anomaly markers nearest the live edge, labelled time grid,
+  pointer + keyboard cursor (announced for screen readers), pause that freezes
+  the window, and gap ticks on dead sensors.
 - `StartupDash.tsx` — composition, status polling, imports. No channel literals
   outside the catalogue.
 
 ## Verification
 
 - Unit tests for the catalogue (resolution order, tone, band lookup, unit
-  conversion, formatting) and the session accumulator (event latching,
-  hysteresis, coverage binning, fueling stats, staleness).
-- Render test for the dash with a mocked `invoke` and a seeded realtime store.
+  conversion, INI unit adaptation, formatting) and the session accumulator
+  (event latching, hysteresis, coverage binning, fuelling statistics and
+  per-cell error, staleness, armed rules, marker ordering).
+- Render + interaction tests for the dash with a mocked `invoke` and a seeded
+  realtime store (tile gap semantics, window/pause/mode controls, channel
+  picker, accessible value table, offline wording).
 - A standalone screenshot harness (untracked, `harness/`) renders the real
-  component with a deterministic driving profile for visual review at
-  1600×900 / 1920×1080.
+  component with a deterministic driving profile through a stubbed Tauri IPC
+  layer. The review pass also drove it through an automated audit that fails on
+  clipped or overlapping content and asserts that every control changes state,
+  at 1600×900 / 1440×900 / 1280×800 / 1024×720 / 900×700.
+- Two independent reviews (visual/UX against those renders, and a code audit)
+  were worked through; the fixes they produced are listed in `CHANGELOG.md`
+  under *Startup dashboard: design + code review pass*.

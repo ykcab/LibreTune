@@ -9,9 +9,9 @@
  * Ranges are in source units; the scope converts only the printed labels and
  * current-value numbers, never the geometry.
  */
-import { CHANNELS, type Band, type ChannelSpec } from './channels';
+import type { Band, ChannelSpec } from './channels';
 import type { ChannelMeta } from './types';
-import type { UnitDisplay } from './useStartupTelemetry';
+import { displayDigits, type UnitDisplay } from './useStartupTelemetry';
 
 /** Unit-preference lookup: source unit → linear display conversion. */
 export type UnitDisplayFn = (unit: string) => UnitDisplay;
@@ -74,15 +74,17 @@ export function laneForSpec(
   target?: { channel: string; unit: string },
 ): ScopeLane {
   const conv = display(spec.unit);
+  // The fuel-ratio lane is labelled by the unit it is drawn in, so a lane can
+  // never read "LAMBDA 12.696 AFR"; the precision follows the unit too.
+  const isRatio = spec.id === 'lambda' || spec.id === 'afr';
+  const baseDigits = isRatio ? (conv.unit === 'AFR' ? 2 : 3) : spec.digits;
   return {
     id: spec.id,
     channel,
     target: target
       ? { channel: target.channel, scale: display(target.unit).scale, offset: display(target.unit).offset }
       : undefined,
-    // The fuel-ratio lane is labelled by the unit it is drawn in, so a lane can
-    // never read "LAMBDA 12.696 AFR".
-    label: spec.id === 'lambda' ? (conv.unit === 'AFR' ? 'AFR' : 'LAMBDA') : spec.label,
+    label: isRatio ? (conv.unit === 'AFR' ? 'AFR' : 'LAMBDA') : spec.label,
     sourceUnit: spec.unit,
     unit: conv.unit,
     scale: conv.scale,
@@ -94,7 +96,7 @@ export function laneForSpec(
       ...band,
       max: band.max === Number.POSITIVE_INFINITY ? band.max : band.max * conv.scale + conv.offset,
     })),
-    digits: spec.digits,
+    digits: displayDigits(spec.unit, conv.unit, baseDigits),
     zeroIsGap: spec.zeroIsGap === true,
     autoRange: false,
     height: spec.id === 'rpm' ? 64 : undefined,
@@ -197,6 +199,7 @@ function guessRangeForUnit(unit: string): { min: number; max: number; digits: nu
 export function buildLanes(
   ids: string[],
   resolved: Map<string, string>,
+  specs: Record<string, ChannelSpec>,
   meta: ChannelMeta[],
   display: UnitDisplayFn,
 ): ScopeLane[] {
@@ -210,12 +213,20 @@ export function buildLanes(
       lanes.push(laneForChannel(found, seriesIndex++, display));
       continue;
     }
-    const spec = CHANNELS[id];
-    const channel = resolved.get(id);
+    // `specs` is the catalogue adapted to the units this INI declares.
+    // The default lane set asks for the λ lane; an ECU that publishes only AFR
+    // must still get a fuel lane (the rails cross-convert, so the scope must too).
+    let specId = id;
+    if (!specs[specId] || resolved.get(specId) === undefined) {
+      if (id === 'lambda' && specs.afr && resolved.get('afr') !== undefined) specId = 'afr';
+      else continue;
+    }
+    const spec = specs[specId];
+    const channel = resolved.get(specId);
     if (!spec || channel === undefined) continue;
     // The fuel lane gets the commanded trace when the ECU publishes one.
     let target: { channel: string; unit: string } | undefined;
-    if (spec.id === 'lambda') {
+    if (spec.id === 'lambda' || spec.id === 'afr') {
       const lambdaTarget = resolved.get('lambdaTarget');
       const afrTarget = resolved.get('afrTarget');
       if (lambdaTarget !== undefined) target = { channel: lambdaTarget, unit: 'λ' };
@@ -227,11 +238,11 @@ export function buildLanes(
 }
 
 /** Human name for a lane id (used by the picker). */
-export function laneLabel(id: string, meta: ChannelMeta[]): string {
+export function laneLabel(id: string, specs: Record<string, ChannelSpec>, meta: ChannelMeta[]): string {
   if (id.startsWith('ch:')) {
     const name = id.slice(3);
     const found = meta.find((m) => m.name === name);
     return found?.label || name;
   }
-  return CHANNELS[id]?.label ?? id;
+  return specs[id]?.label ?? id;
 }

@@ -47,8 +47,6 @@ export interface SessionEvent {
   at: number;
   /** Last frame the condition held. */
   lastAt: number;
-  /** Frames observed while active. */
-  count: number;
   active: boolean;
 }
 
@@ -102,6 +100,13 @@ export interface CoverageStats {
   current: number;
   /** Busiest bin's sample count (heat-map scale). */
   peak: number;
+  /** Mean fuelling error per bin (null where no load sample landed). */
+  errorMean: (number | null)[];
+  /** Load samples per bin (the weight behind `errorMean`). */
+  errorSamples: Uint32Array;
+  /** Worst-lean and worst-rich cells, with the operating point that produced them. */
+  worstLeanCell: { error: number; rpm: number; map: number } | null;
+  worstRichCell: { error: number; rpm: number; map: number } | null;
 }
 
 export interface SessionExtremes {
@@ -142,7 +147,6 @@ export interface SessionSnapshot {
   coverage: CoverageStats;
   extremes: SessionExtremes;
 }
-
 /* --------------------------------------------------------------- bin geometry */
 
 export const COVERAGE_RPM_STEP = 500;
@@ -244,7 +248,7 @@ const customRules: Rule[] = [
   {
     id: 'fueling:rich',
     kind: 'fueling',
-    severity: 'warn',
+    severity: 'info',
     forMs: 800,
     evaluate: (ctx) => {
       if (!ctx.loaded || ctx.fueling?.lean !== false) return null;
@@ -273,6 +277,7 @@ const customRules: Rule[] = [
     id: 'boost:over',
     kind: 'boost',
     severity: 'warn',
+    channelId: 'boost',
     forMs: 300,
     evaluate: (ctx) => {
       if (ctx.boost === undefined || ctx.boostTarget === undefined || ctx.boostTarget <= 0) return null;
@@ -328,6 +333,10 @@ export class TelemetrySession {
   private coverageSamples = 0;
   private coverageCurrent = -1;
   private coveragePeak = 0;
+  private errorSum = new Float64Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
+  private errorCounts = new Uint32Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
+  private worstLeanCell: { error: number; rpm: number; map: number } | null = null;
+  private worstRichCell: { error: number; rpm: number; map: number } | null = null;
 
   private fuelSamples = 0;
   private fuelSum = 0;
@@ -395,6 +404,34 @@ export class TelemetrySession {
     return { ...this.breakdown };
   }
 
+  /**
+   * Rules that can actually fire for the loaded definition: the channel is
+   * resolved, and — because every limit and dropout rule is gated on the engine
+   * turning — the ECU publishes an rpm channel. Anything else is a rule that
+   * would never run, and the events panel must not claim it is watching it.
+   */
+  get armedBreakdown(): { total: number; byKind: Record<EventKind, number>; gated: boolean } {
+    const byKind: Record<EventKind, number> = { limit: 0, fueling: 0, dropout: 0, sync: 0, boost: 0 };
+    const gated = !this.resolved.has('rpm');
+    if (gated) return { total: 0, byKind, gated };
+
+    const hasMeasuredRatio = this.resolved.has('lambda') || this.resolved.has('afr');
+    const hasCommandedRatio = this.resolved.has('lambdaTarget') || this.resolved.has('afrTarget');
+    const hasBoostTarget = ['boostTarget', 'targetBoost', 'boostControlTarget'].some((key) =>
+      this.knownChannels.has(key),
+    );
+
+    for (const rule of this.rules) {
+      if (rule.channelId !== undefined && !this.resolved.has(rule.channelId)) continue;
+      // Rules that pair two channels need both halves to be useful.
+      if (rule.kind === 'fueling' && !(hasMeasuredRatio && hasCommandedRatio)) continue;
+      if (rule.kind === 'boost' && !(this.resolved.has('boost') && hasBoostTarget)) continue;
+      byKind[rule.kind]++;
+    }
+    const total = Object.values(byKind).reduce((sum, value) => sum + value, 0);
+    return { total, byKind, gated };
+  }
+
   private readonly breakdown: Record<EventKind, number> = (() => {
     const out: Record<EventKind, number> = { limit: 0, fueling: 0, dropout: 0, sync: 0, boost: 0 };
     for (const rule of this.rules) out[rule.kind]++;
@@ -419,6 +456,10 @@ export class TelemetrySession {
     this.coverageSamples = 0;
     this.coverageCurrent = -1;
     this.coveragePeak = 0;
+    this.errorSum = new Float64Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
+    this.errorCounts = new Uint32Array(COVERAGE_RPM_BINS * COVERAGE_MAP_BINS);
+    this.worstLeanCell = null;
+    this.worstRichCell = null;
     this.fuelSamples = 0;
     this.fuelSum = 0;
     this.fuelAbsSum = 0;
@@ -552,7 +593,7 @@ export class TelemetrySession {
       }
     }
 
-    // Operating envelope (rpm × MAP dwell).
+    // Operating envelope (rpm × MAP dwell + fuelling error per cell).
     const mapValue = get(CHANNELS.map);
     if (rpm !== undefined && mapValue !== undefined) {
       const rb = Math.floor(rpm / COVERAGE_RPM_STEP);
@@ -564,9 +605,25 @@ export class TelemetrySession {
         this.coverageSamples++;
         this.coverageCurrent = idx;
         if (this.coverageCounts[idx] > this.coveragePeak) this.coveragePeak = this.coverageCounts[idx];
+        if (fueling) {
+          this.errorSum[idx] += fueling.error;
+          this.errorCounts[idx]++;
+          const rpmBin = Math.floor(rpm / COVERAGE_RPM_STEP) * COVERAGE_RPM_STEP;
+          const mapBin = Math.floor(mapValue / COVERAGE_MAP_STEP) * COVERAGE_MAP_STEP;
+          if (!this.worstLeanCell || fueling.error > this.worstLeanCell.error) {
+            this.worstLeanCell = { error: fueling.error, rpm: rpmBin, map: mapBin };
+          }
+          if (!this.worstRichCell || fueling.error < this.worstRichCell.error) {
+            this.worstRichCell = { error: fueling.error, rpm: rpmBin, map: mapBin };
+          }
+        }
       } else {
         this.coverageCurrent = -1;
       }
+    } else {
+      // No operating point this frame (engine stopped, or MAP in a gap): the
+      // "current cell" must stop claiming a position that is no longer true.
+      this.coverageCurrent = -1;
     }
 
     // Session extremes (documented in the UI as "this session").
@@ -612,7 +669,6 @@ export class TelemetrySession {
         }
       } else if (state.event) {
         state.event.lastAt = t;
-        state.event.count++;
         if (result.value !== undefined) state.event.value = result.value;
       }
     } else {
@@ -648,7 +704,6 @@ export class TelemetrySession {
       note: result.note,
       at: t,
       lastAt: t,
-      count: 1,
       active: true,
     };
     state.event = event;
@@ -660,11 +715,18 @@ export class TelemetrySession {
     const active: SessionEvent[] = [];
     for (const event of this.events) if (event.active) active.push(event);
 
+    // `events` is newest-first, so the first markers are the ones nearest the
+    // live edge — the part of the trace a tuner actually reads.
     const markers: SessionMarker[] = [];
     for (const event of this.events) {
       if (now - event.at <= MARKER_WINDOW_MS) {
         markers.push({ at: event.at, severity: event.severity, kind: event.kind });
       }
+    }
+
+    const errorMean: (number | null)[] = new Array(this.errorCounts.length);
+    for (let i = 0; i < this.errorCounts.length; i++) {
+      errorMean[i] = this.errorCounts[i] > 0 ? this.errorSum[i] / this.errorCounts[i] : null;
     }
 
     return {
@@ -703,6 +765,10 @@ export class TelemetrySession {
         samples: this.coverageSamples,
         current: this.coverageCurrent,
         peak: this.coveragePeak,
+        errorMean,
+        errorSamples: this.errorCounts.slice(),
+        worstLeanCell: this.worstLeanCell ? { ...this.worstLeanCell } : null,
+        worstRichCell: this.worstRichCell ? { ...this.worstRichCell } : null,
       },
       extremes: { ...this.extremes },
     };

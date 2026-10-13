@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { buildLanes, laneForChannel, laneForSpec, laneLabel, seriesVar } from '../lanes';
-import { CHANNELS } from '../channels';
+import { CHANNELS, adaptSpecToUnit, unitFamily, unitTransform } from '../channels';
 import type { UnitDisplay } from '../useStartupTelemetry';
 import type { ChannelMeta } from '../types';
 
@@ -126,22 +126,22 @@ describe('buildLanes', () => {
   ]);
 
   it('skips channels the ECU does not publish instead of rendering them empty', () => {
-    const lanes = buildLanes(['rpm', 'coolant', 'lambda'], resolved, [], metric);
+    const lanes = buildLanes(['rpm', 'coolant', 'lambda'], resolved, CHANNELS, [], metric);
     expect(lanes.map((l) => l.id)).toEqual(['rpm', 'lambda']);
   });
 
   it('resolves free channels against the INI metadata', () => {
-    const lanes = buildLanes(['rpm', 'ch:vvtIntake', 'ch:notInIni'], resolved, meta, metric);
+    const lanes = buildLanes(['rpm', 'ch:vvtIntake', 'ch:notInIni'], resolved, CHANNELS, meta, metric);
     expect(lanes.map((l) => l.id)).toEqual(['rpm', 'ch:vvtIntake']);
   });
 
   it('wires the commanded trace onto the fuel lane', () => {
-    const lanes = buildLanes(['lambda'], resolved, [], metric);
+    const lanes = buildLanes(['lambda'], resolved, CHANNELS, [], metric);
     expect(lanes[0].target).toEqual({ channel: 'targetLambda', scale: 1, offset: 0 });
   });
 
   it('gives the rpm lane the tall row', () => {
-    const lanes = buildLanes(['rpm', 'lambda'], resolved, [], metric);
+    const lanes = buildLanes(['rpm', 'lambda'], resolved, CHANNELS, [], metric);
     expect(lanes[0].height).toBe(64);
     expect(lanes[1].height).toBeUndefined();
   });
@@ -149,7 +149,59 @@ describe('buildLanes', () => {
 
 describe('laneLabel', () => {
   it('prefers the INI label for free channels', () => {
-    expect(laneLabel('ch:vvtIntake', meta)).toBe('VVT intake');
-    expect(laneLabel('rpm', meta)).toBe('RPM');
+    expect(laneLabel('ch:vvtIntake', CHANNELS, meta)).toBe('VVT intake');
+    expect(laneLabel('rpm', CHANNELS, meta)).toBe('RPM');
+  });
+});
+
+describe('INI-declared source units', () => {
+  it('classifies unit families', () => {
+    expect(unitFamily('°C')).toBe('temperature');
+    expect(unitFamily('degF')).toBe('temperature');
+    expect(unitFamily('kPa')).toBe('pressure');
+    expect(unitFamily('psi')).toBe('pressure');
+    expect(unitFamily('mph')).toBe('speed');
+    expect(unitFamily('λ')).toBe('ratio');
+    expect(unitFamily('%')).toBe('none');
+  });
+
+  it('builds affine transforms inside a family and refuses across families', () => {
+    expect(unitTransform('°C', '°F')).toEqual({ scale: 9 / 5, offset: 32 });
+    expect(unitTransform('°F', '°C')?.scale).toBeCloseTo(5 / 9, 9);
+    expect(unitTransform('kPa', 'PSI')?.scale).toBeCloseTo(1 / 6.89476, 9);
+    expect(unitTransform('°C', 'kPa')).toBeNull();
+    expect(unitTransform('λ', 'AFR')).toBeNull();
+    expect(unitTransform('kPa', 'kPa')).toEqual({ scale: 1, offset: 0 });
+  });
+
+  it('re-expresses a spec — including its limits — in the INI’s unit', () => {
+    // A MegaSquirt-style INI that publishes coolant in °F must be judged against
+    // 221/239 °F, not 105/115.
+    const adapted = adaptSpecToUnit(CHANNELS.coolant, 'degF');
+    expect(adapted.unit).toBe('degF');
+    expect(adapted.min).toBeCloseTo(32, 6);
+    expect(adapted.max).toBeCloseTo(284, 6);
+    expect(adapted.bands?.[0].max).toBeCloseTo(221, 6);
+    expect(adapted.bands?.[1].max).toBeCloseTo(239, 6);
+    expect(adapted.bands?.[2].max).toBe(Number.POSITIVE_INFINITY);
+    // The original catalogue entry is not mutated.
+    expect(CHANNELS.coolant.unit).toBe('°C');
+    expect(CHANNELS.coolant.bands?.[0].max).toBe(105);
+  });
+
+  it('leaves an unrelated or empty declaration alone', () => {
+    expect(adaptSpecToUnit(CHANNELS.coolant, '%')).toBe(CHANNELS.coolant);
+    expect(adaptSpecToUnit(CHANNELS.coolant, '')).toBe(CHANNELS.coolant);
+    expect(adaptSpecToUnit(CHANNELS.coolant, '°C')).toBe(CHANNELS.coolant);
+  });
+
+  it('keeps a converted spec consistent through the display layer', () => {
+    // INI publishes °F, user prefers °C: 221 °F threshold must read as 105 °C.
+    const adapted = adaptSpecToUnit(CHANNELS.coolant, 'degF');
+    const lane = laneForSpec(adapted, 'CLT', (unit) =>
+      unit === 'degF' ? { scale: 5 / 9, offset: -32 * (5 / 9), unit: '°C' } : { scale: 1, offset: 0, unit },
+    );
+    expect(lane.unit).toBe('°C');
+    expect(lane.bands?.[0].max).toBeCloseTo(105, 6);
   });
 });

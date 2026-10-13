@@ -13,13 +13,17 @@
  * not.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Pause, Play } from 'lucide-react';
 import { useChannel } from '../../../stores/realtimeStore';
 import { useUnitPreferences } from '../../../contexts/useUnitPreferences';
+import { ReviewGraphLog } from '../../tuner-ui/ReviewGraphLog';
 import {
   CHANNELS,
   CHANNEL_LIST,
+  adaptSpecToUnit,
   engineState,
   effectiveBoost,
+  isGap,
   resolveKeys,
   toneFor,
   type ChannelSpec,
@@ -41,21 +45,17 @@ import './StartupDash.css';
 
 /* ------------------------------------------------------------------ helpers */
 
-function formatClock(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  return `${Math.floor(total / 60).toString().padStart(2, '0')}:${(total % 60).toString().padStart(2, '0')}`;
-}
-
 /** Session extremes, with the catalogue's own limits driving the tone. */
 function extremesRows(
   extremes: SessionExtremes,
   values: Record<string, number>,
+  specs: Record<string, ChannelSpec>,
   fmt: ValueFormatter,
 ): KeyValueRow[] {
   const rows: KeyValueRow[] = [];
   const push = (label: string, channelId: string, value: number | undefined, digits = 0) => {
     if (value === undefined || !Number.isFinite(value)) return;
-    const spec = CHANNELS[channelId];
+    const spec = specs[channelId];
     const formatted = fmt.format(spec.unit, digits, value);
     rows.push({
       label,
@@ -81,6 +81,9 @@ export interface StartupDashProps {
   /** Channel catalogue from the loaded INI (name/label/units). */
   channelMeta?: ChannelMeta[];
 }
+
+/** Stable empty default: a fresh array here would re-run effects every render. */
+const NO_CHANNELS: ChannelMeta[] = [];
 
 /** True for the startup face (`Startup.ltdash.xml`). */
 export function isStartupDashPath(path: string | null | undefined): boolean {
@@ -204,7 +207,10 @@ interface ChannelTileProps {
 
 /** A tile that subscribes to exactly one channel (re-renders with that channel). */
 function ChannelTile({ spec, channelKey, fmt, detail, detailFor, badge, compact }: ChannelTileProps) {
-  const value = useChannel(channelKey);
+  const raw = useChannel(channelKey);
+  // A raw 0 on a channel where 0 is physically impossible is a dead sensor, not a
+  // reading: the tile must show "—" exactly like the scope breaks the trace.
+  const value = isGap(spec, raw) ? undefined : raw;
   return (
     <StatTile
       channel={spec}
@@ -219,7 +225,7 @@ function ChannelTile({ spec, channelKey, fmt, detail, detailFor, badge, compact 
 
 /* ----------------------------------------------------------------------- dash */
 
-export default function StartupDash({ isConnected, channelMeta = [] }: StartupDashProps) {
+export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: StartupDashProps) {
   const { session, snapshot, available } = useStartupTelemetry(isConnected, channelMeta);
   const status = useDashStatus(isConnected);
   const fmt = useValueFormatter();
@@ -230,6 +236,8 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
   const [windowSec, setWindowSec] = useState(20);
   const [paused, setPaused] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerFilter, setPickerFilter] = useState('');
+  const [mode, setMode] = useState<'live' | 'review'>('live');
 
   useEffect(() => {
     try {
@@ -248,16 +256,35 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
     return map;
   }, [session, snapshot.present]);
 
+  /**
+   * The catalogue, adapted to the units this INI actually declares.
+   *
+   * A MegaSquirt INI that publishes coolant in °F must not be judged against a
+   * 105 °C limit: the spec's unit, range and bands are re-expressed in the INI's
+   * unit, and unit preferences then convert from there for display.
+   */
+  const specs = useMemo(() => {
+    const declaredUnits = new Map(channelMeta.map((m) => [m.name, (m.units ?? '').trim()]));
+    const out: Record<string, ChannelSpec> = { ...CHANNELS };
+    for (const [id, key] of resolvedKeys) {
+      const spec = CHANNELS[id];
+      const declared = declaredUnits.get(key);
+      if (spec && declared) out[id] = adaptSpecToUnit(spec, declared);
+    }
+    return out;
+  }, [channelMeta, resolvedKeys]);
+
   const lanes = useMemo(
-    () => buildLanes(laneIds, resolvedKeys, channelMeta, unitDisplay),
-    [laneIds, resolvedKeys, channelMeta, unitDisplay],
+    () => buildLanes(laneIds, resolvedKeys, specs, channelMeta, unitDisplay),
+    [laneIds, resolvedKeys, specs, channelMeta, unitDisplay],
   );
 
   const present = useMemo(() => new Set(snapshot.present), [snapshot.present]);
   const values = snapshot.values;
 
-  const limitKey = resolveKeys(CHANNELS.rpm.reference?.keys ?? [], available);
+  const limitKey = resolveKeys(specs.rpm.reference?.keys ?? [], available);
   const boostTargetKey = resolveKeys(['boostTarget', 'targetBoost', 'boostControlTarget'], available);
+  const boostKey = session.keyFor('boost');
   // Reference/target channels are not part of the catalogue snapshot, so they
   // are subscribed to directly (they change rarely, so a dash-level re-render
   // is cheap and keeps the derived tiles honest).
@@ -268,16 +295,19 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
   const liveRpm = useChannel(session.keyFor('rpm') ?? '__no_rpm__');
   const liveSpeed = useChannel(session.keyFor('speed') ?? '__no_speed__');
   const liveGear = useChannel(session.keyFor('gear') ?? '__no_gear__');
+  const liveTps = useChannel(session.keyFor('tps') ?? '__no_tps__');
+  const liveMap = useChannel(session.keyFor('map') ?? '__no_map__');
 
   const state = engineState({
-    rpm: values.rpm,
-    tps: values.tps,
-    map: values.map,
+    rpm: liveRpm,
+    tps: liveTps,
+    map: liveMap,
     softLimit: snapshot.flags.some((f) => f.label === 'SOFT LIMIT'),
     hardLimit: snapshot.flags.some((f) => f.label === 'HARD LIMIT'),
     launch: snapshot.flags.some((f) => f.label === 'LAUNCH'),
   });
 
+  /** Snapshot-keyed values for the derived reads (boost falls back to this). */
   const rawValues = useMemo(() => {
     const out: Record<string, number> = {};
     for (const id of snapshot.present) {
@@ -285,8 +315,12 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
       const value = snapshot.values[id];
       if (key !== undefined && value !== undefined) out[key] = value;
     }
+    // If the ECU's "boost" channel *is* the commanded target (some definitions
+    // publish only the target under a measured-sounding name), it cannot be
+    // compared against itself: fall back to the MAP − baro derivation.
+    if (boostKey !== undefined && boostKey === boostTargetKey) delete out[boostKey];
     return out;
-  }, [session, snapshot]);
+  }, [session, snapshot, boostKey, boostTargetKey]);
   const boost = useMemo(() => effectiveBoost(rawValues, available), [rawValues, available]);
 
   const preferAfr = preferences.afr;
@@ -297,8 +331,9 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
   const toDisplay = (lambda: number) => lambda * unitDisplay('λ').scale;
   const hasTarget = snapshot.fuel.target !== undefined;
 
+  const rpmSpec = specs.rpm;
   const rpmTile = useMemo<TileChannel>(() => {
-    const base = CHANNELS.rpm;
+    const base = rpmSpec;
     // A redline is only marked when the ECU publishes one — never invented.
     const bands = limitValue !== undefined && limitValue > 0
       ? [{ max: limitValue, tone: 'ok' }, { max: Number.POSITIVE_INFINITY, tone: 'crit', label: 'LIMIT' }]
@@ -312,11 +347,15 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
       max: Math.max(base.max, (limitValue ?? 0) + 500),
       bands: bands as TileChannel['bands'],
     };
-  }, [limitValue]);
+  }, [rpmSpec, limitValue]);
 
   const boostTile: TileChannel = {
-    label: boost.derived ? 'BOOST (DERIVED)' : 'BOOST',
-    title: boost.derived ? 'Manifold pressure minus barometric pressure (derived)' : 'Boost pressure from the ECU',
+    // Derived gauge pressure is labelled for exactly what it is: a tuner reading
+    // "-70 kPa" should not have to decode the word "boost".
+    label: boost.derived ? 'MAP − BARO' : 'BOOST',
+    title: boost.derived
+      ? 'Manifold pressure minus barometric pressure (derived; negative = vacuum)'
+      : 'Boost pressure from the ECU',
     unit: 'kPa',
     digits: 0,
     min: -101,
@@ -338,6 +377,11 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
   const catalogueKeys = useMemo(() => new Set(resolvedKeys.values()), [resolvedKeys]);
   const catalogueIds = CHANNEL_LIST.filter((spec) => present.has(spec.id)).map((spec) => spec.id);
   const extraChannels = channelMeta.filter((meta) => !catalogueKeys.has(meta.name) && !meta.name.startsWith('_'));
+  const matches = (text: string) => text.toLowerCase().includes(pickerFilter.trim().toLowerCase());
+  const filteredCatalogue = pickerFilter ? catalogueIds.filter((id) => matches(`${specs[id].label} ${specs[id].title}`)) : catalogueIds;
+  const filteredExtra = pickerFilter
+    ? extraChannels.filter((meta) => matches(`${meta.label ?? ''} ${meta.name} ${meta.units ?? ''}`))
+    : extraChannels;
 
   return (
     <div className="sd">
@@ -383,7 +427,7 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
 
           <div className="sd-grid2">
             {present.has('map') && (
-              <ChannelTile spec={CHANNELS.map} channelKey={session.keyFor('map') ?? 'map'} fmt={fmt} compact />
+              <ChannelTile spec={specs.map} channelKey={session.keyFor('map') ?? 'map'} fmt={fmt} compact />
             )}
             {boost.value !== undefined && (
               <StatTile
@@ -398,39 +442,35 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
 
           <SectionLabel>LOAD & AIR</SectionLabel>
           <div className="sd-grid2">
-            {present.has('tps') && <ChannelTile spec={CHANNELS.tps} channelKey={session.keyFor('tps') ?? 'tps'} fmt={fmt} compact />}
-            {present.has('pedal') && <ChannelTile spec={CHANNELS.pedal} channelKey={session.keyFor('pedal') ?? 'pedal'} fmt={fmt} compact />}
-            {present.has('baro') && <ChannelTile spec={CHANNELS.baro} channelKey={session.keyFor('baro') ?? 'baro'} fmt={fmt} compact />}
-            {present.has('iat') && <ChannelTile spec={CHANNELS.iat} channelKey={session.keyFor('iat') ?? 'iat'} fmt={fmt} compact />}
+            {present.has('tps') && <ChannelTile spec={specs.tps} channelKey={session.keyFor('tps') ?? 'tps'} fmt={fmt} compact />}
+            {present.has('pedal') && <ChannelTile spec={specs.pedal} channelKey={session.keyFor('pedal') ?? 'pedal'} fmt={fmt} compact />}
+            {present.has('iat') && <ChannelTile spec={specs.iat} channelKey={session.keyFor('iat') ?? 'iat'} fmt={fmt} compact />}
+            {present.has('baro') && (
+              <ChannelTile
+                spec={specs.baro}
+                channelKey={session.keyFor('baro') ?? 'baro'}
+                fmt={fmt}
+                compact
+                detail="reference"
+              />
+            )}
           </div>
 
           <SectionLabel>PROTECTION</SectionLabel>
           <div className="sd-grid2">
             {present.has('coolant') && (
-              <ChannelTile
-                spec={CHANNELS.coolant}
-                channelKey={session.keyFor('coolant') ?? 'coolant'}
-                fmt={fmt}
-                compact
-                detail={snapshot.extremes.maxCoolant !== undefined ? `max ${fmt.format('°C', 0, snapshot.extremes.maxCoolant).text}` : undefined}
-              />
+              <ChannelTile spec={specs.coolant} channelKey={session.keyFor('coolant') ?? 'coolant'} fmt={fmt} compact />
             )}
             {present.has('oilPressure') && (
-              <ChannelTile
-                spec={CHANNELS.oilPressure}
-                channelKey={session.keyFor('oilPressure') ?? 'oilPressure'}
-                fmt={fmt}
-                compact
-                detail={snapshot.extremes.minOilPressure !== undefined ? `min ${fmt.format('kPa', 0, snapshot.extremes.minOilPressure).text}` : undefined}
-              />
+              <ChannelTile spec={specs.oilPressure} channelKey={session.keyFor('oilPressure') ?? 'oilPressure'} fmt={fmt} compact />
             )}
-            {present.has('oilTemp') && <ChannelTile spec={CHANNELS.oilTemp} channelKey={session.keyFor('oilTemp') ?? 'oilTemp'} fmt={fmt} compact />}
-            {present.has('battery') && <ChannelTile spec={CHANNELS.battery} channelKey={session.keyFor('battery') ?? 'battery'} fmt={fmt} compact />}
+            {present.has('oilTemp') && <ChannelTile spec={specs.oilTemp} channelKey={session.keyFor('oilTemp') ?? 'oilTemp'} fmt={fmt} compact />}
+            {present.has('battery') && <ChannelTile spec={specs.battery} channelKey={session.keyFor('battery') ?? 'battery'} fmt={fmt} compact />}
           </div>
 
           {present.has('sync') && (
             <ChannelTile
-              spec={CHANNELS.sync}
+              spec={specs.sync}
               channelKey={session.keyFor('sync') ?? 'sync'}
               fmt={fmt}
               compact
@@ -442,74 +482,120 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
 
           <SectionLabel aside="THIS SESSION">EXTREMES</SectionLabel>
           <KeyValueGrid
-            rows={extremesRows(snapshot.extremes, values, fmt)}
+            rows={extremesRows(snapshot.extremes, values, specs, fmt)}
           />
         </aside>
 
         {/* --------------------------------------------------------------- scope */}
         <section className="sd__centre" aria-label="Live scope">
           <div className="sd-scope-bar">
-            <span className="sd-scope-bar__title">LIVE TRACE</span>
-            <div className="sd-scope-bar__group" role="group" aria-label="Time window">
-              {WINDOW_OPTIONS.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  className={`sd-btn${windowSec === option ? ' is-on' : ''}`}
-                  onClick={() => setWindowSec(option)}
-                  title={`Show the last ${option} seconds`}
-                >
-                  {option}s
-                </button>
-              ))}
+            <div className="sd-scope-bar__group" role="group" aria-label="Centre view">
+              <button
+                type="button"
+                className={`sd-btn${mode === 'live' ? ' is-on' : ''}`}
+                onClick={() => setMode('live')}
+                title="Live multi-channel scope"
+              >
+                LIVE
+              </button>
+              <button
+                type="button"
+                className={`sd-btn${mode === 'review' ? ' is-on' : ''}`}
+                onClick={() => setMode('review')}
+                title="Scrub the recorded session (the logger keeps recording)"
+              >
+                REVIEW
+              </button>
             </div>
-            <button
-              type="button"
-              className={`sd-btn sd-btn--wide${paused ? ' is-warn' : ''}`}
-              onClick={() => setPaused((p) => !p)}
-              title={paused ? 'Resume the live window' : 'Freeze the window on screen (the ECU keeps streaming)'}
-            >
-              {paused ? '▶ RESUME' : '⏸ PAUSE'}
-            </button>
-            <button
-              type="button"
-              className="sd-btn sd-btn--wide"
-              onClick={() => setPickerOpen((open) => !open)}
-              aria-expanded={pickerOpen}
-              title="Choose which channels are plotted"
-            >
-              CHANNELS ({lanes.length})
-            </button>
-            <span className="sd-scope-bar__spacer" />
-            <span className="sd-scope-bar__meta">
-              {snapshot.rateHz > 0 ? `${snapshot.rateHz.toFixed(1)} Hz` : 'no stream'}
-              {snapshot.intervalMs > 0 && ` · sample ${Math.round(snapshot.intervalMs)} ms`}
-              {` · store holds ${((300 * snapshot.intervalMs) / 1000).toFixed(0)} s`}
-            </span>
+            {mode === 'live' ? (
+              <>
+                <div className="sd-scope-bar__group" role="group" aria-label="Time window">
+                  {WINDOW_OPTIONS.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={`sd-btn${windowSec === option ? ' is-on' : ''}`}
+                      onClick={() => setWindowSec(option)}
+                      title={`Show the last ${option} seconds`}
+                    >
+                      {option}s
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className={`sd-btn sd-btn--wide${paused ? ' is-warn' : ''}`}
+                  onClick={() => setPaused((p) => !p)}
+                  title={paused ? 'Resume the live window' : 'Freeze the window on screen (the ECU keeps streaming)'}
+                >
+                  {paused ? <Play size={11} aria-hidden="true" /> : <Pause size={11} aria-hidden="true" />}
+                  {paused ? 'RESUME' : 'PAUSE'}
+                </button>
+                <button
+                  type="button"
+                  className="sd-btn sd-btn--wide"
+                  onClick={() => setPickerOpen((open) => !open)}
+                  aria-expanded={pickerOpen}
+                  title="Choose which channels are plotted"
+                >
+                  CHANNELS ({lanes.length})
+                </button>
+                <span className="sd-scope-bar__spacer" />
+                <span className="sd-scope-bar__meta">
+                  {snapshot.rateHz > 0 ? `${snapshot.rateHz.toFixed(1)} Hz` : 'no stream'}
+                  {snapshot.intervalMs > 0 && ` · sample ${Math.round(snapshot.intervalMs)} ms`}
+                  {` · store holds ${((300 * snapshot.intervalMs) / 1000).toFixed(0)} s`}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="sd-scope-bar__spacer" />
+                <span className="sd-scope-bar__meta">
+                  recorded session · the rails stay live
+                </span>
+              </>
+            )}
           </div>
 
           {pickerOpen && (
-            <div className="sd-picker">
+            <div
+              className="sd-picker"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setPickerOpen(false);
+              }}
+            >
+              <div className="sd-picker__filter">
+                <input
+                  type="search"
+                  autoFocus
+                  value={pickerFilter}
+                  placeholder="Filter channels…"
+                  aria-label="Filter channels"
+                  onChange={(event) => setPickerFilter(event.target.value)}
+                />
+                <span className="sd-picker__unit">{lanes.length} plotted</span>
+              </div>
               <div className="sd-picker__col">
-                <h4 className="sd-picker__title">Tuning channels</h4>
+                <h4 className="sd-picker__title">Tuning channels ({filteredCatalogue.length})</h4>
                 <div className="sd-picker__list">
-                  {catalogueIds.map((id) => (
+                  {filteredCatalogue.map((id) => (
                     <label key={id} className="sd-picker__item">
                       <input
                         type="checkbox"
                         checked={laneIds.includes(id)}
                         onChange={() => toggleLane(id)}
                       />
-                      <span>{CHANNELS[id].label}</span>
-                      <span className="sd-picker__unit">{CHANNELS[id].unit}</span>
+                      <span>{specs[id].label}</span>
+                      <span className="sd-picker__unit">{specs[id].unit}</span>
                     </label>
                   ))}
+                  {filteredCatalogue.length === 0 && <p className="sd-picker__empty">No match.</p>}
                 </div>
               </div>
               <div className="sd-picker__col">
-                <h4 className="sd-picker__title">ECU channels ({extraChannels.length})</h4>
+                <h4 className="sd-picker__title">ECU channels ({filteredExtra.length})</h4>
                 <div className="sd-picker__list">
-                  {extraChannels.slice(0, 200).map((meta) => (
+                  {filteredExtra.slice(0, 300).map((meta) => (
                     <label key={meta.name} className="sd-picker__item">
                       <input
                         type="checkbox"
@@ -521,23 +607,32 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
                     </label>
                   ))}
                   {extraChannels.length === 0 && <p className="sd-picker__empty">No additional channels in this INI.</p>}
+                  {extraChannels.length > 300 && filteredExtra.length > 300 && (
+                    <p className="sd-picker__empty">
+                      {filteredExtra.length - 300} more — type to filter.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
           )}
 
           <div className="sd-scope-host">
-            <EngineScope
-              lanes={lanes}
-              markers={snapshot.markers}
-              snapshot={snapshot}
-              intervalMs={snapshot.intervalMs}
-              windowSec={windowSec}
-              paused={paused}
-              onPausedChange={setPaused}
-              live={isConnected && snapshot.staleMs < 1000}
-              isConnected={isConnected}
-            />
+            {mode === 'live' ? (
+              <EngineScope
+                lanes={lanes}
+                markers={snapshot.markers}
+                snapshot={snapshot}
+                intervalMs={snapshot.intervalMs}
+                windowSec={windowSec}
+                paused={paused}
+                onPausedChange={setPaused}
+                live={isConnected && snapshot.staleMs < 1000}
+                isConnected={isConnected}
+              />
+            ) : (
+              <ReviewGraphLog />
+            )}
           </div>
         </section>
 
@@ -573,7 +668,7 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
           <div className="sd-grid2">
             {present.has('correction') && (
               <ChannelTile
-                spec={CHANNELS.correction}
+                spec={specs.correction}
                 channelKey={session.keyFor('correction') ?? 'correction'}
                 fmt={fmt}
                 compact
@@ -588,28 +683,24 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
                 }
               />
             )}
-            {present.has('dutyCycle') && <ChannelTile spec={CHANNELS.dutyCycle} channelKey={session.keyFor('dutyCycle') ?? 'dutyCycle'} fmt={fmt} compact />}
-            {present.has('pulseWidth') && <ChannelTile spec={CHANNELS.pulseWidth} channelKey={session.keyFor('pulseWidth') ?? 'pulseWidth'} fmt={fmt} compact />}
-            {present.has('fuelPressure') && <ChannelTile spec={CHANNELS.fuelPressure} channelKey={session.keyFor('fuelPressure') ?? 'fuelPressure'} fmt={fmt} compact />}
-            {present.has('ve') && <ChannelTile spec={CHANNELS.ve} channelKey={session.keyFor('ve') ?? 've'} fmt={fmt} compact />}
-            {present.has('flexPercent') && <ChannelTile spec={CHANNELS.flexPercent} channelKey={session.keyFor('flexPercent') ?? 'flexPercent'} fmt={fmt} compact />}
-            {present.has('fuelLevel') && <ChannelTile spec={CHANNELS.fuelLevel} channelKey={session.keyFor('fuelLevel') ?? 'fuelLevel'} fmt={fmt} compact />}
+            {present.has('dutyCycle') && <ChannelTile spec={specs.dutyCycle} channelKey={session.keyFor('dutyCycle') ?? 'dutyCycle'} fmt={fmt} compact />}
+            {present.has('pulseWidth') && <ChannelTile spec={specs.pulseWidth} channelKey={session.keyFor('pulseWidth') ?? 'pulseWidth'} fmt={fmt} compact />}
+            {present.has('fuelPressure') && <ChannelTile spec={specs.fuelPressure} channelKey={session.keyFor('fuelPressure') ?? 'fuelPressure'} fmt={fmt} compact />}
+            {present.has('ve') && <ChannelTile spec={specs.ve} channelKey={session.keyFor('ve') ?? 've'} fmt={fmt} compact />}
+            {present.has('flexPercent') && values.flexPercent !== undefined && values.flexPercent >= 2 && (
+              <ChannelTile spec={specs.flexPercent} channelKey={session.keyFor('flexPercent') ?? 'flexPercent'} fmt={fmt} compact />
+            )}
+            {present.has('fuelLevel') && <ChannelTile spec={specs.fuelLevel} channelKey={session.keyFor('fuelLevel') ?? 'fuelLevel'} fmt={fmt} compact />}
           </div>
 
           <SectionLabel>COMBUSTION</SectionLabel>
           <div className="sd-grid2">
-            {present.has('advance') && <ChannelTile spec={CHANNELS.advance} channelKey={session.keyFor('advance') ?? 'advance'} fmt={fmt} compact />}
-            {present.has('dwell') && <ChannelTile spec={CHANNELS.dwell} channelKey={session.keyFor('dwell') ?? 'dwell'} fmt={fmt} compact />}
-            {present.has('knock') && <ChannelTile spec={CHANNELS.knock} channelKey={session.keyFor('knock') ?? 'knock'} fmt={fmt} compact />}
-            {present.has('knockRetard') && <ChannelTile spec={CHANNELS.knockRetard} channelKey={session.keyFor('knockRetard') ?? 'knockRetard'} fmt={fmt} compact />}
+            {present.has('advance') && <ChannelTile spec={specs.advance} channelKey={session.keyFor('advance') ?? 'advance'} fmt={fmt} compact />}
+            {present.has('dwell') && <ChannelTile spec={specs.dwell} channelKey={session.keyFor('dwell') ?? 'dwell'} fmt={fmt} compact />}
+            {present.has('knock') && <ChannelTile spec={specs.knock} channelKey={session.keyFor('knock') ?? 'knock'} fmt={fmt} compact />}
+            {present.has('knockRetard') && <ChannelTile spec={specs.knockRetard} channelKey={session.keyFor('knockRetard') ?? 'knockRetard'} fmt={fmt} compact />}
             {present.has('egt') && (
-              <ChannelTile
-                spec={CHANNELS.egt}
-                channelKey={session.keyFor('egt') ?? 'egt'}
-                fmt={fmt}
-                compact
-                detail={snapshot.extremes.maxEgt !== undefined ? `max ${fmt.format('°C', 0, snapshot.extremes.maxEgt).text}` : undefined}
-              />
+              <ChannelTile spec={specs.egt} channelKey={session.keyFor('egt') ?? 'egt'} fmt={fmt} compact />
             )}
           </div>
 
@@ -625,50 +716,6 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
               ))
             )}
           </div>
-
-          <SectionLabel>SESSION & LINK</SectionLabel>
-          <KeyValueGrid
-            rows={[
-              {
-                label: 'Logger',
-                value: status.logging.isRecording
-                  ? `REC ${formatClock(status.logging.durationMs)}`
-                  : isConnected
-                    ? 'idle'
-                    : 'offline',
-                tone: status.logging.isRecording ? 'crit' : 'dim',
-                title: status.logging.streamPath ?? undefined,
-              },
-              {
-                label: 'Logged',
-                value: status.logging.isRecording
-                  ? `${status.logging.channelCount} ch · ${status.logging.entryCount.toLocaleString()} samples`
-                  : '—',
-                title: status.logging.streamPath ?? undefined,
-              },
-              {
-                label: 'Stream',
-                value: snapshot.rateHz > 0 ? `${snapshot.rateHz.toFixed(1)} Hz · ${Math.round(snapshot.intervalMs)} ms` : 'no data',
-                tone: snapshot.rateHz > 0 ? undefined : 'dim',
-              },
-              {
-                label: 'Freshness',
-                value: Number.isFinite(snapshot.staleMs)
-                  ? `${(snapshot.staleMs / 1000).toFixed(1)} s ago`
-                  : '—',
-                tone: snapshot.staleMs > 1000 ? 'warn' : undefined,
-              },
-              {
-                label: 'History',
-                value: `${((300 * snapshot.intervalMs) / 1000).toFixed(0)} s buffered`,
-                title: 'The realtime store keeps a fixed-size history buffer per channel',
-              },
-              {
-                label: 'Frames',
-                value: snapshot.samples.toLocaleString(),
-              },
-            ]}
-          />
         </aside>
       </div>
 
@@ -676,8 +723,7 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
       <div className="sd__strip">
         <EventsPanel
           events={snapshot.events}
-          monitors={session.monitorCount}
-          breakdown={session.monitorBreakdown}
+          armed={session.armedBreakdown}
           fmt={fmt}
           now={Date.now()}
         />        <FuelingPanel
@@ -691,7 +737,12 @@ export default function StartupDash({ isConnected, channelMeta = [] }: StartupDa
           toDisplay={toDisplay}
           now={Date.now()}
         />
-        <CoverageMap coverage={snapshot.coverage} values={values} fmt={fmt} />
+        <CoverageMap
+          coverage={snapshot.coverage}
+          rpm={liveRpm}
+          map={liveMap}
+          fmt={fmt}
+        />
       </div>
     </div>
   );

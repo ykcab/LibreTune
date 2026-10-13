@@ -58,12 +58,13 @@ canvas, because it makes promises a generic gauge cannot keep.
 | **Engine rail** | Derived engine phase (off / cranking / idle / over-run / running / load, with limiter and launch flags winning over the derivation), engine speed with the ECU's rev limit marked when it publishes one, MAP and boost (derived from MAP − baro when the ECU has no boost channel), throttle, pedal, baro, intake air temperature, coolant, oil pressure, oil temperature, battery, trigger sync, and this session's extremes. |
 | **Live trace** | A multi-channel oscilloscope. Every lane prints the range it is drawing, the current value and its unit, and the threshold zones that apply. |
 | **Fuel rail** | Measured fuel ratio against the commanded target with a rich/lean error meter, then fuel trim, injector duty, pulse width, fuel pressure, VE, ethanol content, fuel level, ignition advance, dwell, knock, knock retard and EGT, followed by the ECU's own state flags. |
-| **Analysis strip** | Detected events (grouped per rule, with counts, thresholds and ages), fuelling accuracy against the commanded ratio over load cells, and the operating-envelope dwell map (rpm × MAP) for this session. |
+| **Analysis strip** | Detected events (grouped per rule, with counts, thresholds and ages), fuelling accuracy against the commanded ratio over load cells, and the operating-envelope map (rpm × MAP) for this session — cell tint = mean fuelling error (amber lean, blue rich), cell opacity = dwell, with the worst cell named underneath. |
 
 ### Scope controls
 
 | Control | Effect |
 |---------|--------|
+| **Live / Review** | Switches the centre between the live multi-channel scope and a scrub-through of the recorded session (the logger keeps recording either way). Live-only controls are hidden in Review, because they would do nothing there. |
 | **5 / 10 / 20 / 30 s** | Time window. Bounded by the realtime buffer (~300 samples). |
 | **Pause / Resume** | Freezes the exact window on screen and reports how far behind live it is. The ECU keeps streaming. |
 | **Channels** | Adds or removes lanes. The list contains the curated tuning channels plus every channel the loaded INI publishes. |
@@ -75,15 +76,22 @@ canvas, because it makes promises a generic gauge cannot keep.
 - Show a channel the loaded INI does not publish. A Speeduino four-cylinder and a
   rusEFI V8 do not get the same face, and empty tiles are never drawn.
 - Invent a limit. Threshold bands are documented engine-protection numbers
-  (coolant, IAT, oil pressure, battery, EGT, injector duty, fuel trim, knock);
-  manifold pressure, boost and ignition advance have **no** invented limits — a
-  boost ceiling only appears when the ECU publishes a boost target.
+  (coolant, IAT, oil pressure, battery, EGT, injector duty, fuel trim, knock) and
+  every one of them is **printed under its tile** as a number; manifold pressure,
+  boost and ignition advance have no invented limits — a boost ceiling only
+  appears when the ECU publishes a boost target.
 - Treat a dead sensor as a reading. On channels where a raw zero is physically
-  impossible (oil pressure, fuel pressure, coolant, lambda, battery) a zero
+  impossible (oil and fuel pressure, λ/AFR, battery, dwell) a zero shows "—",
   breaks the trace and raises a sensor-dropout event instead of being plotted.
+  A temperature of 0 °C is a reading, not a fault.
 - Raise an alarm on a stopped engine: limit rules only arm while the engine is
-  running, so a parked car cannot produce oil-pressure or battery warnings.
-- Compare against a target unless the ECU publishes one.
+  running, so a parked car cannot produce oil-pressure or battery warnings. The
+  events panel reports how many rules are actually *armed* for your definition
+  rather than how many exist.
+- Compare against a target unless the ECU publishes one, or claim "on target"
+  while a large excursion sits in the session's worst case.
+- Show a light-mode screen where the labels are unreadable: the component carries
+  its own contrast-safe tokens for the light theme.
 
 ### Units
 

@@ -80,9 +80,8 @@ function describe(event: SessionEvent, fmt: ValueFormatter): { title: string; de
 
 export interface EventsPanelProps {
   events: SessionEvent[];
-  monitors: number;
-  /** Rule counts per kind — shown when nothing has been detected yet. */
-  breakdown: Record<EventKind, number>;
+  /** Rules that can actually fire for this definition (channel resolved, rpm present). */
+  armed: { total: number; byKind: Record<EventKind, number>; gated: boolean };
   fmt: ValueFormatter;
   now: number;
 }
@@ -96,7 +95,7 @@ interface EventGroup {
   active: boolean;
 }
 
-export const EventsPanel = memo(function EventsPanel({ events, monitors, breakdown, fmt, now }: EventsPanelProps) {
+export const EventsPanel = memo(function EventsPanel({ events, armed, fmt, now }: EventsPanelProps) {
   const groups = useMemo(() => {
     const byRule = new Map<string, EventGroup>();
     // Newest first (the session keeps `events` in that order).
@@ -133,33 +132,40 @@ export const EventsPanel = memo(function EventsPanel({ events, monitors, breakdo
       <header className="sd-panel__head">
         <h3 className="sd-panel__title">EVENTS</h3>
         <span className="sd-panel__meta">
-          {activeCount > 0 ? `${activeCount} ACTIVE` : `${monitors} RULES MONITORED`}
+          {activeCount > 0
+            ? `${activeCount} ACTIVE`
+            : armed.gated
+              ? 'NO RPM CHANNEL'
+              : `${armed.total} RULES ARMED`}
         </span>
       </header>
       {visible.length === 0 ? (
         <div className="sd-panel__empty">
           <p>Nothing detected this session.</p>
-          <ul className="sd-rules">
-            <li>
-              <b>{breakdown.limit}</b> limit{breakdown.limit === 1 ? '' : 's'}
-            </li>
-            <li>
-              <b>{breakdown.dropout}</b> sensor dropout channels
-            </li>
-            <li>
-              <b>{breakdown.fueling}</b> fuelling error rules
-            </li>
-            <li>
-              <b>{breakdown.sync}</b> trigger sync
-            </li>
-            <li>
-              <b>{breakdown.boost}</b> overboost
-            </li>
-          </ul>
-          <p className="sd-panel__foot">
-            Limits only arm while the engine is running, so a stopped engine can never raise a
-            false oil-pressure or battery event.
-          </p>
+          {armed.gated ? (
+            <p className="sd-panel__foot">
+              This definition publishes no engine-speed channel, so the engine-gated rules (limits,
+              sensor dropouts) stay disarmed.
+            </p>
+          ) : (
+            <ul className="sd-rules">
+              <li>
+                <b>{armed.byKind.limit}</b> limit{armed.byKind.limit === 1 ? '' : 's'}
+              </li>
+              <li>
+                <b>{armed.byKind.dropout}</b> sensor channels
+              </li>
+              <li>
+                <b>{armed.byKind.fueling}</b> fuelling rules
+              </li>
+              <li>
+                <b>{armed.byKind.sync}</b> sync
+              </li>
+              <li>
+                <b>{armed.byKind.boost}</b> overboost
+              </li>
+            </ul>
+          )}
         </div>
       ) : (
         <ul className="sd-events">
@@ -225,26 +231,41 @@ export const FuelingPanel = memo(function FuelingPanel({
 }: FuelingPanelProps) {
   const errorPct = fuel.error !== null ? fuel.error * 100 : null;
   const meanPct = stats.meanError !== null ? stats.meanError * 100 : null;
+  const worstLeanPct = stats.worstLean !== null ? stats.worstLean.error * 100 : null;
+  const worstRichPct = stats.worstRich !== null ? stats.worstRich.error * 100 : null;
+  const worstPct = Math.max(Math.abs(worstLeanPct ?? 0), Math.abs(worstRichPct ?? 0));
 
-  // The headline is the *session* verdict over load cells; the hero on the right
-  // rail carries the instantaneous error. Keeping them separate is the only way
-  // both numbers can be true at once.
-  const headline = meanPct === null
-    ? errorPct === null
-      ? { text: 'NO COMPARISON AVAILABLE', tone: 'dim' as const }
-      : {
-          text: Math.abs(errorPct) <= 4 ? 'ON TARGET' : errorPct > 0 ? `LEAN ${errorPct.toFixed(1)} %` : `RICH ${Math.abs(errorPct).toFixed(1)} %`,
-          tone: Math.abs(errorPct) <= 4 ? ('ok' as const) : errorPct > 0 ? ('warn' as const) : ('info' as const),
-        }
-    : {
-        text:
-          Math.abs(meanPct) <= 4
-            ? `ON TARGET · MEAN ${meanPct >= 0 ? '+' : ''}${meanPct.toFixed(1)} %`
-            : meanPct > 0
-              ? `LEAN ${meanPct.toFixed(1)} % MEAN`
-              : `RICH ${Math.abs(meanPct).toFixed(1)} % MEAN`,
-        tone: Math.abs(meanPct) <= 4 ? ('ok' as const) : meanPct > 0 ? ('warn' as const) : ('info' as const),
+  /**
+   * The headline must not read green over a dangerous tail: a session whose mean
+   * is on target but whose worst excursion is 14 % lean is not "on target".
+   */
+  const headline = (() => {
+    if (meanPct === null) {
+      if (errorPct === null) return { text: 'NO COMPARISON AVAILABLE', tone: 'dim' as const };
+      const off = Math.abs(errorPct) > 4;
+      return {
+        text: !off ? 'ON TARGET' : errorPct > 0 ? `LEAN ${errorPct.toFixed(1)} %` : `RICH ${Math.abs(errorPct).toFixed(1)} %`,
+        tone: !off ? ('ok' as const) : errorPct > 0 ? ('warn' as const) : ('info' as const),
       };
+    }
+    const leanSide = (worstLeanPct ?? 0) > Math.abs(worstRichPct ?? 0);
+    if (worstPct > 10) {
+      return {
+        text: `${leanSide ? 'LEAN' : 'RICH'} — WORST ${worstPct.toFixed(1)} %`,
+        tone: leanSide ? ('warn' as const) : ('info' as const),
+      };
+    }
+    if (Math.abs(meanPct) <= 4) {
+      return {
+        text: worstPct > 4 ? `ON TARGET · WORST ${worstPct.toFixed(1)} %` : `ON TARGET · MEAN ${meanPct >= 0 ? '+' : ''}${meanPct.toFixed(1)} %`,
+        tone: 'ok' as const,
+      };
+    }
+    return {
+      text: meanPct > 0 ? `LEAN ${meanPct.toFixed(1)} % MEAN` : `RICH ${Math.abs(meanPct).toFixed(1)} % MEAN`,
+      tone: meanPct > 0 ? ('warn' as const) : ('info' as const),
+    };
+  })();
   const spreadPct = stats.meanAbsError !== null ? Math.abs(stats.meanAbsError * 100) : null;
 
   return (
@@ -311,7 +332,8 @@ export const FuelingPanel = memo(function FuelingPanel({
             </span>
           </div>
           <p className="sd-panel__foot">
-            Collected above 100 kPa and 1500 rpm only — the cells where fuelling errors cost engines.
+            Load-cell statistics: samples above 100 kPa and 1500 rpm only. Behaviour off-boost or at
+            idle is not judged here.
           </p>
         </>
       )}
@@ -323,16 +345,26 @@ export const FuelingPanel = memo(function FuelingPanel({
 
 export interface CoverageMapProps {
   coverage: CoverageStats;
-  values: Record<string, number>;
+  /** Live operating point (from the store, not the throttled snapshot). */
+  rpm: number | undefined;
+  map: number | undefined;
   fmt: ValueFormatter;
 }
 
 /**
- * Operating-envelope dwell map: rpm (x) × manifold pressure (y), one cell per
- * 500 rpm × 20 kPa. Shows where the engine has actually been this session — the
- * coverage question a tuner asks before trusting a log.
+ * Operating envelope: rpm (x) × manifold pressure (y), one cell per
+ * 500 rpm × 20 kPa.
+ *
+ * Two signals share the grid, because they are the two questions a tuner has
+ * about coverage:
+ *  - **where the engine has been** — cell opacity follows dwell;
+ *  - **how the tune behaved there** — cell hue follows the mean fuelling error
+ *    against the commanded ratio (⚠ amber = lean, blue = rich, no tint = never
+ *    under load, so no judgement).
+ * The worst cells are named underneath with their operating point, which is what
+ * makes the map actionable instead of decorative.
  */
-export const CoverageMap = memo(function CoverageMap({ coverage, values, fmt }: CoverageMapProps) {
+export const CoverageMap = memo(function CoverageMap({ coverage, rpm, map, fmt }: CoverageMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -357,9 +389,11 @@ export const CoverageMap = memo(function CoverageMap({ coverage, values, fmt }: 
     const css = getComputedStyle(canvas);
     const text = css.getPropertyValue('--sd-text').trim() || '#ddd';
     const dim = css.getPropertyValue('--sd-dim').trim() || '#888';
-    const accent = css.getPropertyValue('--sd-accent').trim() || '#4f9cf9';
+    const dwellColor = css.getPropertyValue('--sd-accent').trim() || '#4f9cf9';
+    const leanColor = css.getPropertyValue('--sd-warn').trim() || '#ff9800';
+    const richColor = css.getPropertyValue('--sd-info').trim() || '#2196f3';
 
-    const padL = 30;
+    const padL = 32;
     const padB = 14;
     const padT = 4;
     const padR = 4;
@@ -368,18 +402,25 @@ export const CoverageMap = memo(function CoverageMap({ coverage, values, fmt }: 
     const cellW = plotW / coverage.rpmBins;
     const cellH = plotH / coverage.mapBins;
 
-    // Cells: colour intensity = dwell share of the busiest cell.
     for (let mb = 0; mb < coverage.mapBins; mb++) {
       for (let rb = 0; rb < coverage.rpmBins; rb++) {
-        const count = coverage.counts[mb * coverage.rpmBins + rb];
+        const index = mb * coverage.rpmBins + rb;
+        const count = coverage.counts[index];
+        if (count === 0) continue;
         const x = padL + rb * cellW;
         // MAP increases upward: row 0 = lowest pressure at the bottom.
         const y = padT + plotH - (mb + 1) * cellH;
-        if (count > 0) {
-          const share = coverage.peak > 0 ? count / coverage.peak : 0;
-          ctx.fillStyle = withAlpha(accent, 0.16 + 0.72 * Math.pow(share, 0.45));
-          ctx.fillRect(x, y, cellW, cellH);
+        const dwell = coverage.peak > 0 ? count / coverage.peak : 0;
+        const alpha = 0.12 + 0.55 * Math.pow(dwell, 0.45);
+        const error = coverage.errorMean[index];
+        if (error === null) {
+          ctx.fillStyle = withAlpha(dwellColor, alpha * 0.7);
+        } else {
+          // Saturate at ±10 % error: beyond that, "very lean/rich" is enough.
+          const weight = Math.min(1, Math.abs(error) / 0.1);
+          ctx.fillStyle = withAlpha(error > 0 ? leanColor : richColor, alpha * (0.45 + 0.55 * weight));
         }
+        ctx.fillRect(x, y, cellW, cellH);
       }
     }
 
@@ -416,18 +457,17 @@ export const CoverageMap = memo(function CoverageMap({ coverage, values, fmt }: 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     for (let rb = 0; rb <= coverage.rpmBins; rb += 4) {
-      const rpm = rb * coverage.rpmStep;
-      ctx.fillText(`${(rpm / 1000).toFixed(0)}k`, padL + rb * cellW, padT + plotH + 3);
+      const value = rb * coverage.rpmStep;
+      ctx.fillText(`${(value / 1000).toFixed(0)}k`, padL + rb * cellW, padT + plotH + 3);
     }
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     for (let mb = 0; mb <= coverage.mapBins; mb += 5) {
-      const map = mb * coverage.mapStep;
-      const label = fmt.boundary('kPa', 0, map);
+      const label = fmt.boundary('kPa', 0, mb * coverage.mapStep);
       ctx.fillText(label.text, padL - 4, padT + plotH - mb * cellH);
     }
     ctx.save();
-    ctx.translate(8, padT + plotH / 2);
+    ctx.translate(9, padT + plotH / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center';
     ctx.fillStyle = dim;
@@ -435,9 +475,11 @@ export const CoverageMap = memo(function CoverageMap({ coverage, values, fmt }: 
     ctx.restore();
   }, [coverage, fmt]);
 
-  const rpm = values.rpm;
-  const map = values.map;
   const coverageShare = coverage.total > 0 ? (coverage.visited / coverage.total) * 100 : 0;
+  const worst = coverage.worstLeanCell;
+  const worstRich = coverage.worstRichCell;
+  const point = (cell: { rpm: number; map: number }) =>
+    `${cell.rpm} rpm · ${fmt.boundary('kPa', 0, cell.map).text} ${fmt.boundary('kPa', 0, coverage.mapStep).unit}`;
 
   return (
     <section className="sd-panel" aria-label="Operating envelope coverage">
@@ -453,8 +495,22 @@ export const CoverageMap = memo(function CoverageMap({ coverage, values, fmt }: 
       <p className="sd-panel__foot">
         {rpm === undefined || map === undefined
           ? 'Waiting for rpm and manifold-pressure channels.'
-          : `Now: ${fmt.format('', 0, rpm).text} rpm · ${fmt.format('kPa', 0, map).text} ${fmt.boundary('kPa', 0, map).unit} · dwell map of this session.`}
+          : `Now ${fmt.format('', 0, rpm).text} rpm · ${fmt.format('kPa', 0, map).text} ${fmt.boundary('kPa', 0, map).unit} — tint = mean fuelling error (amber lean, blue rich), opacity = dwell.`}
       </p>
+      {(worst || worstRich) && (
+        <ul className="sd-cells">
+          {worst && worst.error > 0.02 && (
+            <li className="sd-tone-warn">
+              worst lean {fmt.boundary('', 1, worst.error * 100).text} % at {point(worst)}
+            </li>
+          )}
+          {worstRich && worstRich.error < -0.02 && (
+            <li className="sd-tone-info">
+              worst rich {fmt.boundary('', 1, worstRich.error * 100).text} % at {point(worstRich)}
+            </li>
+          )}
+        </ul>
+      )}
     </section>
   );
 });

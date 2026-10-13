@@ -77,14 +77,30 @@ describe('gap semantics', () => {
     expect(isGap(CHANNELS.oilPressure, 0)).toBe(true);
     expect(isGap(CHANNELS.lambda, 0)).toBe(true);
     expect(isGap(CHANNELS.battery, 0)).toBe(true);
+    expect(isGap(CHANNELS.fuelPressure, 0)).toBe(true);
     // ...but not on channels where 0 is a legitimate reading.
     expect(isGap(CHANNELS.rpm, 0)).toBe(false);
     expect(isGap(CHANNELS.tps, 0)).toBe(false);
     expect(isGap(CHANNELS.advance, 0)).toBe(false);
   });
 
+  it('never flags a temperature at 0 °C as a dead sensor', () => {
+    // 0 °C is an ordinary winter reading: the flag would manufacture a false
+    // dropout event and break the trace on a healthy sensor.
+    for (const id of ['coolant', 'iat', 'oilTemp', 'egt']) {
+      expect(isGap(CHANNELS[id], 0)).toBe(false);
+      expect(toneFor(CHANNELS[id], 0)).not.toBe('dim');
+    }
+  });
+
+  it('does not claim trigger sync from a MAP-validity bit', () => {
+    // `isMapValid` exists in several INIs and is NOT a crank/cam trigger state.
+    expect(CHANNELS.sync.keys).not.toContain('isMapValid');
+  });
+
   it('reports a zero-as-missing channel as dim rather than alarming', () => {
-    expect(toneFor(CHANNELS.coolant, 0)).toBe('dim');
+    expect(toneFor(CHANNELS.oilPressure, 0)).toBe('dim');
+    expect(toneFor(CHANNELS.lambda, 0)).toBe('dim');
   });
 });
 

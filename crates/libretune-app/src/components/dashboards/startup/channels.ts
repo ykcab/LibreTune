@@ -47,6 +47,8 @@ export interface ChannelSpec {
   max: number;
   /** Ascending threshold bands. Omitted when the channel has no universal limit. */
   bands?: Band[];
+  /** False for on/off channels, where a bar between two numbers says nothing. */
+  meter?: boolean;
   /** True when a raw 0 means "not published right now" rather than a real reading. */
   zeroIsGap?: boolean;
   /** Trace accent CSS variable (dark/light aware, declared in StartupDash.css). */
@@ -385,7 +387,7 @@ export const CHANNELS: Record<string, ChannelSpec> = {
     max: 140,
     // 105 °C = fan/no-headroom, 115 °C = stop-and-investigate.
     bands: [ok(105, 'FAN'), warn(115, 'HOT'), crit(INF, 'CRITICAL')],
-    zeroIsGap: true,
+    // NOT a zero-is-gap channel: 0 °C is an ordinary winter reading.
     group: 'thermal',
     color: '--sd-trace-clt',
   },
@@ -400,7 +402,6 @@ export const CHANNELS: Record<string, ChannelSpec> = {
     max: 100,
     // Charge temperature is a power limiter: 60 °C is hot, 80 °C is pulling timing.
     bands: [ok(60, 'COOL'), warn(80, 'HEAT-SOAK'), crit(INF, 'VERY HOT')],
-    zeroIsGap: true,
     group: 'thermal',
     color: '--sd-trace-iat',
   },
@@ -414,7 +415,6 @@ export const CHANNELS: Record<string, ChannelSpec> = {
     min: 0,
     max: 160,
     bands: [ok(120, 'NOMINAL'), warn(135, 'HOT'), crit(INF, 'CRITICAL')],
-    zeroIsGap: true,
     group: 'thermal',
   },
   oilPressure: {
@@ -442,7 +442,6 @@ export const CHANNELS: Record<string, ChannelSpec> = {
     min: 0,
     max: 1100,
     bands: [ok(850, 'NOMINAL'), warn(950, 'HOT'), crit(INF, 'CRITICAL')],
-    zeroIsGap: true,
     group: 'thermal',
     color: '--sd-trace-egt',
   },
@@ -467,14 +466,16 @@ export const CHANNELS: Record<string, ChannelSpec> = {
   /* ------------------------------------------------------- supporting data */
   sync: {
     id: 'sync',
-    keys: ['sync', 'engineSync', 'hasSync', 'triggerSync', 'isMapValid'],
+    keys: ['sync', 'engineSync', 'hasSync', 'triggerSync'],
     label: 'SYNC',
-    title: 'Trigger sync',
+    title: 'Crank/cam trigger sync',
     unit: '',
     digits: 0,
     min: 0,
     max: 1,
     bands: [crit(0.5, 'NO SYNC'), ok(INF)], // never evaluated while stopped
+    // On/off state: the text ("trigger locked") carries it, not a half-red bar.
+    meter: false,
     group: 'engine',
   },
 };
@@ -508,6 +509,114 @@ export const FLAGS: FlagSpec[] = [
   { id: 'closedLoop', keys: ['closedLoop', 'isClosedLoop', 'lambdaClosedLoop'], label: 'CLOSED LOOP', tone: 'ok', title: 'Closed-loop fuelling active' },
   { id: 'wmi', keys: ['wmiArmed'], label: 'WMI ARMED', tone: 'info', title: 'Water/meth injection armed' },
 ];
+
+/* ------------------------------------------------------- source-unit handling */
+
+/**
+ * Unit families whose members are inter-convertible by an affine transform.
+ *
+ * The catalogue declares the unit the *canonical* channel is published in, but
+ * an INI is free to publish the same channel in a different member of the family
+ * (MegaSquirt INIs publish coolant in °F, some publish fuel pressure in PSI).
+ * `adaptSpecToUnit` re-expresses a spec — value unit, display range **and
+ * threshold bands** — in whatever unit the loaded INI actually declares, so a
+ * limit can never be judged against the wrong scale.
+ */
+export type UnitFamily = 'temperature' | 'pressure' | 'speed' | 'ratio' | 'none';
+
+export function unitFamily(unit: string): UnitFamily {
+  const u = unit.toLowerCase().replace(/\s+/g, '');
+  if (!u) return 'none';
+  if (u.includes('°c') || u === 'c' || u.includes('degc') || u.includes('celsius')) return 'temperature';
+  if (u.includes('°f') || u === 'f' || u.includes('degf') || u.includes('fahrenheit')) return 'temperature';
+  if (u === 'k' || u.includes('kelvin')) return 'temperature';
+  if (u.includes('kpa') || u.includes('psi') || u.includes('bar') || u.includes('inhg')) return 'pressure';
+  if (u.includes('km/h') || u.includes('kph') || u.includes('kmh') || u.includes('mph')) return 'speed';
+  if (u.includes('λ') || u.includes('lambda') || u.includes('afr')) return 'ratio';
+  return 'none';
+}
+
+/** Affine transform between two units of the same family, or null if unrelated. */
+export function unitTransform(from: string, to: string): { scale: number; offset: number } | null {
+  const family = unitFamily(from);
+  if (family === 'none' || family !== unitFamily(to)) return null;
+  const identity = { scale: 1, offset: 0 };
+  const norm = (u: string) => u.toLowerCase().replace(/\s+/g, '');
+  if (norm(from) === norm(to)) return identity;
+
+  if (family === 'temperature') {
+    // toC: value → °C, fromC: °C → value
+    const toC: Record<string, { scale: number; offset: number }> = {
+      c: { scale: 1, offset: 0 },
+      degc: { scale: 1, offset: 0 },
+      '°c': { scale: 1, offset: 0 },
+      celsius: { scale: 1, offset: 0 },
+      f: { scale: 5 / 9, offset: -32 * (5 / 9) },
+      degf: { scale: 5 / 9, offset: -32 * (5 / 9) },
+      '°f': { scale: 5 / 9, offset: -32 * (5 / 9) },
+      fahrenheit: { scale: 5 / 9, offset: -32 * (5 / 9) },
+      k: { scale: 1, offset: -273.15 },
+      kelvin: { scale: 1, offset: -273.15 },
+    };
+    const fromC: Record<string, { scale: number; offset: number }> = {
+      c: { scale: 1, offset: 0 },
+      degc: { scale: 1, offset: 0 },
+      '°c': { scale: 1, offset: 0 },
+      celsius: { scale: 1, offset: 0 },
+      f: { scale: 9 / 5, offset: 32 },
+      degf: { scale: 9 / 5, offset: 32 },
+      '°f': { scale: 9 / 5, offset: 32 },
+      fahrenheit: { scale: 9 / 5, offset: 32 },
+      k: { scale: 1, offset: 273.15 },
+      kelvin: { scale: 1, offset: 273.15 },
+    };
+    const a = toC[norm(from)];
+    const b = fromC[norm(to)];
+    if (!a || !b) return null;
+    return { scale: a.scale * b.scale, offset: a.offset * b.scale + b.offset };
+  }
+
+  if (family === 'pressure') {
+    // Factor into kPa.
+    const toKpa: Record<string, number> = { kpa: 1, psi: 6.89476, bar: 100, inhg: 3.38639 };
+    const a = toKpa[norm(from)];
+    const b = toKpa[norm(to)];
+    if (!a || !b) return null;
+    return { scale: a / b, offset: 0 };
+  }
+
+  if (family === 'speed') {
+    const toKmh: Record<string, number> = { 'km/h': 1, kmh: 1, kph: 1, mph: 1.609344 };
+    const a = toKmh[norm(from)];
+    const b = toKmh[norm(to)];
+    if (!a || !b) return null;
+    return { scale: a / b, offset: 0 };
+  }
+
+  // λ ↔ AFR is a ratio, not an affine transform of the same family member, and
+  // depends on the fuel's stoichiometry — handled by `fuelRatio` instead.
+  return null;
+}
+
+/**
+ * Re-express a catalogue spec in the unit the loaded INI declares for the
+ * channel. Returns the spec untouched when the unit is unrelated or unknown.
+ */
+export function adaptSpecToUnit(spec: ChannelSpec, iniUnit: string): ChannelSpec {
+  const declared = iniUnit.trim();
+  if (!declared || declared === spec.unit) return spec;
+  const transform = unitTransform(spec.unit, declared);
+  if (!transform) return spec;
+  const apply = (value: number) =>
+    Number.isFinite(value) ? value * transform.scale + transform.offset : value;
+  return {
+    ...spec,
+    unit: declared,
+    min: apply(spec.min),
+    max: apply(spec.max),
+    bands: spec.bands?.map((band) => ({ ...band, max: apply(band.max) })),
+  };
+}
 
 /* ------------------------------------------------------------------ helpers */
 

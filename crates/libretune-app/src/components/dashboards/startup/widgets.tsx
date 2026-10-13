@@ -7,15 +7,15 @@
  * reading, and render:
  *
  * - every number with its unit,
- * - every threshold as a labelled tick,
+ * - every threshold as a **labelled** tick (a bare hairline tells nobody anything),
  * - every state as text (colour reinforces, it never carries the meaning).
  *
- * The instrument used throughout is the bullet meter (value + qualitative
- * zones + a marked threshold), which stays readable at 20 px tall and says
- * "how close to the limit" without a needle to hunt for.
+ * The instrument used throughout is the bullet meter (value + qualitative zones
+ * + printed thresholds), which stays readable at 20 px tall and says "how close
+ * to the limit" without a needle to hunt for.
  */
 import { memo, type CSSProperties, type ReactNode } from 'react';
-import type { Band } from './channels';
+import { toneFor, type Band } from './channels';
 import type { ValueFormatter } from './useStartupTelemetry';
 
 /** A channel as a tile needs it: label, unit, range, thresholds. */
@@ -27,11 +27,19 @@ export interface TileChannel {
   min: number;
   max: number;
   bands?: Band[];
+  /** False for on/off channels, where a bar between two numbers says nothing. */
+  meter?: boolean;
 }
 
 export type TileTone = 'ok' | 'warn' | 'crit' | 'info' | 'dim' | 'neutral';
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/** Tone for a value, using the catalogue's own rule (including gap semantics). */
+function tileTone(channel: TileChannel, value: number | undefined): TileTone {
+  const tone = toneFor({ ...channel, id: channel.label, keys: [], group: 'engine' }, value);
+  return tone === 'ok' ? 'neutral' : (tone as TileTone);
+}
 
 /* --------------------------------------------------------------------- meter */
 
@@ -39,20 +47,21 @@ interface MeterProps {
   channel: TileChannel;
   value: number | undefined;
   fmt: ValueFormatter;
-  /** Show the boundary labels under the track (default true). */
+  /** Show every boundary label (default) or only the tightest warn/crit edge. */
   showTicks?: boolean;
   compact?: boolean;
 }
 
 /**
- * Bullet meter: qualitative zones, the value marker, and labelled boundaries.
+ * Bullet meter: qualitative zones, the value marker, and printed boundaries.
  * Boundaries are printed so a colour-blind user reads the same information a
- * sighted user does.
+ * sighted user does, and so a bare hairline never has to be guessed at.
  */
 export const Meter = memo(function Meter({ channel, value, fmt, showTicks = true, compact = false }: MeterProps) {
   const span = channel.max - channel.min || 1;
   const pct = (v: number) => clamp01((v - channel.min) / span) * 100;
   const bands = channel.bands ?? [];
+  const usable = value !== undefined && Number.isFinite(value);
 
   // Zone segments (ascending bands → left-to-right tints).
   const segments: { left: number; width: number; tone: TileTone }[] = [];
@@ -69,34 +78,38 @@ export const Meter = memo(function Meter({ channel, value, fmt, showTicks = true
   // marked the same way, and duplicates keep the more severe tone).
   const tickMap = new Map<number, { tone: TileTone; label: string }>();
   const severityRank: Record<string, number> = { crit: 2, warn: 1 };
-  for (const band of bands) {
-    if (band.tone !== 'warn' && band.tone !== 'crit') continue;
+  bands.forEach((band, index) => {
+    if (band.tone !== 'warn' && band.tone !== 'crit') return;
     const edges: number[] = [];
     if (Number.isFinite(band.max)) edges.push(band.max);
-    const previousMax = bands[Math.max(0, bands.indexOf(band) - 1)]?.max;
+    const previousMax = bands[Math.max(0, index - 1)]?.max;
     if (previousMax !== undefined && Number.isFinite(previousMax)) edges.push(previousMax);
     for (const edge of edges) {
       if (edge <= channel.min || edge >= channel.max) continue;
       const existing = tickMap.get(edge);
       if (existing && (severityRank[existing.tone] ?? 0) >= (severityRank[band.tone] ?? 0)) continue;
+      // A fractional limit (the knock band at 0.5) must not print as "1".
+      const digits = Number.isInteger(edge) ? channel.digits : Math.max(channel.digits, 1);
       tickMap.set(edge, {
         tone: band.tone,
-        label: fmt.boundary(channel.unit, channel.digits, edge).text,
+        label: fmt.boundary(channel.unit, digits, edge).text,
       });
     }
-  }
-  const ticks = Array.from(tickMap.entries())
+  });
+  const allTicks = Array.from(tickMap.entries())
     .map(([edge, entry]) => ({ at: pct(edge), tone: entry.tone, label: entry.label }))
     .sort((a, b) => a.at - b.at);
+  // A compact tile (~100 px) fits one label without collisions: print the
+  // tightest limit, which is the one that fires first.
+  const ticks = showTicks ? allTicks : allTicks.slice(0, 1);
 
-  const usable = value !== undefined && Number.isFinite(value);
   const markerPct = usable ? pct(value as number) : 0;
-  const tone: TileTone = !usable ? 'dim' : toneOf(channel, value as number);
+  const tone: TileTone = usable ? tileTone(channel, value as number) : 'dim';
 
   return (
-    <div className={`sd-meter${compact ? ' sd-meter--compact' : ''}`}>
+    <div className={`sd-meter${compact ? ' sd-meter--compact' : ''}${usable ? '' : ' is-empty'}`}>
       <div className="sd-meter__track" role="presentation">
-        {segments.map((segment, index) => (
+        {uniqueSegments(segments).map((segment, index) => (
           <span
             key={index}
             className={`sd-meter__zone sd-meter__zone--${segment.tone}`}
@@ -114,13 +127,14 @@ export const Meter = memo(function Meter({ channel, value, fmt, showTicks = true
           <span className={`sd-meter__value sd-tone-${tone}`} style={{ left: `${markerPct}%` }} />
         )}
       </div>
-      {showTicks && ticks.length > 0 && (
+      {ticks.length > 0 && (
         <div className="sd-meter__scale">
           {ticks.map((tick) => (
             <span
               key={`l-${tick.at}-${tick.label}`}
               className={`sd-meter__scale-label sd-tone-${tick.tone}`}
-              style={{ left: `${tick.at}%` }}
+              /* Clamped so a limit near either end stays inside the tile. */
+              style={{ left: `${Math.min(94, Math.max(6, tick.at))}%` }}
             >
               {tick.label}
             </span>
@@ -131,14 +145,18 @@ export const Meter = memo(function Meter({ channel, value, fmt, showTicks = true
   );
 });
 
-function toneOf(channel: TileChannel, value: number): TileTone {
-  if (!channel.bands) return 'neutral';
-  let lower = Number.NEGATIVE_INFINITY;
-  for (const band of channel.bands) {
-    if (value > lower && value <= band.max) return band.tone;
-    lower = band.max;
+/** Collapse adjacent segments with the same tone (a low band next to a low band). */
+function uniqueSegments(segments: { left: number; width: number; tone: TileTone }[]) {
+  const out: { left: number; width: number; tone: TileTone }[] = [];
+  for (const segment of segments) {
+    const previous = out[out.length - 1];
+    if (previous && previous.tone === segment.tone && Math.abs(previous.left + previous.width - segment.left) < 0.01) {
+      previous.width += segment.width;
+      continue;
+    }
+    out.push({ ...segment });
   }
-  return 'neutral';
+  return out;
 }
 
 /* ---------------------------------------------------------------------- tile */
@@ -147,7 +165,7 @@ interface StatTileProps {
   channel: TileChannel;
   value: number | undefined;
   fmt: ValueFormatter;
-  /** Secondary line: a target, a delta, or a qualifier. */
+  /** Secondary line: a target, a limit, or a qualifier. */
   detail?: ReactNode;
   /** Value tone override (derived tiles, e.g. fuel ratio). */
   tone?: TileTone;
@@ -159,7 +177,13 @@ interface StatTileProps {
   badge?: ReactNode;
 }
 
-/** A labelled numeric tile with its bullet meter. */
+/**
+ * A labelled numeric tile with its bullet meter.
+ *
+ * Order is head → value → meter → detail so meters sit on a shared baseline
+ * across a row of tiles: a detail line can never push one meter out of line
+ * with its neighbour, which is what makes a row readable across.
+ */
 export const StatTile = memo(function StatTile({
   channel,
   value,
@@ -172,7 +196,7 @@ export const StatTile = memo(function StatTile({
   badge,
 }: StatTileProps) {
   const formatted = fmt.format(channel.unit, digitsOverride ?? channel.digits, value);
-  const resolvedTone: TileTone = tone ?? (value === undefined ? 'dim' : toneOf(channel, value));
+  const resolvedTone: TileTone = tone ?? (value === undefined ? 'dim' : tileTone(channel, value));
   return (
     <div className={`sd-tile${compact ? ' sd-tile--compact' : ''}`} title={channel.title}>
       <div className="sd-tile__head">
@@ -185,9 +209,10 @@ export const StatTile = memo(function StatTile({
           <span className="sd-tile__unit">{unitOverride ?? formatted.unit}</span>
         )}
       </div>
-      {detail !== undefined && <div className="sd-tile__detail">{detail}</div>}
-      <Meter channel={channel} value={value} fmt={fmt} compact={compact} showTicks={!compact} />
-    </div>
+      {channel.meter !== false && (
+        <Meter channel={channel} value={value} fmt={fmt} compact={compact} showTicks={!compact} />
+      )}
+      {detail !== undefined && <div className="sd-tile__detail">{detail}</div>}    </div>
   );
 });
 
@@ -244,35 +269,55 @@ interface FuelErrorMeterProps {
   /** Relative error: (measured − target)/target. Positive = lean. */
   error: number | null;
   fmt: ValueFormatter;
-  /** Units of the *ratio* so the axis can be labelled. */
+  /** Display unit of the ratio, for the tooltip. */
   unit: string;
   target?: number;
+  /** Alert tolerances, printed on the track (they are the rules' own numbers). */
+  leanLimit?: number;
+  richLimit?: number;
 }
 
 /**
  * Centre-zero error meter for measured vs commanded fuelling.
  *
  * The axis is percentage error, so it reads the same whether the user works in
- * AFR or λ. The alert thresholds (4 % lean, 12 % rich) are marked on the track.
+ * AFR or λ. The alert tolerances are marked *and printed* — they used to be an
+ * unexplained ±15 %.
  */
-export const FuelErrorMeter = memo(function FuelErrorMeter({ error, fmt, unit, target }: FuelErrorMeterProps) {
+export const FuelErrorMeter = memo(function FuelErrorMeter({
+  error,
+  fmt,
+  unit,
+  target,
+  leanLimit = 0.04,
+  richLimit = 0.12,
+}: FuelErrorMeterProps) {
   const limit = 15; // ±15 % display range
   const usable = error !== null && Number.isFinite(error);
-  const pct = usable ? clamp01((error as number * 100) / (2 * limit) + 0.5) * 100 : 50;
-  const tone: TileTone = !usable ? 'dim' : Math.abs(error as number) <= 0.04 ? 'ok' : (error as number) > 0 ? 'warn' : 'info';
-  const leanMark = 50 + (4 / (2 * limit)) * 100;
-  const richMark = 50 - (12 / (2 * limit)) * 100;
+  const pct = usable ? clamp01(((error as number) * 100) / (2 * limit) + 0.5) * 100 : 50;
+  const tone: TileTone = !usable
+    ? 'dim'
+    : Math.abs(error as number) <= leanLimit
+      ? 'ok'
+      : (error as number) > 0
+        ? 'warn'
+        : 'info';
+  const leanMark = 50 + (leanLimit * 100 / (2 * limit)) * 100;
+  const richMark = 50 - (richLimit * 100 / (2 * limit)) * 100;
 
   return (
-    <div className="sd-errmeter" title={
-      target === undefined
-        ? 'Measured fuel ratio versus the commanded target'
-        : `Measured versus commanded target (${fmt.boundary(unit, 3, target).text} ${unit})`
-    }>
+    <div
+      className={`sd-errmeter${usable ? '' : ' is-empty'}`}
+      title={
+        target === undefined
+          ? 'Measured fuel ratio versus the commanded target'
+          : `Measured versus commanded target (${fmt.boundary(unit === 'λ' ? 'λ' : 'AFR', 3, target).text} ${unit}). Alerts at ${(leanLimit * 100).toFixed(0)} % lean / ${(richLimit * 100).toFixed(0)} % rich.`
+      }
+    >
       <div className="sd-errmeter__track" role="presentation">
         <span className="sd-errmeter__zero" />
-        <span className="sd-errmeter__limit sd-errmeter__limit--lean" style={{ left: `${leanMark}%` }} />
-        <span className="sd-errmeter__limit sd-errmeter__limit--rich" style={{ left: `${richMark}%` }} />
+        <span className="sd-errmeter__limit" style={{ left: `${leanMark}%` }} title="lean alert" />
+        <span className="sd-errmeter__limit" style={{ left: `${richMark}%` }} title="rich alert" />
         {usable && (
           <span
             className={`sd-errmeter__fill sd-errmeter__fill--${tone}`}
@@ -283,7 +328,8 @@ export const FuelErrorMeter = memo(function FuelErrorMeter({ error, fmt, unit, t
             }
           />
         )}
-        <span className={`sd-errmeter__marker sd-tone-${tone}`} style={{ left: `${pct}%` }} />
+        {/* No reading ⇒ no marker: an empty meter must not look "on target". */}
+        {usable && <span className={`sd-errmeter__marker sd-tone-${tone}`} style={{ left: `${pct}%` }} />}
       </div>
       <div className="sd-errmeter__scale">
         <span>RICH −{limit} %</span>
@@ -319,10 +365,4 @@ export const KeyValueGrid = memo(function KeyValueGrid({ rows }: { rows: KeyValu
 
 export function pctStyle(value: number): CSSProperties {
   return { width: `${clamp01(value) * 100}%` };
-}
-
-/** Tone for a band descriptor — used by derived tiles. */
-export function toneFromBands(channel: TileChannel, value: number | undefined): TileTone {
-  if (value === undefined || !Number.isFinite(value)) return 'dim';
-  return toneOf(channel, value);
 }

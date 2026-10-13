@@ -4,16 +4,17 @@
  * Design record: ./README.md. Summary of the rules encoded here:
  *   - It is an instrument: hairlines, no shadows, no gradients, no rounded
  *     cards. Panels are separated by 1 px rules, not by floating surfaces.
- *   - Three type sizes do the work: 9–10 px uppercase labels (IBM Plex Sans,
- *     tracked), 13–22 px IBM Plex Mono for values (tabular numerals), and
- *     Barlow Condensed for the hero numerals.
+ *   - Type is small and tracked for labels (8.5–10 px IBM Plex Sans, uppercase),
+ *     IBM Plex Mono with tabular numerals for values, Barlow Condensed for the
+ *     two hero numerals. Values change without animation; nothing on this face
+ *     moves for decoration.
  *   - Colour is thematic, never informational on its own: every tone has a
- *     matching text label or threshold number next to it.
- *   - Density 9 / motion 2: nothing animates except value changes, and those
- *     only fade briefly. `prefers-reduced-motion` removes even that.
- *   - All colours resolve from the app theme tokens, so light themes work; the
- *     trace accents are the only fixed palette, and they are colour-blind-safe
- *     against both backgrounds.
+ *     matching text label or printed threshold next to it.
+ *   - Density 9 / motion 2: no transitions except hover feedback, and those are
+ *     disabled under `prefers-reduced-motion`.
+ *   - All colours resolve from the app theme tokens, so light themes work. The
+ *     light theme additionally overrides the secondary text and the semantic
+ *     tones, because the base theme's muted greys fail 4.5:1 on `#E0E0E0`.
  */
 
 .sd {
@@ -68,8 +69,18 @@
   overflow: hidden;
 }
 
-/* The light theme needs darker trace accents to hold 4.5:1 against a pale panel. */
+/* The light theme needs darker secondary text and semantic tones: the theme's
+ * own muted greys (#9E9E9E / #BDBDBD) sit at 2.0:1 and 1.4:1 against the
+ * #E0E0E0 dashboard background, and the amber warning at 2.1:1. */
 [data-theme='light'] .sd {
+  --sd-dim: #4a4a4a;
+  --sd-faint: #6b6b6b;
+  --sd-ok: #1b7f3b;
+  --sd-warn: #a35200;
+  --sd-crit: #b3261e;
+  --sd-info: #0b5cad;
+  --sd-line: #b9b9b9;
+
   --sd-trace-rpm: #a86400;
   --sd-trace-map: #1d63c7;
   --sd-trace-lambda: #1d7f52;
@@ -159,7 +170,7 @@
   align-items: center;
   gap: 6px;
   padding: 2px 8px;
-  border: 1px solid var(--sd-line);
+  border: 0;
   border-radius: 2px;
   background: transparent;
   font: inherit;
@@ -170,12 +181,15 @@
   cursor: default;
 }
 .sd-status__log {
+  border: 1px solid var(--sd-line);
   cursor: pointer;
   transition: border-color var(--transition-fast), color var(--transition-fast);
 }
 .sd-status__log:hover:not(:disabled) { border-color: var(--sd-accent); color: var(--sd-text); }
 .sd-status__log:disabled { opacity: 0.55; cursor: not-allowed; }
-.sd-status__log.is-recording { color: var(--sd-crit); border-color: var(--sd-crit); }
+/* Recording is a deliberate state, not a fault: the recorder uses the accent
+   colour, and red stays reserved for things that are actually wrong. */
+.sd-status__log.is-recording { color: var(--sd-accent); border-color: var(--sd-accent); }
 .sd-status__log-sub {
   font-weight: 400;
   letter-spacing: 0.04em;
@@ -269,8 +283,10 @@
 
 .sd-grid2 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 6px 10px;
+  /* Two columns: tiles always pair up, so meters line up across a row and no
+     group ends with an orphan tile and a hole. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 10px;
 }
 
 .sd-tile {
@@ -377,18 +393,27 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background: color-mix(in srgb, var(--sd-text) 55%, transparent);
+  /* Dashed so a limit can never be mistaken for the value marker. */
+  background-image: linear-gradient(to bottom, currentColor 55%, transparent 55%);
+  background-size: 1px 3px;
+  color: color-mix(in srgb, var(--sd-text) 55%, transparent);
 }
-.sd-meter__tick--crit { background: var(--sd-crit); }
-.sd-meter__tick--warn { background: var(--sd-warn); }
+.sd-meter__tick--crit { color: var(--sd-crit); }
+.sd-meter__tick--warn { color: var(--sd-warn); }
 .sd-meter__value {
   position: absolute;
-  top: -1px;
-  bottom: -1px;
+  top: -2px;
+  bottom: -2px;
   width: 2px;
   margin-left: -1px;
+  border-radius: 1px;
   background: var(--sd-text);
-  box-shadow: 0 0 0 1px var(--bg-dashboard);
+  box-shadow: 0 0 0 1.5px var(--sd-panel-solid, var(--bg-surface));
+}
+/* No reading ⇒ no zones either: an empty meter must not look like a healthy one. */
+.sd-meter.is-empty .sd-meter__zone,
+.sd-errmeter.is-empty .sd-errmeter__fill {
+  opacity: 0.25;
 }
 .sd-meter__value.sd-tone-ok { background: var(--sd-ok); }
 .sd-meter__value.sd-tone-warn { background: var(--sd-warn); }
@@ -405,7 +430,7 @@
   transform: translateX(-50%);
   font-family: var(--font-mono);
   font-size: 8.5px;
-  color: var(--sd-faint);
+  color: var(--sd-dim);
   white-space: nowrap;
 }
 .sd-meter__scale-label.sd-tone-warn { color: var(--sd-warn); }
@@ -523,13 +548,6 @@
   border-bottom: 1px solid var(--sd-line);
   flex-wrap: wrap;
 }
-.sd-scope-bar__title {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  color: var(--sd-dim);
-  margin-right: 4px;
-}
 .sd-scope-bar__group {
   display: inline-flex;
   gap: 1px;
@@ -556,6 +574,9 @@
   padding: 2px 7px;
   border-radius: 2px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   transition: color var(--transition-fast), background var(--transition-fast);
 }
 .sd-btn:hover { color: var(--sd-text); background: color-mix(in srgb, var(--sd-text) 8%, transparent); }
@@ -566,8 +587,8 @@
 .sd-status__log:focus-visible,
 .sd-picker__item input:focus-visible,
 .sd-scope__canvas:focus-visible {
-  outline: 1px solid var(--border-focus);
-  outline-offset: 1px;
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
 }
 
 .sd-scope-host {
@@ -584,14 +605,40 @@
 .sd-picker {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 12px;
+  grid-template-areas:
+    'filter filter'
+    'tuning ecu';
+  gap: 8px 12px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--sd-line);
   background: var(--bg-surface);
-  max-height: 210px;
+  max-height: 218px;
   overflow: hidden;
 }
+.sd-picker__filter {
+  grid-area: filter;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sd-picker__filter input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg-input);
+  border: 1px solid var(--sd-line);
+  border-radius: 2px;
+  color: var(--sd-text);
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 6px;
+}
+.sd-picker__filter input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
 .sd-picker__col { display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 0; }
+.sd-picker__col:first-of-type { grid-area: tuning; }
+.sd-picker__col:last-of-type { grid-area: ecu; }
 .sd-picker__title {
   margin: 0;
   font-size: 9px;
@@ -639,7 +686,7 @@
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.95fr) minmax(0, 1.15fr);
   border-top: 1px solid var(--sd-line);
   min-height: 0;
-  max-height: 34vh;
+  max-height: 28vh;
   overflow: hidden;
 }
 
@@ -803,9 +850,21 @@
 .sd-coverage {
   position: relative;
   flex: 1 1 auto;
-  min-height: 70px;
+  min-height: 58px;
 }
 .sd-coverage canvas { display: block; }
+
+/* Worst cells: the numbers that make the map actionable. */
+.sd-cells {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
 
 /* ---------------------------------------------------------------- kv list */
 
