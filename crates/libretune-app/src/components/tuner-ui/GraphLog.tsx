@@ -542,8 +542,6 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [configPane, setConfigPane] = useState<number | null>(null);
-  /** Live mode's single gear opens a combined config for every pane at once. */
-  const [configAll, setConfigAll] = useState(false);
   const [size, setSize] = useState({ width: 800, height: 480 });
   const [hoverFrac, setHoverFrac] = useState<number | null>(null);
   /** Right edge of the view in log time; null = follow the latest sample */
@@ -628,8 +626,6 @@ export const GraphLog: React.FC<GraphLogProps> = ({
   // Q = zoom in, A = zoom out, arrows = step data cursor, Esc = clear cursor
   // (all ignored while typing in a form field)
   useEffect(() => {
-    // Live mode is a read-only scope: no zoom keys, no arrow-key cursor.
-
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
@@ -652,7 +648,6 @@ export const GraphLog: React.FC<GraphLogProps> = ({
 
   /** Click on the graphs places the data cursor at the nearest sample */
   const handlePanesClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-
     if (draggedRef.current) {
       draggedRef.current = false;
       return;
@@ -667,7 +662,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
     const end = viewEndRef.current ?? lastT;
     const t = end - winMs * (1 - frac);
     setCursorT(data[nearestIndex(data, t)].t);
-);
+  }, []);
 
   /** Move the right edge of the view to `next`, clamped to the recorded span.
    *
@@ -716,7 +711,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
       width: Math.max(1, rect.width - PAD_L - PAD_R),
       moved: false,
     };
-);
+  }, []);
 
   const handlePanesMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -878,8 +873,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
 
   return (
     <div className="graphlog" ref={containerRef}>
-      <!-- removed live branch --><!-
-        <div className="graphlog-tabbar">
+      <div className="graphlog-tabbar">
         {tabs.map((tab) => (
           <div
             key={tab.id}
@@ -947,8 +941,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
             <ZoomOut size={14} />
           </button>
         </div>
-        </div>
-      )}
+      </div>
 
       <div
         ref={panesRef}
@@ -990,7 +983,7 @@ export const GraphLog: React.FC<GraphLogProps> = ({
               onPickChannel={(side, channel) =>
                 updateSlot(activeTab.id, paneIndex, side, { channel })
               }
-              controls={true}
+              controls
             />
           );
         })}
@@ -1005,3 +998,43 @@ export const GraphLog: React.FC<GraphLogProps> = ({
 
       {/* Width of the inner strip sets the thumb size: the track is one window
           wide, so the strip is as many windows long as the log lasts. */}
+      <div
+        ref={hScrollRef}
+        className="graphlog-hscroll"
+        onScroll={handleHScroll}
+        title="Scroll through the log"
+      >
+        <div style={{ width: `${scrollStripPercent}%` }} />
+      </div>
+
+      <Dialog
+        open={configPane !== null}
+        onClose={() => setConfigPane(null)}
+        title={`Graph ${configPane !== null ? configPane + 1 : ''} — channels & scales`}
+        size="sm"
+        className="graphlog-config-dialog"
+      >
+        <Dialog.Body>
+          {configPane !== null && (
+            <>
+              <SlotConfig
+                label="Left axis"
+                slot={activeTab.panes[configPane].left}
+                availableChannels={availableChannels}
+                onChange={(patch) => updateSlot(activeTab.id, configPane, 'left', patch)}
+              />
+              <SlotConfig
+                label="Right axis"
+                slot={activeTab.panes[configPane].right}
+                availableChannels={availableChannels}
+                onChange={(patch) => updateSlot(activeTab.id, configPane, 'right', patch)}
+              />
+            </>
+          )}
+        </Dialog.Body>
+      </Dialog>
+    </div>
+  );
+};
+
+export default GraphLog;
