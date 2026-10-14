@@ -466,23 +466,32 @@
 }
 
 .dialog-view .command-button-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 8px 10px;
+  /* Equal-width buttons in one horizontal row (2, 3, N buttons all share
+     the line); wraps to a second row on narrow panels instead of overflowing. */
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-4) 10px;
   box-sizing: border-box;
   width: 100%;
+  align-items: stretch;
 }
 
 .dialog-view .command-button-row .command-button-field {
+  flex: 1 1 0;
+  min-width: 150px;
   padding: 0;
-  min-width: 0;
+  display: flex;
 }
 
 .dialog-view .command-button-row .command-button {
   width: 100%;
   padding: 8px 12px;
   font-size: 13px;
+  text-align: center;
+  justify-content: center;
+  white-space: normal;
+  line-height: 1.3;
 }
 
 .dialog-view .panel-content--multi .settings-field {
@@ -908,25 +917,39 @@
 }
 
 .command-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 10px 20px;
   background: var(--accent);
   border: 1px solid var(--accent);
-  border-radius: 6px;
-  color: white;
+  border-radius: var(--radius-lg);
+  color: var(--accent-text, #fff);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  transition: all 0.2s;
+  box-sizing: border-box;
+  min-height: 34px;
+  transition: background-color 0.15s, border-color 0.15s, transform 0.15s;
 }
 
 .command-button:hover:not(:disabled) {
   background: var(--accent-hover);
+  border-color: var(--accent-hover);
   transform: translateY(-1px);
+}
+
+.command-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .command-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 
 .command-button.executing {
