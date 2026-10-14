@@ -1303,64 +1303,80 @@
   background: color-mix(in srgb, var(--bg-secondary) 88%, black 12%);
 }
 
+/* Live readout card (DialogGauge). Label and value share the top line, a
+   6px gradient range bar follows, and the scale bounds sit underneath. The bar
+   has no width transition on purpose: the stream updates ~10 Hz and a
+   transition would lag the reading and force layout on every sample. */
 .dialog-view .readout-gauge {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  row-gap: 6px;
+  column-gap: 12px;
   min-width: 0;
-}
-
-.dialog-view .readout-gauge-value {
-  padding: 14px 12px 12px;
-  background: linear-gradient(180deg, var(--bg-primary) 0%, color-mix(in srgb, var(--bg-primary), black 8%) 100%);
+  padding: 10px 14px 9px;
   border: 1px solid var(--border-color);
-  border-radius: 12px;
-  color: var(--text-primary);
-  font-size: 1.7rem;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-  text-align: center;
-  line-height: 1.1;
-  min-height: 2.75rem;
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--bg-primary) 0%, color-mix(in srgb, var(--bg-primary), black 8%) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   box-sizing: border-box;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 2px 8px rgba(0, 0, 0, 0.18);
-}
-
-.dialog-view .readout-gauge-unit {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 0.55em;
-  font-weight: 550;
-  letter-spacing: 0.02em;
-  color: var(--text-secondary);
-  vertical-align: 0.12em;
 }
 
 .dialog-view .readout-gauge-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--text-secondary);
-  text-align: center;
-  line-height: 1.25;
-  padding: 0 2px;
+}
+
+.dialog-view .readout-gauge-value {
+  font-size: 1.25rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.dialog-view .readout-gauge-unit {
+  margin-left: 4px;
+  font-size: 0.6em;
+  font-weight: 550;
+  color: var(--text-muted);
 }
 
 .dialog-view .readout-gauge-bar {
-  height: 4px;
+  grid-column: 1 / -1;
+  height: 6px;
   border-radius: 999px;
-  background: var(--border-subtle, var(--border-color));
+  background: color-mix(in srgb, var(--border-color) 60%, transparent);
   overflow: hidden;
 }
 
 .dialog-view .readout-gauge-bar-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--accent);
-  transition: width 0.2s ease;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 25%, transparent) 0%, var(--accent) 100%);
+}
+
+.dialog-view .readout-gauge-bar-fill.is-active {
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.dialog-view .readout-gauge-scale {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  margin-top: -2px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
 }
 
 /* Embedded INI gauge references (injTest_r reference gauges, etc.) */

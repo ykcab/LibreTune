@@ -13,6 +13,32 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-13 — Live readout cards: range bars and aligned values
+
+Dialog gauge readouts (for example the Throttle Position Sensor page's TPS ADC
+and raw voltage channels) keep their data and ranges; only the presentation
+changes. The analog-style value box and the thin, unlabelled track are replaced
+with a compact card that reads like a modern instrument row instead of a dial.
+
+#### Changed
+
+- **`gauges/GaugeLiveReadout.tsx`** (card variant) — the label sits on top, the
+  value is right-aligned on the same line, a 6px gradient range bar follows, and
+  the scale bounds (min / max) sit underneath so the bar is never unlabelled.
+- **`dialogs/DialogRenderer.css`** — the `readout-gauge*` rules restyled to the
+  uppercase label convention used by the settings rows around them; the fill
+  uses the accent gradient with a soft glow only when it has a value.
+- **Bar updates are no longer animated.** The 200 ms width transition is gone:
+  the stream updates about 10 times a second, so the transition lagged the
+  reading and forced layout on every sample.
+
+#### Accessibility
+
+- The bar is exposed as a `meter` with the gauge's min, max, current value and
+  unit text. The visual scale bounds are hidden from assistive tech because the
+  meter already carries them. Nothing is marked `aria-live`, so the 10 Hz
+  updates are not announced.
+
 ### 2026-10-13 — Dead Startup-dash experiment files removed
 
 With the Startup dashboard rebuilt from scratch, the live-trace experiment that

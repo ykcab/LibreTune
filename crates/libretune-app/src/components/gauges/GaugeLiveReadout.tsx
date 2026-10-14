@@ -41,17 +41,35 @@ export function GaugeLiveReadout({
       liveValue != null && Number.isFinite(liveValue) && lo != null && span > 0
         ? Math.max(0, Math.min(100, ((liveValue - lo) / span) * 100))
         : null;
+    const fmtBound = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(digits));
     return (
       <div className={['readout-gauge', className].filter(Boolean).join(' ')} title={label}>
+        <div className="readout-gauge-label">{label}</div>
         <div className="readout-gauge-value">
           {formatted}
           {units.length > 0 && <span className="readout-gauge-unit">{units}</span>}
         </div>
-        <div className="readout-gauge-label">{label}</div>
-        {pct != null && (
-          <div className="readout-gauge-bar">
-            <div className="readout-gauge-bar-fill" style={{ width: `${pct}%` }} />
-          </div>
+        {pct != null && lo != null && hi != null && (
+          <>
+            <div
+              className="readout-gauge-bar"
+              role="meter"
+              aria-label={label}
+              aria-valuemin={lo}
+              aria-valuemax={hi}
+              aria-valuenow={liveValue}
+              aria-valuetext={units.length > 0 ? `${formatted} ${units}` : formatted}
+            >
+              <div
+                className={pct > 0 ? 'readout-gauge-bar-fill is-active' : 'readout-gauge-bar-fill'}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <div className="readout-gauge-scale" aria-hidden="true">
+              <span>{fmtBound(lo)}</span>
+              <span>{fmtBound(hi)}</span>
+            </div>
+          </>
         )}
       </div>
     );

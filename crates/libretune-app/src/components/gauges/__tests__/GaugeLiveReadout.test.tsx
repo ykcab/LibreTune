@@ -32,4 +32,23 @@ describe('GaugeLiveReadout', () => {
     expect(screen.getByText('Flex Ethanol %')).toBeInTheDocument();
     expect(container.querySelector('.readout-gauge-bar-fill')).toHaveStyle({ width: '42.5%' });
   });
+
+  it('card variant exposes the bar as a meter with its range and scale bounds', () => {
+    useRealtimeStore.getState().updateChannels({ flexPercent: 42.5 });
+    render(<GaugeLiveReadout gaugeInfo={flex} variant="card" />);
+
+    const meter = screen.getByRole('meter', { name: 'Flex Ethanol %' });
+    expect(meter).toHaveAttribute('aria-valuemin', '0');
+    expect(meter).toHaveAttribute('aria-valuemax', '100');
+    expect(meter).toHaveAttribute('aria-valuenow', '42.5');
+    expect(meter).toHaveAttribute('aria-valuetext', '42.5 %');
+    expect(screen.getByText('100')).toBeInTheDocument();
+  });
+
+  it('marks the fill active only once the value is above the bottom of the scale', () => {
+    useRealtimeStore.getState().updateChannels({ flexPercent: 0 });
+    const { container } = render(<GaugeLiveReadout gaugeInfo={flex} variant="card" />);
+
+    expect(container.querySelector('.readout-gauge-bar-fill')).not.toHaveClass('is-active');
+  });
 });
