@@ -13,6 +13,24 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-13 — Typography restored: IBM Plex and Barlow Condensed
+
+The dead-code cleanup removed `themes/fonts.css` as unused. That was wrong.
+`themes/base.css` imports it (`@import './fonts.css'`), and `styles/index.ts`
+loads `base.css` for the whole app. The brand typography (IBM Plex Sans and
+Mono, plus the Barlow Condensed display face used by the Startup dashboard)
+silently fell back to system fonts. The earlier search only looked for the path
+`themes/fonts.css` and missed the relative `@import`.
+
+#### Fixed
+
+- **`themes/fonts.css`** and **`themes/base.css`** — restored to their
+  pre-cleanup content, including the `@fontsource` imports.
+- **`harness/main.tsx`** — the explicit `fonts.css` import is restored as well.
+
+A production build bundles 37 `@font-face` faces for IBM Plex Sans and Mono and
+Barlow Condensed.
+
 ### 2026-10-13 — Live readout cards: range bars and aligned values
 
 Dialog gauge readouts (for example the Throttle Position Sensor page's TPS ADC
@@ -66,11 +84,6 @@ deletions were still in the tree. Nothing here changes behaviour.
   guide dialog (unused).
 - **`components/tuner-ui/AnnotationsPanel.tsx/.css`** — orphaned tune
   annotations panel (unused).
-- **`themes/fonts.css`** — font styles not imported by the app (only imported
-  by the `harness/` preview app, which references the app source; removing it
-  prevents an unused asset dependency — the harness can continue to import it
-  via its relative path or we can drop that import later).
-
 Note: `GraphLog`'s `variant="live"` prop is now unused too, but it is a
 documented `GraphLog` capability, defaults to `full`, and costs nothing at
 runtime, so it was kept.

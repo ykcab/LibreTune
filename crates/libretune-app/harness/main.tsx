@@ -12,6 +12,7 @@
  */
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import '../src/themes/fonts.css';
 import '../src/themes/base.css';
 import '../src/components/dashboards/TsDashboard.css';
 import { UnitPreferencesProvider } from '../src/contexts/useUnitPreferences';
