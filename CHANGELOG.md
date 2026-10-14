@@ -13,6 +13,28 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-13 — Unreachable frontend modules removed
+
+A reachability pass from the app entry points (`src/main.tsx`, `harness/main.tsx`)
+followed static imports, CSS `@import`s and dynamic imports. Two modules had no
+path from any entry point and were removed:
+
+#### Removed
+
+- **`components/dialogs/Tooltip.tsx`** and **`Tooltip.css`** — no importers. The
+  stylesheet was never loaded, so nothing renders differently.
+- **`utils/signature.ts`** and **`utils/__tests__/signature.test.ts`** — only its
+  own test used `shouldBlockOnSignature`. Production gates the mismatch dialog
+  on `match_type === "mismatch"` (`hooks/useBackendEventListeners.ts`), while the
+  helper blocked on anything but `exact`. Keeping it would have preserved a rule
+  that diverges from the app, so it was removed rather than wired in.
+
+#### Kept on purpose
+
+- **`harness/tauri-stub.ts`** and **`harness/vite.config.ts`** are wired by the
+  harness config (the alias and the config itself), not by imports.
+- **`test-utils/tauriMocks.ts`** is shared test infrastructure.
+
 ### 2026-10-13 — Typography restored: IBM Plex and Barlow Condensed
 
 The dead-code cleanup removed `themes/fonts.css` as unused. That was wrong.
