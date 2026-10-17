@@ -604,6 +604,10 @@ export default function EngineScope({
     const requested = Math.round((windowSec * 1000) / Math.max(20, intervalMs));
     return Math.max(20, Math.min(BUFFER_SAMPLES, requested));
   }, [windowSec, intervalMs]);
+  const windowSamplesRef = useRef(windowSamples);
+  windowSamplesRef.current = windowSamples;
+  const connectedRef = useRef(isConnected);
+  connectedRef.current = isConnected;
 
   // Freeze the exact window that is on screen when pause is engaged. Keyed by
   // lane id: adding or removing a lane while paused must not shift the traces.
@@ -626,12 +630,17 @@ export default function EngineScope({
 
   useEffect(() => {
     dirtyRef.current = true;
-  }, [lanes, markers, windowSamples, intervalMs, paused]);
+  }, [lanes, markers, windowSamples, intervalMs, paused, isConnected]);
 
   // Publishes the lane values as text for assistive tech, and announces the
   // cursor position to keyboard users (pointer users get the on-canvas box).
   const [announcement, setAnnouncement] = useState('');
 
+  // The canvas, its observer and the frame loop are created once, on mount.
+  // Anything that changes with the data (the sample count derived from the
+  // measured stream interval, the connection state) is read through refs, so a
+  // wobble in the interval cannot tear the canvas down. Assigning canvas.width
+  // clears the bitmap even at the same size, so resize() only does it on change.
   useEffect(() => {
     const wrap = wrapRef.current;
     const canvas = canvasRef.current;
@@ -643,14 +652,23 @@ export default function EngineScope({
     let lastDraw = 0;
     let w = 1;
     let h = 1;
+    let bitmapW = 0;
+    let bitmapH = 0;
 
     const resize = () => {
       const dpr = Math.max(1, window.devicePixelRatio || 1);
       const rect = wrap.getBoundingClientRect();
-      w = Math.max(1, Math.floor(rect.width));
-      h = Math.max(1, Math.floor(rect.height));
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
+      const nextW = Math.max(1, Math.floor(rect.width));
+      const nextH = Math.max(1, Math.floor(rect.height));
+      const nextBitmapW = Math.round(nextW * dpr);
+      const nextBitmapH = Math.round(nextH * dpr);
+      if (nextBitmapW === bitmapW && nextBitmapH === bitmapH && nextW === w && nextH === h) return;
+      w = nextW;
+      h = nextH;
+      bitmapW = nextBitmapW;
+      bitmapH = nextBitmapH;
+      canvas.width = bitmapW;
+      canvas.height = bitmapH;
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -670,11 +688,12 @@ export default function EngineScope({
       lastDraw = now;
 
       const currentLanes = lanesRef.current;
+      const samples = windowSamplesRef.current;
       const data = currentLanes.map((lane) =>
-        frozen ? (frozen.lanes.get(lane.id) ?? EMPTY) : laneSamples(lane, windowSamples),
+        frozen ? (frozen.lanes.get(lane.id) ?? EMPTY) : laneSamples(lane, samples),
       );
       const targets = currentLanes.map((lane) =>
-        frozen ? (frozen.targets.get(lane.id) ?? EMPTY) : targetSamples(lane, windowSamples),
+        frozen ? (frozen.targets.get(lane.id) ?? EMPTY) : targetSamples(lane, samples),
       );
       // Live values straight from the store so the right-hand gutter and the DOM
       // tiles can never disagree about "now".
@@ -689,14 +708,14 @@ export default function EngineScope({
         data,
         targets,
         liveValues: live,
-        windowSamples,
+        windowSamples: samples,
         intervalMs: intervalMsRef.current,
         cursor: cursorRef.current,
         markers: markersRef.current,
         now: Date.now(),
         frozenAt: frozen ? frozen.at : null,
         ranges: rangesRef.current,
-        connected: isConnected,
+        connected: connectedRef.current,
       });
     };
     raf = requestAnimationFrame(frame);
@@ -705,11 +724,7 @@ export default function EngineScope({
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
-    // `intervalMs` is deliberately not a dependency: it is an EWMA that changes
-    // with every stream frame, and re-creating the canvas (which clears and
-    // reallocates the backing store) several times a second is pure waste. The
-    // ref below keeps the time axis current without touching the rAF loop.
-  }, [windowSamples, isConnected]);
+  }, []);
 
   const samplesFromPointer = useCallback(
     (clientX: number): number | null => {

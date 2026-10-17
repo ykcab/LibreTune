@@ -13,6 +13,39 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-17 — Startup scope no longer flickers once the ECU is connected
+
+The Startup dashboard's live scope blanked repeatedly as soon as telemetry
+started. Its canvas setup effect depended on `windowSamples`, a sample count
+derived from the measured stream interval. That interval is an exponential
+average updated on every frame, so it wobbles by fractions of a millisecond all
+the time, and the derived count flips with it. Each flip re-ran the effect: it
+reassigned the canvas size, which clears the bitmap, and restarted the frame
+loop, so a blank frame reached the screen. The connection state was a dependency
+of the same effect, so connecting did the same once more. The comment above the
+effect said the interval was deliberately not a dependency, but the value derived
+from it was.
+
+#### Fixed
+
+- **`startup/EngineScope.tsx`** — the canvas, its resize observer and the frame
+  loop are created once on mount. The sample count and the connection state are
+  read through refs, and a dirty flag triggers the redraw. `resize()` only
+  reassigns the bitmap when the container's pixel size changes.
+
+#### Verified
+
+Measured in the real `StartupDash` (screenshot harness, 10 Hz feed), counting
+canvas bitmap resets over five seconds after the page settled: before, the scope
+reset 20 and 28 times; after, 0 both times. The coverage map also reassigns its
+canvas on each snapshot, but it clears and redraws within one synchronous step,
+so it does not blank on screen and is unchanged.
+
+`startup/__tests__/EngineScope.lifecycle.test.tsx` covers the three cases (interval
+wobble, connection change, unchanged container size). All three fail on the
+previous code and pass now. Full vitest: 69 files, 510 tests passing; tsc and
+eslint clean.
+
 ### 2026-10-17 — Bench test buttons no longer squashed
 
 The Bench test ("Hardware Test mode", `ioTest`) rendered its command buttons as
