@@ -13,6 +13,39 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-17 — Bench test buttons no longer squashed
+
+The Bench test ("Hardware Test mode", `ioTest`) rendered its command buttons as
+narrow orange strips that could not be read. The command-button restyle
+(`f1439ff`) made consecutive command buttons a flex row (`.command-button-row`,
+150px minimum per button). Command-only panels (Spark, Injector, Lua Out, Misc)
+place that row inside a two-column command grid, so the whole row became one
+half-width cell, and the grid's own `min-width: 0` override let the buttons
+collapse onto one line.
+
+#### Fixed
+
+- **`dialogs/DialogRenderer.css`** — inside a command grid the button row is
+  `display: contents`, so its buttons are items of the grid's two columns again.
+  The row minimum is `min(150px, 100%)`, so a narrow panel wraps or shrinks
+  instead of overflowing.
+- **`dialogs/DialogRenderer.css`** — the `testOther` panel (Count / On Time /
+  Off Time) uses `repeat(auto-fit, minmax(min(200px, 100%), 1fr))`. Its
+  three-column grid overlapped labels and inputs in the narrow side column. This
+  predates the command-button change.
+- **`dialogs/__tests__/PanelComponents.commandGrid.test.tsx`** — guards the
+  structure the stylesheet relies on (a command-only panel's button row is a
+  direct child of its command grid).
+
+#### Verified
+
+The real `DialogRenderer` was rendered for `ioTest` in headless Firefox with the
+Tauri IPC layer stubbed and the INI definitions copied from `demo.ini`. Measured
+over the 45 buttons: before, 44 were narrower than 100px (22–165px); after, none
+are (130–287px), and none overflow their panel. Checked at 1024, 1280 and 1600px
+and in the light theme, and the ECU stimulator, accelerator pedal and Throttle
+gauge pages still render as intended.
+
 ### 2026-10-13 — Unreachable frontend modules removed
 
 A reachability pass from the app entry points (`src/main.tsx`, `harness/main.tsx`)

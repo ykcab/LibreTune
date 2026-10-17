@@ -479,7 +479,8 @@
 
 .dialog-view .command-button-row .command-button-field {
   flex: 1 1 0;
-  min-width: 150px;
+  /* Never wider than the row: a narrow panel must wrap or shrink, not overflow. */
+  min-width: min(150px, 100%);
   padding: 0;
   display: flex;
 }
@@ -492,6 +493,13 @@
   justify-content: center;
   white-space: normal;
   line-height: 1.3;
+}
+
+/* Inside a command grid (Bench test panels) the row is not a cell of its own:
+   its buttons become items of the grid's two columns. Without this the whole
+   row was one half-width cell and its buttons were squeezed into strips. */
+.dialog-view .panel-content--command-grid > .command-button-row {
+  display: contents;
 }
 
 .dialog-view .panel-content--multi .settings-field {
@@ -819,7 +827,9 @@
 
 .dialog-view .panel-content--test-other {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* Three columns only when the panel is wide enough for label + input in each;
+     narrower panels (the Bench test's side column) stack the fields instead. */
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
   gap: 8px 12px;
   padding: 10px;
   align-items: center;
