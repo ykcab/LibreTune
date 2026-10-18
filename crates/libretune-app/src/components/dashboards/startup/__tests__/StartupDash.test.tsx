@@ -279,17 +279,45 @@ describe('events', () => {
   });
 });
 
-describe('BOOST view', () => {
-  it('plots MAP minus baro against the ECU target, and hides the channel picker', () => {
-    renderDash();
-    push({ rpm: 3000, map: 180, coolant: 90 }, 3);
+describe('boost tile', () => {
+  const withBaro = [...channelMeta, { name: 'baro', label: 'Baro', units: 'kPa' }];
 
-    fireEvent.click(screen.getByRole('button', { name: 'BOOST' }));
+  /** The snapshot the tiles read refreshes on a timer, as in the other tests here. */
+  function settle() {
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+  }
 
-    expect(screen.queryByRole('button', { name: /CHANNELS/ })).toBeNull();
-    // The scope publishes its lane values as text for assistive tech.
-    const table = document.querySelector('.sd-scope table');
-    expect(table?.textContent).toContain('BOOST');
-    expect(table?.textContent).toContain('79'); // 180 kPa − 101.325 kPa, whole kPa
+  it('sits in LOAD & AIR, derived from MAP and baro until the ECU publishes boost', () => {
+    vi.useFakeTimers();
+    try {
+      renderDash(true, withBaro);
+      push({ rpm: 3000, map: 180, baro: 100, coolant: 90 }, 3);
+      settle();
+
+      const tile = screen.getByTitle(/derived; negative = vacuum/);
+      expect(tile.querySelector('.sd-tile__label')?.textContent).toBe('MAP − BARO');
+      expect(tile.querySelector('.sd-tile__value')?.textContent).toContain('80');
+      // Same grid as the LOAD & AIR tiles (baro sits in it), not the engine rail's MAP tile.
+      expect(tile.closest('.sd-grid2')?.textContent).toContain('BARO');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('switches to the ECU boost channel as soon as the ECU publishes one', () => {
+    vi.useFakeTimers();
+    try {
+      renderDash(true, [...withBaro, { name: 'boost', label: 'Boost', units: 'kPa' }]);
+      push({ rpm: 3000, map: 180, baro: 100, boost: 95, coolant: 90 }, 3);
+      settle();
+
+      const tile = screen.getByTitle('Boost pressure from the ECU');
+      expect(tile.querySelector('.sd-tile__label')?.textContent).toBe('BOOST');
+      expect(tile.querySelector('.sd-tile__value')?.textContent).toContain('95');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

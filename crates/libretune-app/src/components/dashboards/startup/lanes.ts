@@ -9,7 +9,7 @@
  * Ranges are in source units; the scope converts only the printed labels and
  * current-value numbers, never the geometry.
  */
-import { barometricOrStandard, type Band, type ChannelSpec } from './channels';
+import type { Band, ChannelSpec } from './channels';
 import type { ChannelMeta } from './types';
 import { displayDigits, type UnitDisplay } from './useStartupTelemetry';
 
@@ -45,19 +45,10 @@ export interface ScopeLane {
   autoRange: boolean;
   /** Row height in px (defaults to the scope's base row height). */
   height?: number;
-  /**
-   * Gauge pressure: the lane shows its channel minus barometric pressure, sample
-   * by sample. `channel` is the ECU's baro reading when it publishes one; a
-   * missing or implausible reading falls back to standard atmosphere.
-   */
-  barometric?: { channel?: string };
 }
 
 /** Default lane set — the channels a tuner watches while driving. */
 export const DEFAULT_LANE_IDS = ['rpm', 'map', 'lambda', 'tps', 'advance', 'dutyCycle'];
-
-/** The BOOST view: boost (or MAP − baro) against the ECU's target, with throttle and speed. */
-export const BOOST_LANE_IDS = ['boost', 'tps', 'rpm'];
 
 /** Accent cycle for channels outside the curated catalogue. */
 const SERIES_VARS = [
@@ -81,7 +72,6 @@ export function laneForSpec(
   channel: string,
   display: UnitDisplayFn,
   target?: { channel: string; unit: string },
-  barometric?: { channel?: string },
 ): ScopeLane {
   const conv = display(spec.unit);
   // The fuel-ratio lane is labelled by the unit it is drawn in, so a lane can
@@ -110,7 +100,6 @@ export function laneForSpec(
     zeroIsGap: spec.zeroIsGap === true,
     autoRange: false,
     height: spec.id === 'rpm' ? 64 : undefined,
-    barometric,
   };
 }
 
@@ -224,14 +213,6 @@ export function buildLanes(
       lanes.push(laneForChannel(found, seriesIndex++, display));
       continue;
     }
-    // Boost without a boost channel: gauge pressure from MAP and baro, so the view
-    // and the rail tile (which uses the same rule) always agree.
-    if (id === 'boost' && resolved.get('boost') === undefined) {
-      const map = resolved.get('map');
-      if (!specs.boost || map === undefined) continue;
-      lanes.push(laneForSpec(specs.boost, map, display, boostTargetOf(resolved), { channel: resolved.get('baro') }));
-      continue;
-    }
     // `specs` is the catalogue adapted to the units this INI declares.
     // The default lane set asks for the λ lane; an ECU that publishes only AFR
     // must still get a fuel lane (the rails cross-convert, so the scope must too).
@@ -250,62 +231,10 @@ export function buildLanes(
       const afrTarget = resolved.get('afrTarget');
       if (lambdaTarget !== undefined) target = { channel: lambdaTarget, unit: 'λ' };
       else if (afrTarget !== undefined) target = { channel: afrTarget, unit: 'AFR' };
-    } else if (spec.id === 'boost') {
-      target = boostTargetOf(resolved);
     }
     lanes.push(laneForSpec(spec, channel, display, target));
   }
   return lanes;
-}
-
-function boostTargetOf(resolved: Map<string, string>): { channel: string; unit: string } | undefined {
-  const channel = resolved.get('boostTarget');
-  return channel !== undefined ? { channel, unit: 'kPa' } : undefined;
-}
-
-/** Reads a channel's history, oldest sample first. */
-export type HistoryReader = (channel: string) => number[];
-/** Reads a channel's latest value. */
-export type LatestReader = (channel: string) => number | undefined;
-
-function newest(history: number[], count: number): number[] {
-  return history.length <= count ? history : history.slice(history.length - count);
-}
-
-/**
- * The newest `count` raw samples of a lane, oldest first. A gauge-pressure lane
- * subtracts barometric pressure sample by sample, aligned on the newest end.
- */
-export function laneWindowSamples(lane: ScopeLane, count: number, read: HistoryReader): number[] {
-  const samples = newest(read(lane.channel), count);
-  if (!lane.barometric) return samples;
-  const baro = lane.barometric.channel !== undefined ? read(lane.barometric.channel) : [];
-  const shift = baro.length - samples.length;
-  return samples.map((value, i) => {
-    const j = shift + i;
-    return value - barometricOrStandard(j >= 0 ? baro[j] : undefined);
-  });
-}
-
-/** The newest `count` samples of a lane's trace target (empty when the lane has none). */
-export function targetWindowSamples(lane: ScopeLane, count: number, read: HistoryReader): number[] {
-  if (!lane.target) return [];
-  return newest(read(lane.target.channel), count);
-}
-
-/** The lane's latest raw value, or undefined when it has none yet. */
-export function laneLatestRaw(lane: ScopeLane, read: LatestReader): number | undefined {
-  const value = read(lane.channel);
-  if (!lane.barometric) return value;
-  if (value === undefined || !Number.isFinite(value)) return undefined;
-  const baro = lane.barometric.channel !== undefined ? read(lane.barometric.channel) : undefined;
-  return value - barometricOrStandard(baro);
-}
-
-/** The raw value `samplesBack` samples before the newest one, or undefined when out of range. */
-export function laneRawAt(lane: ScopeLane, samplesBack: number, read: HistoryReader): number | undefined {
-  const samples = laneWindowSamples(lane, samplesBack + 1, read);
-  return samples[samples.length - 1 - samplesBack];
 }
 
 /** Human name for a lane id (used by the picker). */

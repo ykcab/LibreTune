@@ -13,7 +13,23 @@ relevant.
 
 ## [Unreleased]
 
-### 2026-10-17 — Boost view on the Startup dash
+### 2026-10-17 — Boost moves to LOAD & AIR; the BOOST view is withdrawn
+
+The BOOST view added in `6e2a92c` was not what was wanted, so it is withdrawn.
+The centre is back to LIVE and REVIEW as in `23588eb`, and the lane code it
+added is gone with it. Boost is a tile in the LOAD & AIR section now, after BARO.
+The engine rail keeps MAP. The tile shows the ECU's boost channel once the ECU
+publishes one, and MAP − baro until then (standard atmosphere when there is no
+baro channel), as before.
+
+Kept from `6e2a92c`: `boostOutput` is no longer a boost source (it is the boost
+controller's duty cycle, in percent), and the barometric rule is one shared helper
+(`barometricOrStandard`).
+
+Tests cover the tile's placement in LOAD & AIR, the derived value, and the switch
+to the ECU's channel once it publishes one.
+
+### 2026-10-17 — Boost view on the Startup dash (withdrawn, see above)
 
 Boost was only ever a tile in the engine rail. The scope could plot it only when
 the ECU published a boost channel, and most ECUs do not, so the centre had no way

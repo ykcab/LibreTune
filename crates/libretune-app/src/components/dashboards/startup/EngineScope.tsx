@@ -29,13 +29,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { getChannelHistoryBuffer, useRealtimeStore } from '../../../stores/realtimeStore';
 import { formatNumber } from './channels';
 import type { SessionMarker, SessionSnapshot } from './session';
-import {
-  laneLatestRaw,
-  laneRawAt,
-  laneWindowSamples,
-  targetWindowSamples,
-  type ScopeLane,
-} from './lanes';
+import type { ScopeLane } from './lanes';
 import './EngineScope.css';
 
 export interface EngineScopeProps {
@@ -76,6 +70,19 @@ interface RangeCacheEntry {
 }
 
 /* ------------------------------------------------------------------ helpers */
+
+function laneSamples(lane: ScopeLane, windowSamples: number): number[] {
+  const history = getChannelHistoryBuffer(lane.channel);
+  if (history.length === 0 || history.length <= windowSamples) return history;
+  return history.slice(history.length - windowSamples);
+}
+
+function targetSamples(lane: ScopeLane, windowSamples: number): number[] {
+  if (!lane.target) return [];
+  const history = getChannelHistoryBuffer(lane.target.channel);
+  if (history.length === 0) return [];
+  return history.length <= windowSamples ? history : history.slice(history.length - windowSamples);
+}
 
 /** Row heights: declared heights, scaled to exactly fill the canvas. */
 function rowHeights(lanes: ScopeLane[], total: number): number[] {
@@ -418,7 +425,7 @@ function paint(args: PaintArgs): void {
     // ---- right gutter: live value from the store (never the throttled canvas's
     // last buffer sample), or the cursor value when inspecting
     const cursorIndex = cursor !== null ? n - 1 - cursor : -1;
-    const liveRaw = laneLatestRaw(lane, (channel) => liveValues[channel]);
+    const liveRaw = liveValues[lane.channel];
     const shownRaw = cursorIndex >= 0 && cursorIndex < n
       ? samples[cursorIndex]
       : liveRaw !== undefined
@@ -609,8 +616,8 @@ export default function EngineScope({
       const laneData = new Map<string, number[]>();
       const targetData = new Map<string, number[]>();
       for (const lane of lanes) {
-        laneData.set(lane.id, laneWindowSamples(lane, windowSamples, getChannelHistoryBuffer));
-        targetData.set(lane.id, targetWindowSamples(lane, windowSamples, getChannelHistoryBuffer));
+        laneData.set(lane.id, laneSamples(lane, windowSamples));
+        targetData.set(lane.id, targetSamples(lane, windowSamples));
       }
       frozenRef.current = { at: Date.now(), lanes: laneData, targets: targetData };
       dirtyRef.current = true;
@@ -683,10 +690,10 @@ export default function EngineScope({
       const currentLanes = lanesRef.current;
       const samples = windowSamplesRef.current;
       const data = currentLanes.map((lane) =>
-        frozen ? (frozen.lanes.get(lane.id) ?? EMPTY) : laneWindowSamples(lane, samples, getChannelHistoryBuffer),
+        frozen ? (frozen.lanes.get(lane.id) ?? EMPTY) : laneSamples(lane, samples),
       );
       const targets = currentLanes.map((lane) =>
-        frozen ? (frozen.targets.get(lane.id) ?? EMPTY) : targetWindowSamples(lane, samples, getChannelHistoryBuffer),
+        frozen ? (frozen.targets.get(lane.id) ?? EMPTY) : targetSamples(lane, samples),
       );
       // Live values straight from the store so the right-hand gutter and the DOM
       // tiles can never disagree about "now".
@@ -786,8 +793,11 @@ export default function EngineScope({
         const seconds = ((cursorRef.current * intervalMsRef.current) / 1000).toFixed(1);
         const parts: string[] = [`${seconds} seconds ago`];
         for (const lane of lanesRef.current) {
-          const value = laneRawAt(lane, cursorRef.current ?? 0, getChannelHistoryBuffer);
-          if (value === undefined || isGapSample(lane, value)) continue;
+          const raw = getChannelHistoryBuffer(lane.channel);
+          const index = raw.length - 1 - (cursorRef.current ?? 0);
+          if (index < 0 || index >= raw.length) continue;
+          const value = raw[index];
+          if (isGapSample(lane, value)) continue;
           parts.push(`${lane.label} ${formatNumber(value * lane.scale + lane.offset, lane.digits)} ${lane.unit}`);
         }
         setAnnouncement(parts.join(', '));
@@ -802,12 +812,9 @@ export default function EngineScope({
   const rows = useMemo(
     () =>
       lanes.map((lane) => {
-        const channels = useRealtimeStore.getState().channels;
-        const raw = lane.barometric
-          ? laneLatestRaw(lane, (channel) => channels[channel])
-          : lane.id.startsWith('ch:')
-            ? channels[lane.channel]
-            : snapshot.values[lane.id];
+        const raw = lane.id.startsWith('ch:')
+          ? useRealtimeStore.getState().channels[lane.channel]
+          : snapshot.values[lane.id];
         const missing = raw === undefined || isGapSample(lane, raw);
         return {
           label: lane.label,

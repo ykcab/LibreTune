@@ -55,7 +55,7 @@ canvas, because it makes promises a generic gauge cannot keep.
 | Region | Contents |
 |--------|----------|
 | **Status strip** | Project, ECU signature, link state and port, stream rate, channels per frame, logger control (start/stop, duration, channel and sample counts) and unsaved-tune state. |
-| **Engine rail** | Derived engine phase (off / cranking / idle / over-run / running / load, with limiter and launch flags winning over the derivation), engine speed with the ECU's rev limit marked when it publishes one, MAP and boost (derived from MAP − baro when the ECU has no boost channel), throttle, pedal, baro, intake air temperature, coolant, oil pressure, oil temperature, battery, trigger sync, and this session's extremes. |
+| **Engine rail** | Derived engine phase (off / cranking / idle / over-run / running / load, with limiter and launch flags winning over the derivation), engine speed with the ECU's rev limit marked when it publishes one, MAP, then load and air: throttle, pedal, intake air temperature, baro and boost (the ECU's boost channel once it publishes one, MAP − baro until then), coolant, oil pressure, oil temperature, battery, trigger sync, and this session's extremes. |
 | **Live trace** | A multi-channel oscilloscope. Every lane prints the range it is drawing, the current value and its unit, and the threshold zones that apply. |
 | **Fuel rail** | Measured fuel ratio against the commanded target with a rich/lean error meter, then fuel trim, injector duty, pulse width, fuel pressure, VE, ethanol content, fuel level, ignition advance, dwell, knock, knock retard and EGT, followed by the ECU's own state flags. |
 | **Analysis strip** | Detected events (grouped per rule, with counts, thresholds and ages), fuelling accuracy against the commanded ratio over load cells, the operating-envelope map (rpm × MAP) for this session — cell tint = mean fuelling error (amber lean, blue rich), cell opacity = dwell, with the worst cell named underneath — and the live performance estimate. |
@@ -65,7 +65,7 @@ canvas, because it makes promises a generic gauge cannot keep.
 
 | Control | Effect |
 |---------|--------|
-| **Live / Boost / Review** | Switches the centre between the live multi-channel scope, a boost view, and a scrub-through of the recorded session (the logger keeps recording either way). **Boost** plots boost against the ECU's boost target, with throttle and RPM: the ECU's own boost channel when it publishes one, otherwise MAP − baro (standard atmosphere when there is no baro channel), the same rule the rail tile uses. Live-only controls (the channel picker) are hidden in Boost, and everything except the window and pause controls is hidden in Review, because they would do nothing there. |
+| **Live / Review** | Switches the centre between the live multi-channel scope and a scrub-through of the recorded session (the logger keeps recording either way). Live-only controls are hidden in Review, because they would do nothing there. |
 | **5 / 10 / 20 / 30 s** | Time window. Bounded by the realtime buffer (~300 samples). |
 | **Pause / Resume** | Freezes the exact window on screen and reports how far behind live it is. The ECU keeps streaming. |
 | **Channels** | Adds or removes lanes. The list contains the curated tuning channels plus every channel the loaded INI publishes. |
