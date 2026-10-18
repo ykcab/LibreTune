@@ -151,7 +151,7 @@ use commands::project_tune_sync::{
 };
 use commands::realtime_get::get_realtime_data;
 use commands::realtime_stop::stop_realtime_stream;
-use commands::realtime_stream::start_realtime_stream;
+use commands::realtime_stream::{get_realtime_config, start_realtime_stream};
 use commands::restore_points::{
     create_restore_point, delete_restore_point, list_restore_points, load_restore_point,
 };
@@ -281,6 +281,7 @@ pub fn run() {
             get_realtime_data,
             debug_single_realtime_read,
             start_realtime_stream,
+            get_realtime_config,
             stop_realtime_stream,
             get_table_data,
             get_table_info,

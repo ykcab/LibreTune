@@ -18,7 +18,7 @@ import CurveEditor, { CurveData, SimpleGaugeInfo } from './components/curves/Cur
 import TsDashboard from './components/dashboards/TsDashboard';
 import DialogRenderer, { DialogDefinition as RendererDialogDef } from './components/dialogs/DialogRenderer';
 import { AgentDock } from './components/agent/AgentDock';
-import { useRealtimeStore } from './stores/realtimeStore';
+import { ensureRealtimeListener } from './services/realtimeListener';
 import { initRenderSettings } from './components/gauges/renderSettings';
 import { ArrowLeftToLine, X } from 'lucide-react';
 import './styles';
@@ -143,11 +143,12 @@ export default function PopOutWindow() {
     setLoading(false);
   }, []);
 
-  // Listen for realtime updates and update Zustand store
+  // Listen for realtime updates and update Zustand store. This window is a
+  // separate webview with its own module instance, so it registers the same
+  // listener set as the main window — deltas plus the one-off config payload,
+  // which is why it must not roll its own `realtime:update` subscription.
   useEffect(() => {
-    return subscribeTauri<Record<string, number>>('realtime:update', (event) => {
-      useRealtimeStore.getState().updateChannels(event.payload);
-    });
+    void ensureRealtimeListener();
   }, []);
 
   // Fetch dialog definition if type is dialog and data is missing

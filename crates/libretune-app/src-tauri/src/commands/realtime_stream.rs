@@ -260,6 +260,68 @@ pub(crate) fn apply_channel_aliases(data: &mut HashMap<String, f64>) {
     }
 }
 
+/// Every key `apply_channel_aliases` can add on top of the raw channels.
+///
+/// The alias pass writes straight into the map, so the only way to fold its
+/// results into the delta payload is to re-check the keys it owns afterwards.
+/// That is a ~30-entry comparison instead of a scan of the whole snapshot.
+fn alias_candidate_names() -> impl Iterator<Item = &'static str> {
+    REALTIME_CHANNEL_ALIASES
+        .iter()
+        .map(|(alias, _)| *alias)
+        .chain(std::iter::once("correction"))
+}
+
+/// `map[name] = value`, reusing the existing key allocation when there is one.
+///
+/// The stream writes every live channel on every tick. Allocating a fresh
+/// `String` for each of ~2,300 names 20 times a second is ~46k allocations a
+/// second spent on nothing — the key set is stable after the first tick.
+fn set_in_place(map: &mut HashMap<String, f64>, name: &str, value: f64) {
+    if let Some(slot) = map.get_mut(name) {
+        *slot = value;
+    } else {
+        map.insert(name.to_string(), value);
+    }
+}
+
+/// serde_json cannot serialize NaN/Infinity, which would silently break `emit`.
+fn sanitize_channel_value(value: f64) -> f64 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+/// What the webview has already been sent, so a tick can send only what moved.
+///
+/// The stream keeps a complete snapshot in memory — the data logger, AutoTune,
+/// the live window and the computed-channel chains all need every value — but
+/// the event payload is reduced to the keys that actually changed. On a real
+/// tune that is the difference between ~300 KB twenty times a second and a few
+/// KB: of ~7,845 keys, ~5,570 are tune constants that only move when the user
+/// edits the tune, and most of the rest are static on any given tick.
+#[derive(Default)]
+struct EmittedBaseline {
+    values: HashMap<String, f64>,
+}
+
+impl EmittedBaseline {
+    /// True when `value` differs from the last value sent under `name`.
+    fn is_stale(&self, name: &str, value: f64) -> bool {
+        self.values.get(name) != Some(&value)
+    }
+
+    /// Record a value that has just been sent.
+    fn record(&mut self, name: &str, value: f64) {
+        set_in_place(&mut self.values, name, value);
+    }
+
+    /// Record everything in a payload that has just been sent.
+    fn record_all(&mut self, payload: &HashMap<String, f64>) {
+        for (name, value) in payload {
+            self.record(name, *value);
+        }
+    }
+}
+
 /// Feed the current realtime snapshot to the data logger when a recording is
 /// active. The logger applies its own sample-rate limiting in `record()`.
 /// Record that a realtime sample couldn't be handed to the logger because its
@@ -602,8 +664,34 @@ pub(crate) async fn stop_streaming_on_definition_change(state: &AppState) {
     }
 }
 
+/// The tune constants the realtime stream exposes as channels.
+///
+/// The stream sends these on their own `realtime:config` event when it starts
+/// and whenever the tune changes, but a webview that attaches later — a pop-out
+/// window, or the main window racing the stream's first tick — would miss that
+/// event entirely, and one that attaches while the stream is stopped would never
+/// see it. So every window asks for the current set on mount. It is derived from
+/// the same in-memory definition and tune the stream reads, so the two cannot
+/// drift apart.
 #[tauri::command]
+pub async fn get_realtime_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<HashMap<String, f64>, String> {
+    let def = state.definition.lock().await;
+    let tune = state.current_tune.lock().await;
+    let context = crate::commands::string_context::numeric_context_from_tune_def(
+        tune.as_ref(),
+        def.as_ref(),
+    );
+    // Values written into an INI can carry NaN through a bad formula; the
+    // stream sanitizes for the same reason.
+    Ok(context
+        .into_iter()
+        .map(|(name, value)| (name, sanitize_channel_value(value)))
+        .collect())
+}
 
+#[tauri::command]
 pub async fn start_realtime_stream(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -719,6 +807,17 @@ pub async fn start_realtime_stream(
             )
         };
 
+        // The complete snapshot the tick is built into, kept across iterations.
+        // It stays whole — the logger, AutoTune, the live window and the
+        // computed-channel chains all read from it — while only the keys that
+        // changed are sent to the webview (see `EmittedBaseline`).
+        let mut snapshot: HashMap<String, f64> = HashMap::new();
+        // Baselines for the two payloads the webview receives: the tune
+        // constants (sent on their own event, rarely) and the live channels
+        // (sent as a delta on every tick).
+        let mut emitted_constants = EmittedBaseline::default();
+        let mut emitted_live = EmittedBaseline::default();
+
         // Cache app settings once — load_settings() reads from disk and must not run every tick.
         let rpm_settings = load_settings(&app_handle);
         let rpm_key_on_threshold = rpm_settings.key_on_threshold_rpm;
@@ -788,6 +887,37 @@ pub async fn start_realtime_stream(
                         def.as_ref(),
                     )
                 };
+            }
+
+            // Tune constants move only when the user edits the tune, so they
+            // travel on their own event — the full set on the first tick, then
+            // just what changed — instead of riding every 50 ms tick. On the
+            // project this was measured on they are ~5,570 of the ~7,845 keys
+            // in the snapshot: 71% of the old per-tick payload was
+            // configuration that could not change while the engine ran.
+            if tick_count == 1 || tick_count.is_multiple_of(20) {
+                let mut config_delta: HashMap<String, f64> = HashMap::new();
+                for (name, value) in &numeric_ctx {
+                    let value = sanitize_channel_value(*value);
+                    if emitted_constants.is_stale(name, value) {
+                        // Keep the complete snapshot addressable by name: the
+                        // expression engine resolves constant identifiers from
+                        // it (lambda = afr / stoich).
+                        set_in_place(&mut snapshot, name, value);
+                        config_delta.insert(name.clone(), value);
+                    }
+                }
+                if !config_delta.is_empty() {
+                    emitted_constants.record_all(&config_delta);
+                    stream_log(&format!(
+                        "emit config: {} constants (of {})",
+                        config_delta.len(),
+                        numeric_ctx.len()
+                    ));
+                    if let Err(e) = app_handle.emit("realtime:config", &config_delta) {
+                        stream_log(&format!("emit FAILED (config): {}", e));
+                    }
+                }
             }
 
             // Trace: log which phase we're in so we can find deadlocks
@@ -1025,18 +1155,22 @@ pub async fn start_realtime_stream(
                 // Phase 3: Process data outside of any mutex locks
                 match (&raw_result, def_data) {
                     (Ok(raw), Some((output_channels, endianness))) => {
-                        // Pass 1: the tune's own constants, then the runtime
-                        // block over the top. Runtime wins on a name collision:
-                        // a live channel is the current value, a constant is
-                        // what the tune was configured with.
-                        let mut data: HashMap<String, f64> = numeric_ctx.clone();
+                        // Only what changed goes over the bridge this tick. The
+                        // snapshot itself is updated in place — no 7,845-key
+                        // clone per tick — and every value that differs from
+                        // what the webview already holds is collected here.
+                        let mut delta: HashMap<String, f64> = HashMap::new();
                         let mut computed_channels = Vec::new();
 
                         for (name, channel) in output_channels.iter() {
                             if channel.is_computed() {
                                 computed_channels.push((name.clone(), channel.clone()));
                             } else if let Some(val) = channel.parse(raw, *endianness) {
-                                data.insert(name.clone(), val);
+                                let val = sanitize_channel_value(val);
+                                set_in_place(&mut snapshot, name, val);
+                                if emitted_live.is_stale(name, val) {
+                                    delta.insert(name.clone(), val);
+                                }
                             }
                         }
 
@@ -1056,11 +1190,16 @@ pub async fn start_realtime_stream(
                                 if let Some(val) = channel.parse_with_contexts(
                                     raw,
                                     *endianness,
-                                    &data,
+                                    &snapshot,
                                     Some(&string_ctx),
                                 ) {
-                                    if data.insert(name.clone(), val) != Some(val) {
+                                    let val = sanitize_channel_value(val);
+                                    if snapshot.get(name.as_str()) != Some(&val) {
                                         changed = true;
+                                    }
+                                    set_in_place(&mut snapshot, name, val);
+                                    if emitted_live.is_stale(name, val) {
+                                        delta.insert(name.clone(), val);
                                     }
                                 }
                             }
@@ -1085,46 +1224,69 @@ pub async fn start_realtime_stream(
                                 if let Some(expr) = &channel.cached_ast {
                                     if let Ok(val) = libretune_core::ini::expression::evaluate(
                                         expr,
-                                        &data,
+                                        &snapshot,
                                         Some(&string_ctx),
                                     ) {
-                                        data.insert(channel.name.clone(), val.as_f64());
+                                        let val = sanitize_channel_value(val.as_f64());
+                                        set_in_place(&mut snapshot, &channel.name, val);
+                                        if emitted_live.is_stale(&channel.name, val) {
+                                            delta.insert(channel.name.clone(), val);
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        apply_channel_aliases(&mut data);
+                        apply_channel_aliases(&mut snapshot);
+                        // The alias pass writes straight into the snapshot, so
+                        // pick up the keys it owns by comparison (~30 lookups)
+                        // rather than scanning the whole map.
+                        for name in alias_candidate_names() {
+                            if let Some(&val) = snapshot.get(name) {
+                                if emitted_live.is_stale(name, val) {
+                                    delta.insert(name.to_string(), val);
+                                }
+                            }
+                        }
 
                         // Sanitize NaN/Infinity — serde_json cannot serialize these,
                         // which would silently break app_handle.emit().
-                        for v in data.values_mut() {
+                        for v in snapshot.values_mut() {
                             if !v.is_finite() {
                                 *v = 0.0;
                             }
                         }
 
-                        if let Err(e) = app_handle.emit("realtime:update", &data) {
+                        // An empty payload is still sent: the webview uses the
+                        // tick to advance per-channel history and to decide
+                        // whether the ECU is still talking (useIsReceivingData).
+                        // It is a `{}` rather than 300 KB.
+                        if let Err(e) = app_handle.emit("realtime:update", &delta) {
                             stream_log(&format!("emit FAILED (real): {}", e));
                         }
-                        crate::live_window::push(current_time_ms, &data);
+                        emitted_live.record_all(&delta);
+                        crate::live_window::push(current_time_ms, &snapshot);
 
-                        // Log parsed channel count — every tick for the first 30, then every 20th (~1/sec)
+                        // Log the payload size — every tick for the first 30,
+                        // then every 20th (~1/sec). `sent` is the delta the
+                        // webview received; the difference against `ch` is the
+                        // work this change removes from the IPC bridge.
                         {
                             static EMIT_LOG_COUNTER: std::sync::atomic::AtomicU64 =
                                 std::sync::atomic::AtomicU64::new(0);
                             let count =
                                 EMIT_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             if count < 30 || count.is_multiple_of(20) {
-                                let rpm = data
+                                let rpm = snapshot
                                     .get("rpm")
-                                    .or_else(|| data.get("RPM"))
+                                    .or_else(|| snapshot.get("RPM"))
                                     .copied()
                                     .unwrap_or(-1.0);
                                 stream_log(&format!(
-                                    "emit #{}: {} ch, rpm={:.0}",
+                                    "emit #{}: {} sent of {} ch, rpm={:.0}",
                                     count,
-                                    data.len(),
+                                    delta.len(),
+                                    snapshot.len(),
                                     rpm
                                 ));
                             }
@@ -1135,9 +1297,9 @@ pub async fn start_realtime_stream(
                             stream_log(&format!("tick #{}: T5-rpm_state", tick_count));
                         }
                         {
-                            let rpm = data
+                            let rpm = snapshot
                                 .get("rpm")
-                                .or_else(|| data.get("RPM"))
+                                .or_else(|| snapshot.get("RPM"))
                                 .copied()
                                 .unwrap_or(0.0);
 
@@ -1159,10 +1321,10 @@ pub async fn start_realtime_stream(
                         if tick_count <= 25 || tick_count.is_multiple_of(20) {
                             stream_log(&format!("tick #{}: T6-autotune", tick_count));
                         }
-                        feed_autotune_data(&app_state, &data, current_time_ms).await;
+                        feed_autotune_data(&app_state, &snapshot, current_time_ms).await;
 
                         // Feed data to the data logger if recording
-                        feed_data_logger(&app_state, &data).await;
+                        feed_data_logger(&app_state, &snapshot).await;
 
                         local_ticks_success += 1;
                     }
@@ -1202,6 +1364,73 @@ pub async fn start_realtime_stream(
 
     *task_guard = Some(handle);
     Ok(())
+}
+
+#[cfg(test)]
+mod delta_payload_tests {
+    use super::{alias_candidate_names, set_in_place, EmittedBaseline, REALTIME_CHANNEL_ALIASES};
+    use std::collections::HashMap;
+
+    /// The whole point of the delta payload: a value that has not moved must not
+    /// be re-sent. Before this, every tick carried all ~7,845 keys — 71% of them
+    /// tune constants that cannot change while the engine is running.
+    #[test]
+    fn reports_a_value_once_and_then_only_when_it_moves() {
+        let mut baseline = EmittedBaseline::default();
+
+        assert!(baseline.is_stale("rpm", 2400.0), "first sighting is news");
+        baseline.record("rpm", 2400.0);
+        assert!(!baseline.is_stale("rpm", 2400.0), "an unchanged value is not");
+        assert!(baseline.is_stale("rpm", 2500.0), "a moved value is");
+    }
+
+    #[test]
+    fn records_a_batch_so_the_next_tick_can_diff_against_it() {
+        let payload: HashMap<String, f64> =
+            [("rpm".to_string(), 2400.0), ("map".to_string(), 41.2)]
+                .into_iter()
+                .collect();
+        let mut baseline = EmittedBaseline::default();
+        baseline.record_all(&payload);
+
+        assert!(!baseline.is_stale("rpm", 2400.0));
+        assert!(!baseline.is_stale("map", 41.2));
+        assert!(baseline.is_stale("clt", 88.0), "an unsent channel is still news");
+    }
+
+    /// Keys are rewritten on every tick; reallocating them would be ~46k wasted
+    /// allocations a second.
+    #[test]
+    fn rewriting_a_key_reuses_its_slot() {
+        let mut map: HashMap<String, f64> = HashMap::new();
+        set_in_place(&mut map, "rpm", 1.0);
+        let key_ptr = map.keys().next().unwrap().as_ptr();
+
+        set_in_place(&mut map, "rpm", 2.0);
+
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("rpm"), Some(&2.0));
+        assert_eq!(
+            map.keys().next().unwrap().as_ptr(),
+            key_ptr,
+            "the key allocation should be reused"
+        );
+    }
+
+    /// Alias results are inserted straight into the snapshot, so the delta pass
+    /// can only find them by re-checking the keys the alias table owns. Missing
+    /// one would mean a dashboard gauge stuck on its first value.
+    #[test]
+    fn alias_names_cover_every_alias_and_the_derived_correction() {
+        let names: Vec<&str> = alias_candidate_names().collect();
+        for (alias, _) in REALTIME_CHANNEL_ALIASES {
+            assert!(names.contains(alias), "alias `{alias}` is not in the delta pass");
+        }
+        assert!(
+            names.contains(&"correction"),
+            "the derived fuel-correction channel must be in the delta pass"
+        );
+    }
 }
 
 #[cfg(test)]

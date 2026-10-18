@@ -16,8 +16,23 @@ interface RealtimeState {
   lastUpdateTime: number;
   
   // Actions
-  /** Update all channels with new data (called from event listener) */
+  /**
+   * Merge a payload of channels into the store.
+   *
+   * The backend sends a **delta** — only the keys whose value changed since the
+   * last tick — because the full snapshot is ~7,845 keys and 71% of them are
+   * tune constants that cannot change while the engine is running. Those arrive
+   * once through `applyConfig` instead. An empty payload is still delivered as a
+   * heartbeat so per-channel history keeps advancing and `useIsReceivingData`
+   * can tell a quiet ECU from a disconnected one.
+   */
   updateChannels: (data: Record<string, number>) => void;
+  /**
+   * Merge the tune's constants (sent on connect and whenever the tune is
+   * edited). No history is recorded for these: they are configuration, and a
+   * buffer per constant would be ~13 MB of flat lines nobody graphs.
+   */
+  applyConfig: (data: Record<string, number>) => void;
   /** Clear all channel data */
   clearChannels: () => void;
 }
@@ -50,10 +65,40 @@ interface CircularBuffer {
 
 const _channelHistoryBuffer: Record<string, CircularBuffer> = {};
 
+/**
+ * Channels something has asked history for — every live channel the stream has
+ * named, plus any channel a reader explicitly requested.
+ *
+ * History used to be recorded for every key in the payload, which meant a
+ * `Float64Array(300)` (~2.4 KB) per key: ~18.8 MB on this project's tune, most
+ * of it for tune constants that never change and are never graphed. Now buffers
+ * are only kept for channels that can actually move (plus anything a LineGraph
+ * asks about), which is ~5.5 MB — and issue #71 still holds, because a sampled
+ * channel is written on every tick whether or not its value moved.
+ */
+const _sampledChannels = new Set<string>();
+
+function appendSample(name: string, channels: Record<string, number>): void {
+  const value = channels[name];
+  if (value === undefined) return;
+  let buf = _channelHistoryBuffer[name];
+  if (!buf) {
+    buf = { data: new Float64Array(HISTORY_SIZE), writeIdx: 0, count: 0 };
+    _channelHistoryBuffer[name] = buf;
+  }
+  buf.data[buf.writeIdx] = value;
+  buf.writeIdx = (buf.writeIdx + 1) % HISTORY_SIZE;
+  if (buf.count < HISTORY_SIZE) buf.count++;
+}
+
 /** Read channel history imperatively (never triggers re-renders).
  *  Returns an array ordered oldest→newest.
  */
 export function getChannelHistoryBuffer(channelName: string): number[] {
+  // Reading a channel's history is what subscribes it to sampling. This is how
+  // a graph of a tune constant (a flat line that should still scroll) keeps
+  // working now that constants no longer ride the per-tick payload.
+  _sampledChannels.add(channelName);
   const buf = _channelHistoryBuffer[channelName];
   if (!buf || buf.count === 0) return EMPTY_HISTORY;
   // Unroll circular buffer into a plain array (oldest first)
@@ -81,45 +126,49 @@ export const useRealtimeStore = create<RealtimeState>()(
     updateChannels: (data) => {
       set((state) => {
         let valuesChanged = false;
-        for (const [name, value] of Object.entries(data)) {
-          if (state.channels[name] !== value) {
+        for (const name in data) {
+          if (state.channels[name] !== data[name]) {
             valuesChanged = true;
             break;
           }
         }
-        if (!valuesChanged) {
-          const existingKeys = Object.keys(state.channels);
-          if (
-            existingKeys.length !== Object.keys(data).length ||
-            existingKeys.some((key) => !(key in data))
-          ) {
-            valuesChanged = true;
-          }
+
+        // Every key in a delta is a live channel, so it is worth sampling.
+        for (const name in data) {
+          _sampledChannels.add(name);
         }
 
-        // Issue #71: always append the latest sample to the history buffer so that
-        // time-series line graphs keep scrolling even when a channel's value is
-        // constant. Previously, identical consecutive values were coalesced, which
-        // froze the trace until the next change. The buffer is a fixed-size
+        const channels = valuesChanged
+          ? { ...state.channels, ...data }
+          : state.channels;
+
+        // Issue #71: always append the latest sample for every sampled channel so
+        // that time-series line graphs keep scrolling even when a channel's value
+        // is constant. Previously, identical consecutive values were coalesced,
+        // which froze the trace until the next change. The buffer is a fixed-size
         // Float64Array (no per-sample allocation), so writing every tick is cheap.
-        for (const [name, value] of Object.entries(data)) {
-          let buf = _channelHistoryBuffer[name];
-          if (!buf) {
-            buf = { data: new Float64Array(HISTORY_SIZE), writeIdx: 0, count: 0 };
-            _channelHistoryBuffer[name] = buf;
+        for (const name of _sampledChannels) {
+          appendSample(name, channels);
+        }
+
+        return { channels, lastUpdateTime: Date.now() };
+      });
+    },
+
+    applyConfig: (data) => {
+      set((state) => {
+        let valuesChanged = false;
+        for (const name in data) {
+          if (state.channels[name] !== data[name]) {
+            valuesChanged = true;
+            break;
           }
-          buf.data[buf.writeIdx] = value;
-          buf.writeIdx = (buf.writeIdx + 1) % HISTORY_SIZE;
-          if (buf.count < HISTORY_SIZE) buf.count++;
         }
-
-        if (!valuesChanged) {
-          return { ...state, lastUpdateTime: Date.now() };
-        }
-
+        // Constants that did not move must not wake a single subscriber.
+        if (!valuesChanged) return state;
         return {
           channels: { ...state.channels, ...data },
-          lastUpdateTime: Date.now(),
+          lastUpdateTime: state.lastUpdateTime,
         };
       });
     },
@@ -129,6 +178,7 @@ export const useRealtimeStore = create<RealtimeState>()(
       for (const key of Object.keys(_channelHistoryBuffer)) {
         delete _channelHistoryBuffer[key];
       }
+      _sampledChannels.clear();
       set({
         channels: {},
         lastUpdateTime: 0
