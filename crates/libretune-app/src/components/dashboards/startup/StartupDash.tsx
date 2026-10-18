@@ -31,7 +31,7 @@ import {
 import { applyLimitOverrides } from './limits';
 import EngineScope from './EngineScope';
 import LimitsDialog from './LimitsDialog';
-import { buildLanes, DEFAULT_LANE_IDS } from './lanes';
+import { BOOST_LANE_IDS, buildLanes, DEFAULT_LANE_IDS } from './lanes';
 import { CoverageMap, DynoPanel, EventsPanel, FuelingPanel } from './panels';
 import { loadLimitOverrides, saveLimitOverrides, type LimitOverrides } from './limits';
 import { OIL_MIN_ARM_RPM, OIL_MIN_KPA_PER_1000RPM } from './session';
@@ -278,7 +278,7 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
   const [paused, setPaused] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState('');
-  const [mode, setMode] = useState<'live' | 'review'>('live');
+  const [mode, setMode] = useState<'live' | 'boost' | 'review'>('live');
   const [limitsOpen, setLimitsOpen] = useState(false);
   const [overrides, setOverrides] = useState<LimitOverrides>(loadLimitOverrides);
 
@@ -333,6 +333,11 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
 
   const limitKey = resolveKeys(specs.rpm.reference?.keys ?? [], available);
   const boostTargetKey = resolveKeys(['boostTarget', 'targetBoost', 'boostControlTarget'], available);
+  const boostLanes = useMemo(() => {
+    const resolved = new Map(resolvedKeys);
+    if (boostTargetKey !== undefined) resolved.set('boostTarget', boostTargetKey);
+    return buildLanes(BOOST_LANE_IDS, resolved, specs, channelMeta, unitDisplay);
+  }, [resolvedKeys, boostTargetKey, specs, channelMeta, unitDisplay]);
   const boostKey = session.keyFor('boost');
   // LIVE bank-wideband readouts for the split tile (the rule lives in the session).
   const liveLambda = useChannel(session.keyFor('lambda') ?? '__no_lambda__');
@@ -575,6 +580,14 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
               </button>
               <button
                 type="button"
+                className={`sd-btn${mode === 'boost' ? ' is-on' : ''}`}
+                onClick={() => setMode('boost')}
+                title="Boost against the ECU's target, with throttle and speed"
+              >
+                BOOST
+              </button>
+              <button
+                type="button"
                 className={`sd-btn${mode === 'review' ? ' is-on' : ''}`}
                 onClick={() => setMode('review')}
                 title="Scrub the recorded session (the logger keeps recording)"
@@ -582,7 +595,7 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
                 REVIEW
               </button>
             </div>
-            {mode === 'live' ? (
+            {mode !== 'review' ? (
               <>
                 <div className="sd-scope-bar__group" role="group" aria-label="Time window">
                   {WINDOW_OPTIONS.map((option) => (
@@ -606,15 +619,17 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
                   {paused ? <Play size={11} aria-hidden="true" /> : <Pause size={11} aria-hidden="true" />}
                   {paused ? 'RESUME' : 'PAUSE'}
                 </button>
-                <button
-                  type="button"
-                  className="sd-btn sd-btn--wide"
-                  onClick={() => setPickerOpen((open) => !open)}
-                  aria-expanded={pickerOpen}
-                  title="Choose which channels are plotted"
-                >
-                  CHANNELS ({lanes.length})
-                </button>
+                {mode === 'live' && (
+                  <button
+                    type="button"
+                    className="sd-btn sd-btn--wide"
+                    onClick={() => setPickerOpen((open) => !open)}
+                    aria-expanded={pickerOpen}
+                    title="Choose which channels are plotted"
+                  >
+                    CHANNELS ({lanes.length})
+                  </button>
+                )}
                 <span className="sd-scope-bar__spacer" />
                 <span className="sd-scope-bar__meta">
                   {snapshot.rateHz > 0 ? `${snapshot.rateHz.toFixed(1)} Hz` : 'no stream'}
@@ -632,7 +647,7 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
             )}
           </div>
 
-          {pickerOpen && (
+          {mode === 'live' && pickerOpen && (
             <div
               className="sd-picker"
               onKeyDown={(event) => {
@@ -693,9 +708,11 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
           )}
 
           <div className="sd-scope-host">
-            {mode === 'live' ? (
+            {mode === 'review' ? (
+              <ReviewGraphLog />
+            ) : (
               <EngineScope
-                lanes={lanes}
+                lanes={mode === 'boost' ? boostLanes : lanes}
                 markers={snapshot.markers}
                 snapshot={snapshot}
                 intervalMs={snapshot.intervalMs}
@@ -705,8 +722,6 @@ export default function StartupDash({ isConnected, channelMeta = NO_CHANNELS }: 
                 live={isConnected && snapshot.staleMs < 1000}
                 isConnected={isConnected}
               />
-            ) : (
-              <ReviewGraphLog />
             )}
           </div>
         </section>

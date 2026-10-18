@@ -130,7 +130,9 @@ export const CHANNELS: Record<string, ChannelSpec> = {
   },
   boost: {
     id: 'boost',
-    keys: ['boost', 'boostPressure', 'boostOutput'],
+    // `boostOutput` is the boost controller's duty cycle (percent), not a pressure,
+    // so it must never stand in for boost.
+    keys: ['boost', 'boostPressure'],
     label: 'BOOST',
     title: 'Boost pressure (gauge)',
     unit: 'kPa',
@@ -841,6 +843,13 @@ function pickSpec(
   return value;
 }
 
+export const STANDARD_ATMOSPHERE_KPA = 101.325;
+
+/** Barometric pressure to subtract from MAP: the ECU's reading when plausible, else standard atmosphere. */
+export function barometricOrStandard(baro: number | undefined): number {
+  return baro !== undefined && Number.isFinite(baro) && baro > 50 ? baro : STANDARD_ATMOSPHERE_KPA;
+}
+
 /**
  * Effective boost in kPa (gauge). Uses the ECU's boost channel when it exists,
  * otherwise derives it from MAP minus baro (or standard atmosphere) and says so.
@@ -858,8 +867,6 @@ export function effectiveBoost(
     return { derived: false };
   }
   const baroKey = resolveKey(CHANNELS.baro, available);
-  const baro = baroKey !== undefined && Number.isFinite(values[baroKey]) && values[baroKey] > 50
-    ? values[baroKey]
-    : 101.325;
+  const baro = barometricOrStandard(baroKey !== undefined ? values[baroKey] : undefined);
   return { value: values[mapKey] - baro, derived: true };
 }

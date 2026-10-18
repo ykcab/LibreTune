@@ -13,6 +13,34 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-17 — Boost view on the Startup dash
+
+Boost was only ever a tile in the engine rail. The scope could plot it only when
+the ECU published a boost channel, and most ECUs do not, so the centre had no way
+to show boost at all. The centre view group now has **BOOST** beside LIVE and
+REVIEW. It plots boost against the ECU's boost target, with throttle and RPM.
+
+- Boost is the ECU's boost channel when it publishes one, otherwise MAP − baro,
+  with standard atmosphere when there is no usable baro channel. That is the same
+  rule the rail tile uses: `barometricOrStandard` in `channels.ts`.
+- The target is the ECU's `boostTarget` (or an alias), drawn as the trace line.
+- The channel picker stays with LIVE. Window and pause controls work in BOOST.
+
+#### Fixed
+
+- **`channels.ts`** — the boost key list included `boostOutput`. In the INI that
+  channel is the boost controller's duty cycle (percent), not a pressure. On an
+  ECU that publishes it and no pressure channel, the rail tile showed duty as
+  kilopascals. It is no longer a boost source.
+
+#### Verified
+
+Unit tests cover the derived and direct boost lanes, the target trace, the
+barometric fallback, the alignment of the derived series with the target window,
+the cursor readout, and the BOOST button. Visually checked in the Startup harness:
+BOOST shows the derived trace peaking near 110 kPa against the 180 kPa target
+line, and LIVE is unchanged.
+
 ### 2026-10-17 — Command-button rows use one grid rule
 
 The bench fix (`259362e`) kept the flex row from the button restyle and added a

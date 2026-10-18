@@ -65,7 +65,7 @@ canvas, because it makes promises a generic gauge cannot keep.
 
 | Control | Effect |
 |---------|--------|
-| **Live / Review** | Switches the centre between the live multi-channel scope and a scrub-through of the recorded session (the logger keeps recording either way). Live-only controls are hidden in Review, because they would do nothing there. |
+| **Live / Boost / Review** | Switches the centre between the live multi-channel scope, a boost view, and a scrub-through of the recorded session (the logger keeps recording either way). **Boost** plots boost against the ECU's boost target, with throttle and RPM: the ECU's own boost channel when it publishes one, otherwise MAP − baro (standard atmosphere when there is no baro channel), the same rule the rail tile uses. Live-only controls (the channel picker) are hidden in Boost, and everything except the window and pause controls is hidden in Review, because they would do nothing there. |
 | **5 / 10 / 20 / 30 s** | Time window. Bounded by the realtime buffer (~300 samples). |
 | **Pause / Resume** | Freezes the exact window on screen and reports how far behind live it is. The ECU keeps streaming. |
 | **Channels** | Adds or removes lanes. The list contains the curated tuning channels plus every channel the loaded INI publishes. |

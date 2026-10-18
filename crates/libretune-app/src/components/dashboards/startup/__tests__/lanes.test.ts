@@ -3,7 +3,18 @@
  * same units as the tiles.
  */
 import { describe, expect, it } from 'vitest';
-import { buildLanes, laneForChannel, laneForSpec, laneLabel, seriesVar } from '../lanes';
+import {
+  BOOST_LANE_IDS,
+  buildLanes,
+  laneForChannel,
+  laneForSpec,
+  laneLabel,
+  laneLatestRaw,
+  laneRawAt,
+  laneWindowSamples,
+  seriesVar,
+  targetWindowSamples,
+} from '../lanes';
 import { CHANNELS, adaptSpecToUnit, unitFamily, unitTransform } from '../channels';
 import type { UnitDisplay } from '../useStartupTelemetry';
 import type { ChannelMeta } from '../types';
@@ -203,5 +214,74 @@ describe('INI-declared source units', () => {
     );
     expect(lane.unit).toBe('°C');
     expect(lane.bands?.[0].max).toBeCloseTo(105, 6);
+  });
+});
+
+describe('boost lanes', () => {
+  const derived = (map: string, baro?: string) =>
+    laneForSpec(CHANNELS.boost, map, metric, undefined, { channel: baro });
+
+  it('derives gauge pressure from MAP when the ECU has no boost channel', () => {
+    const [lane] = buildLanes(['boost'], new Map([['map', 'MAPValue'], ['baro', 'baroValue']]), CHANNELS, [], metric);
+    expect(lane.label).toBe('BOOST');
+    expect(lane.channel).toBe('MAPValue');
+    expect(lane.barometric).toEqual({ channel: 'baroValue' });
+    expect(lane.target).toBeUndefined();
+  });
+
+  it('falls back to standard atmosphere when no baro channel is published', () => {
+    const [lane] = buildLanes(['boost'], new Map([['map', 'MAPValue']]), CHANNELS, [], metric);
+    expect(lane.barometric).toEqual({ channel: undefined });
+  });
+
+  it('draws the ECU boost channel directly, without a barometric subtraction', () => {
+    const resolved = new Map([['boost', 'boostPressure'], ['map', 'MAPValue']]);
+    const [lane] = buildLanes(['boost'], resolved, CHANNELS, [], metric);
+    expect(lane.label).toBe('BOOST');
+    expect(lane.channel).toBe('boostPressure');
+    expect(lane.barometric).toBeUndefined();
+  });
+
+  it('plots the ECU boost target as the trace when it publishes one', () => {
+    const resolved = new Map([['map', 'MAPValue'], ['boostTarget', 'boostTargetValue']]);
+    const [lane] = buildLanes(['boost'], resolved, CHANNELS, [], metric);
+    expect(lane.target).toEqual({ channel: 'boostTargetValue', scale: 1, offset: 0 });
+  });
+
+  it('has no boost lane without MAP or a boost channel', () => {
+    expect(buildLanes(['boost'], new Map(), CHANNELS, [], metric)).toEqual([]);
+  });
+
+  it('subtracts barometric pressure sample by sample, aligned on the newest sample', () => {
+    const lane = derived('MAPValue', 'baroValue');
+    const history: Record<string, number[]> = { MAPValue: [100, 150, 200], baroValue: [99, 100] };
+    // The oldest MAP sample has no barometric partner, so it uses standard atmosphere.
+    expect(laneWindowSamples(lane, 3, (c) => history[c] ?? [])).toEqual([100 - 101.325, 150 - 99, 200 - 100]);
+  });
+
+  it('reads the latest gauge pressure, or nothing before the first sample', () => {
+    const lane = derived('MAPValue', 'baroValue');
+    expect(laneLatestRaw(lane, (c) => (c === 'MAPValue' ? 180 : c === 'baroValue' ? 100 : undefined))).toBe(80);
+    expect(laneLatestRaw(lane, () => undefined)).toBeUndefined();
+  });
+
+  it('reads the value a cursor points at, counting back from the newest sample', () => {
+    const lane = laneForSpec(CHANNELS.map, 'MAPValue', metric);
+    const history: Record<string, number[]> = { MAPValue: [10, 20, 30] };
+    const read = (c: string) => history[c] ?? [];
+    expect(laneRawAt(lane, 0, read)).toBe(30);
+    expect(laneRawAt(lane, 2, read)).toBe(10);
+    expect(laneRawAt(lane, 3, read)).toBeUndefined();
+  });
+
+  it('keeps the target window aligned with the lane window', () => {
+    const lane = laneForSpec(CHANNELS.boost, 'MAPValue', metric, { channel: 'T', unit: 'kPa' });
+    const history: Record<string, number[]> = { T: [1, 2, 3, 4] };
+    expect(targetWindowSamples(lane, 2, (c) => history[c] ?? [])).toEqual([3, 4]);
+  });
+
+  it('puts boost, throttle and rpm in the boost view, in that order', () => {
+    const resolved = new Map([['map', 'MAPValue'], ['tps', 'TPSValue'], ['rpm', 'RPMValue']]);
+    expect(buildLanes(BOOST_LANE_IDS, resolved, CHANNELS, [], metric).map((l) => l.id)).toEqual(['boost', 'tps', 'rpm']);
   });
 });

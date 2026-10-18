@@ -278,3 +278,18 @@ describe('events', () => {
     }
   });
 });
+
+describe('BOOST view', () => {
+  it('plots MAP minus baro against the ECU target, and hides the channel picker', () => {
+    renderDash();
+    push({ rpm: 3000, map: 180, coolant: 90 }, 3);
+
+    fireEvent.click(screen.getByRole('button', { name: 'BOOST' }));
+
+    expect(screen.queryByRole('button', { name: /CHANNELS/ })).toBeNull();
+    // The scope publishes its lane values as text for assistive tech.
+    const table = document.querySelector('.sd-scope table');
+    expect(table?.textContent).toContain('BOOST');
+    expect(table?.textContent).toContain('79'); // 180 kPa − 101.325 kPa, whole kPa
+  });
+});

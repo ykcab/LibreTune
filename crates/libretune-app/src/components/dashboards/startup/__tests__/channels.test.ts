@@ -9,7 +9,9 @@ import { describe, expect, it } from 'vitest';
 import {
   CHANNELS,
   bandFor,
+  barometricOrStandard,
   effectiveBoost,
+  STANDARD_ATMOSPHERE_KPA,
   engineState,
   flagActive,
   FLAGS,
@@ -203,6 +205,18 @@ describe('boost', () => {
   it('reports nothing when MAP is missing or collapsed', () => {
     expect(effectiveBoost({}, set()).value).toBeUndefined();
     expect(effectiveBoost({ map: 0 }, set('map')).value).toBeUndefined();
+  });
+
+  it('never treats the duty-cycle output as boost pressure', () => {
+    // boostOutput is the boost controller's duty cycle (percent), not a pressure.
+    expect(effectiveBoost({ boostOutput: 45 }, set('boostOutput')).value).toBeUndefined();
+    expect(effectiveBoost({ boostOutput: 45, map: 200, baro: 100 }, set('boostOutput', 'map', 'baro')).value).toBe(100);
+  });
+
+  it('uses the baro reading only when it is plausible', () => {
+    expect(barometricOrStandard(98)).toBe(98);
+    expect(barometricOrStandard(0)).toBe(STANDARD_ATMOSPHERE_KPA);
+    expect(barometricOrStandard(undefined)).toBe(STANDARD_ATMOSPHERE_KPA);
   });
 });
 
