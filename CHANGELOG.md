@@ -13,6 +13,19 @@ relevant.
 
 ## [Unreleased]
 
+### 2026-10-17 — Command-button rows use one grid rule
+
+The bench fix (`259362e`) kept the flex row from the button restyle and added a
+`display: contents` override on top of it for command grids. That is layering:
+the flex sizing rules were still there, under the override. The row is now one
+rule: a grid of as many equal columns as fit, never narrower than 150px. The
+flex sizing on the buttons is gone, and the command-grid override stays as the
+only exception.
+
+Visible change: in a narrow panel where three buttons fall into two columns, the
+third button keeps its column width instead of stretching across the row. Wide
+panels (the ECU stimulator, the pedal pair, the bench) measure the same as before.
+
 ### 2026-10-17 — Startup scope no longer flickers once the ECU is connected
 
 The Startup dashboard's live scope blanked repeatedly as soon as telemetry

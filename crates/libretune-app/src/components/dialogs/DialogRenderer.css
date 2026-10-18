@@ -466,23 +466,19 @@
 }
 
 .dialog-view .command-button-row {
-  /* Equal-width buttons in one horizontal row (2, 3, N buttons all share
-     the line); wraps to a second row on narrow panels instead of overflowing. */
-  display: flex;
-  flex-wrap: wrap;
+  /* Equal-width buttons: as many columns as fit (2, 3, N), never narrower than
+     150px, so a narrow panel drops to fewer columns instead of overflowing. */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
   gap: var(--space-4);
   padding: var(--space-4) 10px;
   box-sizing: border-box;
   width: 100%;
-  align-items: stretch;
 }
 
 .dialog-view .command-button-row .command-button-field {
-  flex: 1 1 0;
-  /* Never wider than the row: a narrow panel must wrap or shrink, not overflow. */
-  min-width: min(150px, 100%);
+  min-width: 0;
   padding: 0;
-  display: flex;
 }
 
 .dialog-view .command-button-row .command-button {
