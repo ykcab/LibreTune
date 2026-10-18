@@ -287,3 +287,23 @@ code, pre, .mono {
   clip: rect(0, 0, 0, 0);
   border: 0;
 }
+
+/*
+ * Reduced motion — the whole app, not just the new bits.
+ *
+ * The app declares 34 animations, 17 of them `infinite`, and had no handling
+ * for this preference anywhere. Someone tuning a car with vestibular
+ * sensitivity should not have permanently pulsing indicators in their
+ * peripheral vision. Collapsing the duration (rather than removing the rules)
+ * preserves every final state, so layouts cannot break.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

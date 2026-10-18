@@ -341,7 +341,7 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
     const isEngineRunning = typeof rpm === 'number' && rpm > 50;
 
     if (!isConnected || !isEngineRunning) {
-      startGaugeSweep(dashFile);
+      startGaugeSweep(dashFile, selectedPath);
     }
     // Only trigger on dashFile load (not on every isConnected change)
     // eslint-disable-next-line react-hooks/exhaustive-deps

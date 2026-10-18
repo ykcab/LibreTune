@@ -234,10 +234,8 @@ function ConnectionIcon({
 
   if (pending) {
     return (
-      <svg viewBox="0 0 16 16" fill="currentColor" className="statusbar-icon statusbar-icon-pending">
-        <circle cx="8" cy="8" r="4" fill="var(--warning, #f59e0b)">
-          <animate attributeName="opacity" values="1;0.35;1" dur="1.2s" repeatCount="indefinite" />
-        </circle>
+      <svg viewBox="0 0 16 16" fill="currentColor" className="statusbar-icon statusbar-icon-confirm">
+        <circle cx="8" cy="8" r="4" fill="var(--warning, #f59e0b)" />
       </svg>
     );
   }
@@ -294,10 +292,8 @@ export function LoggingIndicator({
 
   return (
     <span className="logging-indicator logging-active">
-      <svg viewBox="0 0 16 16" className="statusbar-icon">
-        <circle cx="8" cy="8" r="5" fill="var(--error)">
-          <animate attributeName="opacity" values="1;0.5;1" dur="1s" repeatCount="indefinite" />
-        </circle>
+      <svg viewBox="0 0 16 16" className="statusbar-icon statusbar-icon-confirm">
+        <circle cx="8" cy="8" r="5" fill="var(--error)" />
       </svg>
       <span>{t('state.logging')}</span>
       {duration && <span className="logging-duration">{duration}</span>}

@@ -5,13 +5,27 @@
  * Returns:
  *  - `sweepActive`: true while the animation is running
  *  - `sweepValues`: per-channel interpolated values for sweeping gauges
- *  - `startGaugeSweep(file)`: begin the animation for the given dash
+ *  - `startGaugeSweep(file, dashboardKey)`: begin the animation for the given
+ *    dash. `dashboardKey` identifies the dashboard so the sweep is limited to
+ *    one play per session, however often the tab remounts.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DashFile, isGauge } from '../dashTypes';
 
 const SWEEP_DURATION_MS = 1500;
+
+/**
+ * Dashboards that have already played their start-up sweep this session.
+ *
+ * The sweep is a start-up flourish, not a navigation effect. `TsDashboard`
+ * remounts on every tab switch, so keying it off the loaded file alone replayed
+ * a 60 Hz full-dashboard re-render for 1.5 s every time the user came back to
+ * the tab — motion on a high-frequency action, which is the one place a
+ * productivity tool should have none. Module scope so the flag survives the
+ * remount: one sweep per dashboard per session.
+ */
+const sweptDashboards = new Set<string>();
 
 export function useGaugeSweep() {
   const [sweepActive, setSweepActive] = useState(false);
@@ -20,8 +34,11 @@ export function useGaugeSweep() {
   const sweepActiveRef = useRef(false);
   const sweepAnimRef = useRef<number | null>(null);
 
-  const startGaugeSweep = useCallback((file: DashFile) => {
+  const startGaugeSweep = useCallback((file: DashFile, dashboardKey: string) => {
     if (sweepActiveRef.current) return;
+    // Once per dashboard per session — see `sweptDashboards`.
+    if (sweptDashboards.has(dashboardKey)) return;
+    sweptDashboards.add(dashboardKey);
     sweepActiveRef.current = true;
     setSweepActive(true);
 
