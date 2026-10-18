@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+// Concrete paths — see the note in App.tsx about the `tuner-ui` barrel.
 import {
   SaveDialog,
   LoadDialog,
@@ -7,8 +8,8 @@ import {
   SettingsDialog,
   AboutDialog,
   ConnectionDialog,
-  Tab,
-} from "./tuner-ui";
+} from "./tuner-ui/Dialogs";
+import type { Tab } from "./tuner-ui/TabBar";
 import HelpViewer, { HelpTopicData } from "./dialogs/HelpViewer";
 import UserManualViewer from "./dialogs/UserManualViewer";
 import SignatureMismatchDialog, { SignatureMismatchInfo } from "./dialogs/SignatureMismatchDialog";

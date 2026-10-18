@@ -10,15 +10,20 @@ import { revealWindowWhenPainted } from "./services/revealWindow";
 import i18n from "./i18n";
 import { useRealtimeStore } from "./stores/realtimeStore";
 import { LANGUAGE_STORAGE_KEY } from "./i18n/languages";
-import {
-  TunerLayout,
+// Concrete module paths, not the `tuner-ui` barrel: the barrel re-exports every
+// tab view, and because those modules import their own CSS Rollup cannot
+// tree-shake them away — importing it here pulled TableEditor (and therefore the
+// whole three.js stack), AutoTune, DataLogView and the rest back into the entry
+// chunk, defeating their `lazy()` boundaries.
+import { TunerLayout } from "./components/tuner-ui/TunerLayout";
+import type {
   MenuItem as TunerMenuItem,
   ToolbarItem,
   SidebarNode,
   StatusItem,
-  Tab,
-  LoggingIndicator,
-} from "./components/tuner-ui";
+} from "./components/tuner-ui/TunerLayout";
+import type { Tab } from "./components/tuner-ui/TabBar";
+import { LoggingIndicator } from "./components/tuner-ui/StatusBar";
 import { SimpleGaugeInfo } from "./components/curves/CurveEditor";
 import type { DialogDefinition as RendererDialogDef } from "./components/dialogs/DialogRenderer";
 import { HelpTopicData } from "./components/dialogs/HelpViewer";

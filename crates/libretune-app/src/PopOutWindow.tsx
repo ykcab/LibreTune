@@ -13,10 +13,34 @@ import { emit } from '@tauri-apps/api/event';
 import { subscribeTauri } from './utils/subscribeTauri';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ThemeProvider } from './themes';
-import { TableEditor, TableData as TunerTableData, AutoTune, DataLogView } from './components/tuner-ui';
-import CurveEditor, { CurveData, SimpleGaugeInfo } from './components/curves/CurveEditor';
-import TsDashboard from './components/dashboards/TsDashboard';
-import DialogRenderer, { DialogDefinition as RendererDialogDef } from './components/dialogs/DialogRenderer';
+import { Suspense, lazy } from 'react';
+// Concrete paths — see the note in App.tsx about the `tuner-ui` barrel.
+import type { TableData as TunerTableData } from './components/tuner-ui/TableEditor';
+
+/*
+ * Lazy, not eager.
+ *
+ * A pop-out window shares the application's entry chunk, so importing these
+ * views here put TableEditor (and the whole three.js stack behind it), AutoTune,
+ * DataLogView and TsDashboard back into the bundle every window has to parse
+ * before it can paint — which is exactly what the `lazy()` boundaries in
+ * TabContentRouter exist to prevent. This window hosts one tab, so it needs at
+ * most one of them.
+ */
+const TableEditor = lazy(() =>
+  import('./components/tuner-ui/TableEditor').then((m) => ({ default: m.TableEditor })),
+);
+const AutoTune = lazy(() =>
+  import('./components/tuner-ui/AutoTune').then((m) => ({ default: m.AutoTune })),
+);
+const DataLogView = lazy(() =>
+  import('./components/tuner-ui/DataLogView').then((m) => ({ default: m.DataLogView })),
+);
+const TsDashboard = lazy(() => import('./components/dashboards/TsDashboard'));
+import type { CurveData, SimpleGaugeInfo } from './components/curves/CurveEditor';
+const CurveEditor = lazy(() => import('./components/curves/CurveEditor'));
+import type { DialogDefinition as RendererDialogDef } from './components/dialogs/DialogRenderer';
+const DialogRenderer = lazy(() => import('./components/dialogs/DialogRenderer'));
 import { AgentDock } from './components/agent/AgentDock';
 import { ensureRealtimeListener } from './services/realtimeListener';
 import { initRenderSettings } from './components/gauges/renderSettings';
@@ -449,7 +473,18 @@ export default function PopOutWindow() {
 
         {/* Content */}
         <div className="popout-content">
-          {renderContent()}
+          {/* One boundary for the window's single view: its chunk is fetched on
+              open, and the header/dock chrome above stays mounted while it
+              arrives, so the window never flashes empty. */}
+          <Suspense
+            fallback={
+              <div className="popout-loading">
+                <p>Loading...</p>
+              </div>
+            }
+          >
+            {renderContent()}
+          </Suspense>
         </div>
       </div>
     </ThemeProvider>

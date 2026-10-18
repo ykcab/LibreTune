@@ -1301,3 +1301,34 @@ body {
   opacity: 0.5;
   cursor: progress;
 }
+
+/*
+ * Lazy tab views: the placeholder shown while a tab's chunk is in flight.
+ *
+ * A skeleton of the tab area rather than a spinner or a blank region — the
+ * point of splitting the bundle is that the shell is already on screen, so the
+ * only thing that should change when the view arrives is the content itself.
+ * No shimmer: a looping animation on a 100-200 ms placeholder is motion the user
+ * will never finish reading.
+ */
+.tab-suspense {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+  padding: var(--space-5, 24px);
+  height: 100%;
+}
+
+.tab-suspense__bar {
+  height: 12px;
+  border-radius: var(--radius-sm, 4px);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.tab-suspense__bar--short {
+  width: 38%;
+}
+
+.tab-suspense__bar--tiny {
+  width: 22%;
+}

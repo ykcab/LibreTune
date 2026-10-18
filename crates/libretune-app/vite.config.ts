@@ -8,6 +8,29 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  build: {
+    rollupOptions: {
+      output: {
+        /**
+         * Keep the heavy vendor groups in their own chunks.
+         *
+         * Three alone is ~37 MB of source; with the react-three bindings it was
+         * the single largest thing in the entry chunk, and it is only reachable
+         * from one tab (the 3D table view). `marked` only renders the user
+         * manual. Splitting them here — rather than relying on the dynamic
+         * imports alone — keeps them out of the vendor chunk that every window
+         * loads, and lets a rebuild re-download only what changed.
+         */
+        manualChunks: (id) => {
+          if (!id.includes("node_modules")) return undefined;
+          if (/node_modules\/(three|@react-three)\//.test(id)) return "three";
+          if (id.includes("node_modules/marked")) return "markdown";
+          return undefined;
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
