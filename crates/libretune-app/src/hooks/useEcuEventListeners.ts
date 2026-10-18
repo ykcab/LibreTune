@@ -10,7 +10,6 @@ export interface UseEcuEventListenersDeps {
   isTauri: boolean;
   status: ConnectionStatus;
   currentProject: CurrentProject | null;
-  activeTabId: string | null;
   doSync: () => Promise<unknown>;
   checkStatus: () => Promise<void>;
   fetchConstants: () => Promise<Record<string, number>>;
@@ -29,7 +28,6 @@ export function useEcuEventListeners(deps: UseEcuEventListenersDeps) {
     isTauri,
     status,
     currentProject,
-    activeTabId,
     doSync,
     checkStatus,
     fetchConstants,
@@ -73,14 +71,9 @@ export function useEcuEventListeners(deps: UseEcuEventListenersDeps) {
     }
   }, [currentProject]);
 
-  // Persist active tab state
-  useEffect(() => {
-    if (activeTabId && currentProject) {
-      invoke("update_setting", { key: "last_active_tab", value: activeTabId })
-        .catch(e => console.warn("Failed to save last_active_tab", e));
-    }
-  }, [activeTabId, currentProject]);
-
+  // The active tab is persisted by App's debounced writer (which covers
+  // `open_tabs` as well); a second, un-debounced writer here meant every tab
+  // change cost two full settings cycles instead of one.
   useEffect(() => {
     if (!isTauri) return;
     return subscribeTauri<string>("ini:changed", async (event) => {

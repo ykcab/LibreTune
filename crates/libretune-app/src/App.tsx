@@ -32,6 +32,7 @@ import { useBackendEventListeners } from "./hooks/useBackendEventListeners";
 import { useRealtimeStream } from "./hooks/useRealtimeStream";
 import { useTabPopout } from "./hooks/useTabPopout";
 import { useIniDefaultsLoader } from "./hooks/useIniDefaultsLoader";
+import { usePersistedUiSetting } from "./hooks/usePersistedUiSetting";
 import { useTableCurveRefresh } from "./hooks/useTableCurveRefresh";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useEcuEventListeners } from "./hooks/useEcuEventListeners";
@@ -388,20 +389,11 @@ function AppContent() {
   const [isTauri, setIsTauri] = useState(true);
 
   // Persist UI layout state to settings so it's restored on next launch.
-  // Gated on uiStateRestored so the initial defaults don't overwrite saved
-  // values before the async restore completes.
-  useEffect(() => {
-    if (!uiStateRestored.current) return;
-    void invoke('update_setting', { key: 'sidebar_visible', value: String(sidebarVisible) }).catch(() => {});
-  }, [sidebarVisible]);
-  useEffect(() => {
-    if (!uiStateRestored.current) return;
-    void invoke('update_setting', { key: 'show_ecu_menus_in_menubar', value: String(showEcuMenusInMenubar) }).catch(() => {});
-  }, [showEcuMenusInMenubar]);
-  useEffect(() => {
-    if (!uiStateRestored.current) return;
-    void invoke('update_setting', { key: 'agent_panel_visible', value: String(agentPanelVisible) }).catch(() => {});
-  }, [agentPanelVisible]);
+  // Debounced and gated on uiStateRestored, so the initial defaults don't
+  // overwrite saved values before the async restore completes.
+  usePersistedUiSetting('sidebar_visible', sidebarVisible, uiStateRestored);
+  usePersistedUiSetting('show_ecu_menus_in_menubar', showEcuMenusInMenubar, uiStateRestored);
+  usePersistedUiSetting('agent_panel_visible', agentPanelVisible, uiStateRestored);
 
   // Check if running in Tauri
   useEffect(() => {
@@ -812,7 +804,6 @@ function AppContent() {
     isTauri,
     status,
     currentProject,
-    activeTabId,
     doSync,
     checkStatus,
     fetchConstants,
@@ -1537,9 +1528,12 @@ function AppContent() {
   }, []);
 
   // Persist the active tab + open-tab list so they can be restored on launch.
-  // Debounced so rapid tab switches don't hammer the settings file.
+  // Debounced so rapid tab switches don't hammer the settings file, and gated
+  // on a project being open: without the gate a slow boot could commit the
+  // pre-restore empty tab before `initializeApp` had restored the real one.
   const saveTabsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (!currentProject) return;
     if (saveTabsTimer.current) clearTimeout(saveTabsTimer.current);
     saveTabsTimer.current = setTimeout(() => {
       void invoke('update_setting', { key: 'last_active_tab', value: activeTabId ?? '' }).catch(() => {});
@@ -1552,7 +1546,7 @@ function AppContent() {
       void invoke('update_setting', { key: 'open_tabs', value: JSON.stringify(serializable) }).catch(() => {});
     }, 500);
     return () => { if (saveTabsTimer.current) clearTimeout(saveTabsTimer.current); };
-  }, [tabs, activeTabId, tabContents]);
+  }, [tabs, activeTabId, tabContents, currentProject]);
 
   // Pop-out windows: handleTabPopout + tab:dock + table:updated listeners.
   const { handleTabPopout } = useTabPopout({

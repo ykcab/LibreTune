@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
 pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) last_ini_path: Option<String>,
@@ -281,6 +281,12 @@ fn save_settings_locked(app: &tauri::AppHandle, settings: &Settings) {
     if let Err(e) = write_settings_atomic(&settings_path, &to_write) {
         eprintln!("[WARN] Failed to save settings: {}", e);
     }
+    // Serve the copy we just wrote from memory. The cache holds the in-memory
+    // value (with the key still in it) rather than `to_write`, so a caller that
+    // reads settings back gets the same key it just set.
+    if let Ok(mut guard) = SETTINGS_CACHE.write() {
+        *guard = Some(settings.clone());
+    }
 }
 
 /// Process-wide lock serializing ALL settings read-modify-write cycles.
@@ -303,20 +309,42 @@ fn save_settings_locked(app: &tauri::AppHandle, settings: &Settings) {
 /// the executor's async tasks.
 static SETTINGS_IO_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Whether a settings cycle has anything worth writing to disk.
+///
+/// Extracted so the contract is testable without an `AppHandle`: a no-op cycle
+/// must not cost a pretty-print, an fsync and a rename, but a missing file must
+/// still be created (that is how the very first `update_setting` materialises
+/// `settings.json`).
+fn needs_persist(before: &Settings, after: &Settings, file_exists: bool) -> bool {
+    after != before || !file_exists
+}
+
 /// Run `f` against the current settings and persist the result, with the
 /// whole load → mutate → save cycle serialized against every other settings
 /// writer in the process.
 ///
-/// The settings file is written even when `f` leaves the struct unchanged or
-/// returns `Err` (mirroring the previous save-always semantics of
-/// `update_settings`, which persists partially-applied batches).
+/// The file is written only when `f` actually changed something, or when there
+/// is no file yet. It used to be written unconditionally — a
+/// `serde_json::to_string_pretty`, a `sync_all()` fsync and a rename for a
+/// no-op — which the report measured as write amplification across 19
+/// frontend `update_setting` call sites, three of them undebounced effects that
+/// fire on plain UI state changes. A partially-applied batch still persists:
+/// anything `f` mutated, even alongside an `Err`, differs from the snapshot and
+/// is therefore saved.
 pub(crate) fn with_settings<R>(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) -> R) -> R {
     let _guard = SETTINGS_IO_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut settings = load_settings(app);
+    let before = settings.clone();
     let result = f(&mut settings);
-    save_settings_locked(app, &settings);
+    if needs_persist(&before, &settings, get_settings_path(app).exists()) {
+        save_settings_locked(app, &settings);
+    } else if let Ok(mut guard) = SETTINGS_CACHE.write() {
+        // Nothing to persist, but keep the cache in step with what the caller
+        // just read/modified so a later read does not resurrect a stale copy.
+        *guard = Some(settings);
+    }
     result
 }
 
@@ -502,7 +530,35 @@ pub(crate) fn apply_unit_symbols(settings: &Settings) {
     libretune_core::ini::set_default_symbols(symbols);
 }
 
+/// Process-wide cache of the parsed settings document.
+///
+/// Reading settings used to mean a file read, a JSON parse, an OS keychain
+/// query and a global symbol write — every time. There are 18 `load_settings`
+/// call sites and 12 `with_settings` ones, `get_settings` alone runs five or six
+/// times during a single boot (App, render settings, table accent vars, the
+/// sidebar, the dashboard, gauge ranges, …), and every UI-driven
+/// `update_setting` re-read the file. The document is a couple of kilobytes and
+/// this process is its only writer, so it is held in memory and refreshed by
+/// the save path.
+///
+/// `RwLock<Option<..>>` rather than a lock-free cell: readers must not observe a
+/// half-updated document, and the critical section is a clone of ~55 fields.
+static SETTINGS_CACHE: std::sync::RwLock<Option<Settings>> = std::sync::RwLock::new(None);
+
 pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
+    if let Ok(guard) = SETTINGS_CACHE.read() {
+        if let Some(cached) = guard.as_ref() {
+            return cached.clone();
+        }
+    }
+    let settings = read_settings_from_disk(app);
+    if let Ok(mut guard) = SETTINGS_CACHE.write() {
+        *guard = Some(settings.clone());
+    }
+    settings
+}
+
+fn read_settings_from_disk(app: &tauri::AppHandle) -> Settings {
     let settings_path = get_settings_path(app);
     if let Ok(content) = std::fs::read_to_string(&settings_path) {
         if let Some(mut settings) = parse_settings_or_backup(&settings_path, &content) {
@@ -676,6 +732,21 @@ mod tests {
             .any(|s| s == "CELSIUS"));
 
         *PROJECT_SYMBOLS.write().unwrap() = None;
+    }
+
+    #[test]
+    fn a_no_op_settings_cycle_does_not_reach_the_disk() {
+        // Every `update_setting` call used to rewrite the whole document with an
+        // fsync even when the value was already set — the report counted it as
+        // write amplification across 19 frontend call sites.
+        let before = default_settings();
+
+        assert!(!needs_persist(&before, &before.clone(), true));
+        assert!(needs_persist(&before, &before.clone(), false), "first save must create the file");
+
+        let mut mutated = before.clone();
+        mutated.sidebar_visible = !before.sidebar_visible;
+        assert!(needs_persist(&before, &mutated, true));
     }
 
     #[test]

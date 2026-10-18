@@ -23,7 +23,6 @@ function baseDeps(overrides: Partial<UseEcuEventListenersDeps> = {}): UseEcuEven
     isTauri: true,
     status: { state: 'Connected' } as UseEcuEventListenersDeps['status'],
     currentProject: null,
-    activeTabId: null,
     doSync: vi.fn().mockResolvedValue(null),
     checkStatus: vi.fn().mockResolvedValue(undefined),
     fetchConstants: vi.fn().mockResolvedValue({}),
