@@ -6,6 +6,8 @@ import { listen } from "@tauri-apps/api/event";
 import { subscribeTauri } from "./utils/subscribeTauri";
 import { ThemeProvider, useTheme } from "./themes";
 import { initializeHotkeyManager } from "./services/hotkeyService";
+import { revealWindowWhenPainted } from "./services/revealWindow";
+import i18n from "./i18n";
 import { useRealtimeStore } from "./stores/realtimeStore";
 import { LANGUAGE_STORAGE_KEY } from "./i18n/languages";
 import {
@@ -424,6 +426,9 @@ function AppContent() {
   // Initial data fetch - initialize INI repository and check for existing project
   useEffect(() => {
     if (isTauri) {
+      // The window is created hidden so start-up can never show an unpainted
+      // surface; this is the frame that earns the reveal.
+      revealWindowWhenPainted();
       initializeApp();
       const statusInterval = setInterval(checkStatus, 1000);
       return () => clearInterval(statusInterval);
@@ -456,21 +461,56 @@ function AppContent() {
   async function initializeApp() {
     showLoading("Initializing LibreTune...");
     try {
-      // Initialize INI repository
+      // The INI repository has to exist before it can be listed. Everything
+      // else in the block below is independent of it, so it all runs together:
+      // these were awaited one at a time, which made the user wait for the sum
+      // of the round-trips instead of the slowest one. Serial ports are fetched
+      // here too, so the duplicate call that used to run at the end is gone.
       await invoke("init_ini_repository");
-      
-      // Load repository INIs
-      const inis = await invoke<IniEntry[]>("list_repository_inis");
+
+      const [rawInis, rawProjects, settingsResult, , onboardingCompleted, project0, rawPorts] =
+        await Promise.all([
+          // Load repository INIs
+          invoke<IniEntry[]>("list_repository_inis"),
+          // Load available projects
+          invoke<ProjectInfo[]>("list_projects"),
+          // Load settings. Failure keeps the old behaviour: defaults, but
+          // persistence is still allowed to start.
+          invoke("get_settings")
+            .then((s) => ({ settings: s as any }))
+            .catch((e) => {
+              console.warn("Failed to load settings:", e);
+              return { settings: null as any };
+            }),
+          // Load custom hotkey bindings
+          initializeHotkeyManager().catch((e) => {
+            console.warn("Failed to load hotkey bindings:", e);
+          }),
+          // Onboarding status — if we can't check, show onboarding (safer default)
+          invoke<boolean>("is_onboarding_completed").catch((e) => {
+            console.warn("Failed to check onboarding status:", e);
+            return false;
+          }),
+          // Project already open in backend memory, if any
+          invoke<CurrentProject | null>("get_current_project"),
+          // Serial ports for the connection picker
+          invoke<string[]>("get_serial_ports").catch((e) => {
+            console.warn("Failed to enumerate serial ports:", e);
+            return [] as string[];
+          }),
+        ]);
+
+      // A boot step that resolves with nothing must not take the UI down with
+      // it — the app has to open even if a command misbehaves.
+      const inis = Array.isArray(rawInis) ? rawInis : [];
+      const projects = Array.isArray(rawProjects) ? rawProjects : [];
+      const initialPorts = Array.isArray(rawPorts) ? rawPorts : [];
+
       setRepositoryInis(inis);
-      
-      // Load available projects
-      const projects = await invoke<ProjectInfo[]>("list_projects");
       setAvailableProjects(projects);
-      
-      // Load settings
-      let settings: any = {};
-      try {
-        settings = await invoke("get_settings");
+
+      let settings: any = settingsResult.settings;
+      if (settings) {
         if (settings.units_system) setUnitsSystem(settings.units_system as 'metric' | 'imperial');
         if (settings.auto_burn_on_close !== undefined) setAutoBurnOnClose(settings.auto_burn_on_close);
         if (settings.status_bar_channels) setStatusBarChannels(settings.status_bar_channels);
@@ -479,8 +519,6 @@ function AppContent() {
         if (settings.sidebar_visible !== undefined) setSidebarVisible(!!settings.sidebar_visible);
         if (settings.show_ecu_menus_in_menubar !== undefined) setShowEcuMenusInMenubar(!!settings.show_ecu_menus_in_menubar);
         if (settings.agent_panel_visible !== undefined) setAgentPanelVisible(!!settings.agent_panel_visible);
-        // Mark restore complete so the persist effects can start saving.
-        uiStateRestored.current = true;
         // Honor saved UI language preference (mirror to localStorage so the
         // i18n LanguageDetector picks it up on next app start, and switch live now).
         if (settings.language && typeof settings.language === 'string') {
@@ -490,44 +528,24 @@ function AppContent() {
               localStorage.setItem(LANGUAGE_STORAGE_KEY, settings.language);
             }
           } catch { /* ignore */ }
-          // Lazy-load the i18n instance to avoid pulling i18next into the
-          // initial app bundle path.
-          void import('./i18n').then(({ default: i18n }) => {
-            if (i18n.language !== settings.language) {
-              void i18n.changeLanguage(settings.language);
-            }
-          });
+          if (i18n.language !== settings.language) {
+            void i18n.changeLanguage(settings.language);
+          }
         }
-      } catch (e) {
-        console.warn("Failed to load settings:", e);
-        // Even if settings load failed, let persistence start so future
-        // changes are saved.
-        uiStateRestored.current = true;
+      } else {
+        settings = {};
       }
-      
-      // Load custom hotkey bindings
-      try {
-        await initializeHotkeyManager();
-      } catch (e) {
-        console.warn("Failed to load hotkey bindings:", e);
-      }
-      
-      // Check if onboarding has been completed
-      try {
-        const onboardingCompleted = await invoke<boolean>("is_onboarding_completed");
-        if (!onboardingCompleted) {
-          setOnboardingOpen(true);
-        }
-      } catch (e) {
-        console.warn("Failed to check onboarding status:", e);
-        // If we can't check, show onboarding (safer default)
+      // Mark restore complete so the persist effects can start saving.
+      uiStateRestored.current = true;
+
+      if (!onboardingCompleted) {
         setOnboardingOpen(true);
       }
-      
-      // Check if there's already a project open (backend memory)
-      let project = await invoke<CurrentProject | null>("get_current_project");
 
-      // If no project in memory, try restoring last opened project from settings
+      // Restore the last opened project. This is the one expensive step that
+      // cannot be overlapped: opening the project parses the INI definition and
+      // the tune, and the menu tree, constants and restored tab all need it.
+      let project = project0;
       if (!project && settings.last_project_path) {
         try {
           console.log("Restoring last project:", settings.last_project_path);
@@ -536,14 +554,13 @@ function AppContent() {
           console.warn("Failed to restore last project:", e);
         }
       }
-      
+
+      setPorts(initialPorts);
       if (project) {
         setCurrentProject(project);
         if (project.connection.baud_rate) {
           setBaudRate(project.connection.baud_rate);
         }
-        const initialPorts = await invoke<string[]>("get_serial_ports");
-        setPorts(initialPorts);
         const preferred = resolvePreferredPort({
           projectPort: project.connection.port,
           lastSerialPort: settings.last_serial_port ?? null,
@@ -553,6 +570,11 @@ function AppContent() {
         if (preferred) {
           setSelectedPort(preferred);
         }
+      } else if (initialPorts.length > 0) {
+        setSelectedPort(initialPorts[0]);
+      }
+
+      if (project) {
         try {
           // Fetch menus for the project
           const values = await fetchConstants();
@@ -676,16 +698,6 @@ function AppContent() {
           console.error("Failed to load menus:", menuError);
           showToast("Menu loading failed. Some features may be unavailable.", "warning");
         }
-      }
-      
-      // Refresh serial ports — prefer the project's last successful port
-      const p = await invoke<string[]>("get_serial_ports");
-      setPorts(p);
-      const rememberedPort = project?.connection.port;
-      if (rememberedPort && p.includes(rememberedPort)) {
-        setSelectedPort(rememberedPort);
-      } else if (p.length > 0 && !rememberedPort && !selectedPort) {
-        setSelectedPort(p[0]);
       }
     } catch (e) {
       console.error("Failed to initialize app:", e);

@@ -536,6 +536,22 @@ pub fn run() {
         ])
         .manage(mcp::server::McpServerState::default())
         .setup(|app| {
+            // Reveal the main window once the frontend has painted it. The window
+            // is created hidden (see tauri.conf.json) so start-up can never show
+            // an unpainted surface; the frontend calls `show()` on its first
+            // frame. This timer is the safety net — if the webview never gets that
+            // far (a JS error, a cold bundle), the window must still appear rather
+            // than leaving a running process with no window.
+            if let Some(window) = app.get_webview_window("main") {
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                    if matches!(window.is_visible(), Ok(false)) {
+                        tracing::warn!("frontend did not reveal the window; showing it anyway");
+                        let _ = window.show();
+                    }
+                });
+            }
+
             // Restart the MCP server if the user left it enabled last run.
             // Spawned rather than awaited: a busy port must not block the
             // window from opening, and the failure surfaces in the Settings

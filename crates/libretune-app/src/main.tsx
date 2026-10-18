@@ -16,43 +16,27 @@ installWebviewConsoleCapture();
 
 /**
  * Root component that determines whether to render App or PopOutWindow
- * based on the URL hash. Uses useEffect to ensure the hash is available
- * after the DOM is ready (fixes timing issue in Tauri WebviewWindow).
+ * based on the URL hash.
+ *
+ * The hash is read synchronously for the first render — a pop-out window is
+ * told which tab it hosts before the page loads, so there is nothing to wait
+ * for. The post-mount re-check is kept as insurance for the timing edge the
+ * effect originally existed for; a `hashchange` still flips the branch.
  */
 function Root() {
-  const [isPopOut, setIsPopOut] = useState<boolean | null>(null);
-  const [debugInfo, setDebugInfo] = useState<string>('initializing...');
+  const [isPopOut, setIsPopOut] = useState<boolean>(() =>
+    window.location.hash.startsWith('#/popout'),
+  );
 
   useEffect(() => {
-    const checkHash = () => {
-      const hash = window.location.hash;
-      const href = window.location.href;
-      const info = `hash="${hash}" href="${href}"`;
-      console.log('[main.tsx] hash check:', info);
-      setDebugInfo(info);
-      setIsPopOut(hash.startsWith('#/popout'));
-    };
+    const checkHash = () => setIsPopOut(window.location.hash.startsWith('#/popout'));
 
-    // Check immediately on mount
+    // Re-check once the DOM is ready, in case the hash was still settling.
     checkHash();
 
-    // Also listen for hash changes (for robustness)
     window.addEventListener('hashchange', checkHash);
     return () => window.removeEventListener('hashchange', checkHash);
   }, []);
-
-  // Show debug info while determining which component to render
-  if (isPopOut === null) {
-    return (
-      <div style={{ padding: 20, color: 'white', background: '#333' }}>
-        <h2>Loading... (isPopOut = null)</h2>
-        <p>Debug: {debugInfo}</p>
-      </div>
-    );
-  }
-
-  // Show what we're rendering
-  console.log('[main.tsx] Rendering:', isPopOut ? 'PopOutWindow' : 'App');
 
   return isPopOut ? <PopOutWindow /> : <App />;
 }
