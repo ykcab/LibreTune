@@ -185,13 +185,29 @@ export function useDashStatus(isConnected: boolean): DashStatus {
           stream_path: string | null;
         }>('get_logging_status');
         if (cancelled) return;
-        setLogging({
+        // Read the fields here, inside the guarded region: a malformed or
+        // absent response must stay swallowed as "offline" (tests, offline
+        // review). Reading them inside the state updater would move the throw
+        // into React's render phase, where this catch cannot reach it.
+        const next: LoggingState = {
           isRecording: status.is_recording,
           durationMs: status.duration_ms,
           channelCount: status.channel_count,
           entryCount: status.entry_count,
           streamPath: status.stream_path,
-        });
+        };
+        // Compared field by field: this polls at 1 Hz and used to hand back a
+        // brand-new object every time, so the whole startup dashboard
+        // re-rendered once a second whether or not anything had happened.
+        setLogging((prev) =>
+          prev.isRecording === next.isRecording &&
+          prev.durationMs === next.durationMs &&
+          prev.channelCount === next.channelCount &&
+          prev.entryCount === next.entryCount &&
+          prev.streamPath === next.streamPath
+            ? prev
+            : next,
+        );
       } catch { /* offline */ }
     };
 

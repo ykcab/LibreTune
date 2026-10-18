@@ -116,6 +116,28 @@ interface UnitsStatus {
   iniUsesCelsius: boolean;
 }
 
+/**
+ * Value equality for the one-second connection poll.
+ *
+ * `get_connection_status` deserializes a fresh object every call, so the poll
+ * can never bail out on identity — it needs a field-by-field comparison. Every
+ * field here is a transition-only value (nothing ticks), which is what makes
+ * the bail-out safe: the only thing a repeat poll can change is the object
+ * wrapper itself.
+ */
+function sameConnectionStatus(
+  prev: ConnectionStatus | null,
+  next: ConnectionStatus,
+): boolean {
+  if (!prev) return false;
+  return (
+    prev.state === next.state &&
+    prev.signature === next.signature &&
+    prev.has_definition === next.has_definition &&
+    (prev.ini_name ?? null) === (next.ini_name ?? null)
+  );
+}
+
 function AppContent() {
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation('menu');
@@ -751,7 +773,11 @@ function AppContent() {
         const st = await invoke<{ is_recording: boolean; entry_count: number; duration_ms: number }>('get_logging_status');
         setIsLogging(st.is_recording);
         const seconds = Math.floor(st.duration_ms / 1000);
-        setLogDuration(`${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, '0')}`);
+        const formatted = `${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, '0')}`;
+        // Only when the displayed value moved: this poll runs every second
+        // whenever an ECU is connected, and the duration string is the same
+        // "0:00" the whole time the user is not recording.
+        setLogDuration((prev) => (prev === formatted ? prev : formatted));
       } catch {
         // no logger / not ready yet
       }
@@ -835,8 +861,14 @@ function AppContent() {
   async function checkStatus() {
     try {
       const s = await invoke<ConnectionStatus>("get_connection_status");
-      setStatus(s);
-      
+      // Bail out when nothing actually changed. This poll runs every second for
+      // the life of the process and `get_connection_status` deserializes a fresh
+      // object each time, so the unconditional `setStatus(s)` re-rendered the
+      // whole application once a second — 75 top-level states, the sidebar tree,
+      // every open dialog, every gauge — even when the ECU was unplugged and
+      // every field was identical.
+      setStatus((prev) => (sameConnectionStatus(prev, s) ? prev : s));
+
       // Also fetch ECU type if connected
       if (s.state === "Connected") {
         try {
