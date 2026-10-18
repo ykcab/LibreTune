@@ -150,7 +150,16 @@
   color: white;
   min-width: 50px;
   cursor: cell;
-  transition: all var(--transition-fast);
+  /*
+   * No blanket `transition: all` here.
+   *
+   * Every cell's background comes from live data, and the follow cursor
+   * repaints up to 256 of them ten times a second. `transition: all` eased
+   * every one of those repaints (and every other property change) on the paint
+   * path. Hover and selection are outlines, which appear instantly anyway; the
+   * one thing that genuinely benefits from an ease is the trail fade, declared
+   * on its pseudo-element below.
+   */
   position: relative;
 }
 
@@ -193,6 +202,9 @@
   opacity: calc(var(--trail-opacity, 0.3) * 0.4);
   pointer-events: none;
   border-radius: 2px;
+  /* Compositor-only: opacity steps in at 5 Hz as the trail ages, so it is the
+     one property on a cell worth easing. */
+  transition: opacity var(--transition-fast);
 }
 
 /* Trail line overlay (issue #132): the tab view showed only per-cell fills,
