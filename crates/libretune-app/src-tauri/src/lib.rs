@@ -219,7 +219,23 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Restore the window's geometry, but never its visibility.
+        //
+        // The plugin saves `visible` and re-shows the window itself during
+        // startup (`should_show = state.visible`, defaulting to true). That
+        // undid the main window's `"visible": false` roughly 0.9 s in — before
+        // the first frame had been painted — which is exactly the unpainted
+        // window this app is trying not to show. Visibility belongs to the
+        // frontend, which reveals the window once it has painted the shell.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
+
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
