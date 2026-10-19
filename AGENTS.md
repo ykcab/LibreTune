@@ -207,6 +207,24 @@ npm run test:run    # Vitest (frontend tests)
 npm run typecheck  # TypeScript checking
 ```
 
+### Build outputs — ONE location only
+
+**Rule: a build you hand to a human lives at `<repo root>/artifacts/<platform>/` and nowhere else.**
+
+```
+artifacts/linux/libretune-app_<version>_amd64.AppImage   ← the file to open
+artifacts/linux/libretune-app                            ← the plain binary, if asked
+artifacts/windows/LibreTune-portable.exe
+artifacts/macos/...
+```
+
+- `target/release/…`, including Tauri's own `target/release/bundle/{appimage,deb}/`, is **build-internal staging**. Copy out of it; never point a user at it, and never quote it as "the build".
+- `crates/libretune-app/artifacts/<platform>/` is used by `.github/workflows/nightly.yml` to stage release uploads. That is **CI-internal only** — not a hand-off location, and not somewhere to write by hand.
+- Replace, don't accumulate: when you publish a new artefact for the same platform, delete the previous one. A stale file in a plausible-looking directory is how someone ends up reviewing the wrong binary.
+- Still true: do not commit `artifacts/`, `dist/`, or `target/` (all are gitignored).
+
+So the answer to "where is the build?" is always one path with one file in it — e.g. `artifacts/linux/`. If a script needs somewhere to stage intermediate output, use `target/`.
+
 ### Local Windows portable (when asked to build)
 
 Build locally for Windows only (`x86_64-pc-windows-msvc`, `--no-bundle`). Do not build Linux/macOS or NSIS/MSI unless asked.
@@ -214,12 +232,24 @@ Build locally for Windows only (`x86_64-pc-windows-msvc`, `--no-bundle`). Do not
 ```powershell
 cd crates/libretune-app
 npx tauri build --target x86_64-pc-windows-msvc --no-bundle
-New-Item -ItemType Directory -Force -Path artifacts/windows | Out-Null
-Copy-Item -Force ../../target/x86_64-pc-windows-msvc/release/libretune-app.exe artifacts/windows/LibreTune-portable.exe
+# Repo-root artifacts/, per the rule above — not the crate's CI staging dir.
+New-Item -ItemType Directory -Force -Path ../../artifacts/windows | Out-Null
+Copy-Item -Force ../../target/x86_64-pc-windows-msvc/release/libretune-app.exe ../../artifacts/windows/LibreTune-portable.exe
 ```
 
-Always clean up after: restore `crates/libretune-app/public/manual/toc.json` if `docs:sync` dirtied it; delete `crates/libretune-app/dist`. Do not `cargo clean`. Do not commit `artifacts/`, `dist/`, or `target/`.
+### Local Linux AppImage (when asked to build)
 
+```bash
+cd crates/libretune-app
+NO_STRIP=1 npx tauri build --bundles appimage   # NO_STRIP: see note below
+mkdir -p ../../artifacts/linux
+rm -f ../../artifacts/linux/*.AppImage          # replace, don't accumulate
+cp ../../target/release/bundle/appimage/*.AppImage ../../artifacts/linux/
+```
+
+`NO_STRIP=1` is required on distros whose system libraries carry `.relr.dyn` sections — linuxdeploy's bundled `strip` cannot read them and the bundle fails with `failed to run linuxdeploy`. It only skips stripping the bundled libraries (larger AppImage, same behaviour).
+
+Always clean up after: restore `crates/libretune-app/public/manual/toc.json` if `docs:sync` dirtied it; delete `crates/libretune-app/dist`. Do not `cargo clean`. Do not commit `artifacts/`, `dist/`, or `target/`.
 ## INI File Format
 LibreTune uses standard ECU INI definition files. Structure:
 - `[MegaTune]` - Version info, signature, query command
