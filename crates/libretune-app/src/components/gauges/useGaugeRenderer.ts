@@ -4,14 +4,16 @@
  * Owns:
  *  - the canvas element ref
  *  - DPR-aware backing-store sizing via `ResizeObserver`
- *  - the requestAnimationFrame loop and its time-based EMA smoothing
+ *  - this gauge's slice of the shared animation loop and its time-based EMA
  *  - the imperative Zustand-store read each frame (no React re-render)
- *  - the 100 ms idle-watchdog that catches new store values once the
- *    rAF loop has converged
+ *
+ * The loop and the idle timer are NOT owned here any more — they live in
+ * `gaugeScheduler`, shared by every gauge on the dashboard. This hook registers
+ * a renderer with the scheduler and implements its two callbacks.
  *
  * The caller supplies a `paint` callback that draws ONE frame given
  * the current display value. The callback is stored in a ref so the
- * caller can change it across renders without restarting the rAF loop.
+ * caller can change it across renders without restarting the loop.
  *
  * This module does NOT know about `GaugePainter` types or any
  * specific gauge style — it is a pure renderer host.
@@ -19,9 +21,10 @@
 
 import { useEffect, useRef } from 'react';
 import type { TsGaugeConfig } from '../dashboards/dashTypes';
-import { useRealtimeStore } from '../../stores/realtimeStore';
+import { CHANNEL_HISTORY_MS_PER_SAMPLE } from '../../stores/realtimeStore';
 import { seedPeak, nextPeakState, type PeakState } from './peakTracking';
 import { emaStep, isSpike, staggerSlotForChannel, STAGGER_SLOTS, SPIKE_FLASH_MS } from './ema';
+import { channelsForTick, registerGauge, requestFrames } from './gaugeScheduler';
 import { getDrawIntervalMs } from './renderSettings';
 
 /**
@@ -31,6 +34,12 @@ import { getDrawIntervalMs } from './renderSettings';
  * (issue #82: extreme CPU load). Value smoothing is a time-constant EMA
  * (`ema.ts`), so needle motion looks identical at any refresh rate; the old
  * per-frame lerp converged slower at low frame rates.
+ *
+ * Time-series painters are additionally capped at the sample cadence: the
+ * history ring buffer only receives a new sample every
+ * `CHANNEL_HISTORY_MS_PER_SAMPLE`, so repainting a line graph faster than that
+ * redraws an identical picture. At the default 30 Hz cap that alone is a 3×
+ * reduction in full canvas repaints for exactly the gauges that never idle.
  */
 
 /** Function the host calls to draw one frame. */
@@ -130,9 +139,6 @@ export function useGaugeRenderer(opts: UseGaugeRendererOptions): UseGaugeRendere
   // by the prop-sync and ResizeObserver effects to wake an idle loop.
   const startAnimationRef = useRef<(() => void) | null>(null);
 
-  // Pending rAF ID — `null` when the loop is idle.
-  const rafIdRef = useRef<number | null>(null);
-  const lastDrawTimeRef = useRef(0);
   /** Next timestamp at which this gauge may draw (phase-staggered gate). */
   const nextDrawAtRef = useRef(0);
   /** rAF timestamp of the previous animate() tick — drives the time-based EMA. */
@@ -141,6 +147,20 @@ export function useGaugeRenderer(opts: UseGaugeRendererOptions): UseGaugeRendere
   const spikeUntilRef = useRef(0);
   /** Phase slot for redraw staggering, claimed once per mount. */
   const staggerSlotRef = useRef<number | null>(null);
+  /**
+   * What the last painted frame showed. The shared loop wakes every gauge
+   * whenever ANY gauge needs frames, so without this a parked gauge would
+   * repaint an identical picture several times a second. Time-series painters
+   * are exempt: their pixels change when a new history sample lands, which this
+   * key cannot see.
+   */
+  const lastDrawnRef = useRef({ value: Number.NaN, peak: Number.NaN, spike: false });
+  /**
+   * Set whenever the backing store is reallocated (resize). `canvas.width = n`
+   * clears the canvas, so the next frame must paint even if nothing else
+   * changed — otherwise a resize would leave the gauge blank.
+   */
+  const canvasDirtyRef = useRef(true);
 
   /**
    * Cached canvas dimensions — updated only by ResizeObserver, NOT every
@@ -180,6 +200,8 @@ export function useGaugeRenderer(opts: UseGaugeRendererOptions): UseGaugeRendere
         canvas.width = newW;
         canvas.height = newH;
         canvasSizeRef.current = { w: newW, h: newH, cssW: rect.width, cssH: rect.height };
+        // Reallocating the backing store clears it — force a repaint.
+        canvasDirtyRef.current = true;
         if (startAnimationRef.current) startAnimationRef.current();
       }
     };
@@ -209,11 +231,6 @@ export function useGaugeRenderer(opts: UseGaugeRendererOptions): UseGaugeRendere
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-
     // Channel lookup variables — cached after first successful resolution.
     const channel = config.output_channel || '';
     const channelLower = channel.toLowerCase();
@@ -228,9 +245,9 @@ export function useGaugeRenderer(opts: UseGaugeRendererOptions): UseGaugeRendere
       staggerSlotRef.current = staggerSlotForChannel(channel);
     }
 
-    /** Look up the channel value in the store (case-insensitive with caching). */
-    const readStoreValue = (): number | undefined => {
-      const channels = useRealtimeStore.getState().channels;
+    /** Look up the channel value in the shared per-tick store snapshot. */
+    const readStoreValue = (now: number): number | undefined => {
+      const channels = channelsForTick(now);
       if (resolvedKey !== null) {
         return channels[resolvedKey];
       }
@@ -266,14 +283,49 @@ export function useGaugeRenderer(opts: UseGaugeRendererOptions): UseGaugeRendere
       paintRef.current(ctx, cssW, cssH, displayValueRef.current, peakValueRef.current);
     };
 
-    let loopActive = true;
+    /** True for painters whose pixels keep changing while the value is steady. */
+    const keepAliveActive = (): boolean =>
+      !!continuousRender && !overrideStoreRef.current && !!channel;
 
-    const animate = (timestamp: number) => {
-      if (!loopActive) return;
+    /** Draw gate: interval cap + stagger + the dirty check. */
+    const drawDue = (now: number): void => {
+      if (now < nextDrawAtRef.current) return;
+      const interval = keepAliveActive()
+        ? Math.max(getDrawIntervalMs(), CHANNEL_HISTORY_MS_PER_SAMPLE)
+        : getDrawIntervalMs();
 
+      const drawn = lastDrawnRef.current;
+      const unchanged =
+        !canvasDirtyRef.current &&
+        drawn.value === displayValueRef.current &&
+        drawn.peak === peakValueRef.current &&
+        drawn.spike === spikeRef.current;
+      // Time-series painters are exempt — a new history sample changes the
+      // pixels even when the value, peak and spike state are identical.
+      // Not rescheduled either: leaving the gate open means a real change can
+      // paint on the very next frame instead of waiting out an interval.
+      if (unchanged && !keepAliveActive()) return;
+
+      drawFrame();
+      canvasDirtyRef.current = false;
+      lastDrawnRef.current = {
+        value: displayValueRef.current,
+        peak: peakValueRef.current,
+        spike: spikeRef.current,
+      };
+      if (nextDrawAtRef.current === 0) {
+        // First draw: apply the phase offset.
+        nextDrawAtRef.current = now + ((staggerSlotRef.current ?? 0) * interval) / STAGGER_SLOTS;
+      } else {
+        nextDrawAtRef.current = now + interval;
+      }
+    };
+
+    /** The shared loop calls this once per frame while it is running. */
+    const frame = (now: number): boolean => {
       // Normal mode: read the store each frame to pick up new data.
       if (!overrideStoreRef.current && channel) {
-        const raw = readStoreValue();
+        const raw = readStoreValue(now);
         if (raw !== undefined) {
           const peg = config.peg_limits;
           const clamped = peg ? Math.max(config.min, Math.min(config.max, raw)) : raw;
@@ -287,127 +339,112 @@ export function useGaugeRenderer(opts: UseGaugeRendererOptions): UseGaugeRendere
       peakStateRef.current = nextPeakState(
         peakStateRef.current,
         target,
-        timestamp,
+        now,
         config.history_delay,
       );
       peakValueRef.current = peakStateRef.current.peak;
 
       // Elapsed time since the previous tick — drives the time-based EMA.
       // First tick assumes one 60fps frame so the EMA starts moving.
-      const dt =
-        lastFrameTimeRef.current === 0 ? 1000 / 60 : timestamp - lastFrameTimeRef.current;
-      lastFrameTimeRef.current = timestamp;
+      const dt = lastFrameTimeRef.current === 0 ? 1000 / 60 : now - lastFrameTimeRef.current;
+      lastFrameTimeRef.current = now;
 
       // Transient spike detection (issue #82): if the raw value jumped far
       // from the smoothed display value, flash briefly so short pulses stay
       // visible even though the EMA filters them out of the needle position.
       if (isSpike(target, displayValueRef.current, config.min, config.max)) {
-        spikeUntilRef.current = timestamp + SPIKE_FLASH_MS;
+        spikeUntilRef.current = now + SPIKE_FLASH_MS;
       }
-      spikeRef.current = timestamp < spikeUntilRef.current;
+      spikeRef.current = now < spikeUntilRef.current;
 
       const diff = target - displayValueRef.current;
-      const keepAlive = continuousRender && !overrideStoreRef.current && channel;
-
-      /**
-       * Phase-staggered draw gate: draws at most once per configured
-       * refresh interval, offset by this gauge's stagger slot so gauges
-       * spread their redraws evenly across the interval.
-       */
-      const drawDue = () => {
-        if (timestamp < nextDrawAtRef.current) return;
-        drawFrame();
-        lastDrawTimeRef.current = timestamp;
-        const interval = getDrawIntervalMs();
-        if (nextDrawAtRef.current === 0) {
-          // First draw: apply the phase offset.
-          nextDrawAtRef.current =
-            timestamp + ((staggerSlotRef.current ?? 0) * interval) / STAGGER_SLOTS;
-        } else {
-          nextDrawAtRef.current = timestamp + interval;
-        }
-      };
 
       if (Math.abs(diff) > epsilon) {
         // Time-constant EMA: converges identically at any refresh rate.
         displayValueRef.current = emaStep(displayValueRef.current, target, dt);
-        drawDue();
-        rafIdRef.current = requestAnimationFrame(animate);
-      } else if (keepAlive) {
-        // Time-series painters need continuous redraws so the trace scrolls
-        // even when the channel value is constant. Snap to target and throttle
-        // drawing to the configured frame interval to avoid burning CPU.
-        displayValueRef.current = target;
-        drawDue();
-        rafIdRef.current = requestAnimationFrame(animate);
-      } else {
-        // Snap to target and always draw final frame.
-        displayValueRef.current = target;
+        drawDue(now);
+        return true;
+      }
+
+      // Converged: snap, then draw only if that produces different pixels (or
+      // the interval is due). This is what lets a parked gauge ignore the
+      // frames the shared loop runs for its neighbours.
+      displayValueRef.current = target;
+      if (keepAliveActive() && now < nextDrawAtRef.current) {
+        // Time-series painter waiting for its next sample: keep the loop up
+        // until it is due, then park — the idle tick wakes it again.
+        return true;
+      }
+      drawDue(now);
+      return false;
+    };
+
+    /** Called from the shared idle tick while the rAF loop is parked. */
+    const idle = (now: number): void => {
+      if (overrideStoreRef.current || !channel) return;
+
+      // Peak-hold decay must advance even while the loop is idle (steady
+      // value) — otherwise the marker would hold forever. performance.now()
+      // shares the rAF clock.
+      const next = nextPeakState(
+        peakStateRef.current,
+        targetRef.current,
+        now,
+        config.history_delay,
+      );
+      if (next !== peakStateRef.current) {
+        peakStateRef.current = next;
+        peakValueRef.current = next.peak;
         drawFrame();
-        lastDrawTimeRef.current = timestamp;
-        // Loop goes idle — the watchdog below will restart it if needed.
-        rafIdRef.current = null;
+        canvasDirtyRef.current = false;
+        lastDrawnRef.current = {
+          value: displayValueRef.current,
+          peak: peakValueRef.current,
+          spike: spikeRef.current,
+        };
+        nextDrawAtRef.current = now + getDrawIntervalMs();
       }
-    };
 
-    /** Kick the animation loop if it is not already running. */
-    const kickAnimation = () => {
-      if (loopActive && rafIdRef.current === null) {
-        rafIdRef.current = requestAnimationFrame(animate);
-      }
-    };
-
-    startAnimationRef.current = kickAnimation;
-
-    // Initial kick.
-    rafIdRef.current = requestAnimationFrame(animate);
-
-    // Watchdog: when the rAF loop is idle (converged), poll the store
-    // every 100ms. Costs ~one hash lookup per gauge per tick.
-    const watchdog = setInterval(() => {
-      if (!loopActive || overrideStoreRef.current || !channel) return;
-      if (rafIdRef.current === null) {
-        // Peak-hold decay must advance even while the loop is idle
-        // (steady value) — otherwise the marker would hold forever.
-        // performance.now() shares the rAF clock.
-        const next = nextPeakState(
-          peakStateRef.current,
-          targetRef.current,
-          performance.now(),
-          config.history_delay,
-        );
-        if (next !== peakStateRef.current) {
-          peakStateRef.current = next;
-          peakValueRef.current = next.peak;
-          drawFrame();
-        }
-      }
-      // Spike-flash expiry must repaint even while the loop is idle —
-      // performance.now() shares the rAF clock used for spikeUntilRef.
-      const spikeOn = performance.now() < spikeUntilRef.current;
+      // Spike-flash expiry must repaint even while the loop is idle.
+      const spikeOn = now < spikeUntilRef.current;
       if (spikeOn !== spikeRef.current) {
         spikeRef.current = spikeOn;
         drawFrame();
+        canvasDirtyRef.current = false;
+        lastDrawnRef.current = {
+          value: displayValueRef.current,
+          peak: peakValueRef.current,
+          spike: spikeRef.current,
+        };
+        nextDrawAtRef.current = now + getDrawIntervalMs();
       }
-      const raw = readStoreValue();
+
+      const raw = readStoreValue(now);
       if (raw !== undefined) {
         const peg = config.peg_limits;
         const clamped = peg ? Math.max(config.min, Math.min(config.max, raw)) : raw;
         if (Math.abs(clamped - displayValueRef.current) > epsilon) {
           targetRef.current = clamped;
-          kickAnimation();
         }
       }
-    }, 100);
+      // Re-request frames every tick: the scheduler ignores the call unless the
+      // loop is parked, and a time-series gauge is always due again by then.
+      requestFrames();
+    };
+
+    /** Kick the shared loop — used by the prop-sync and ResizeObserver effects. */
+    startAnimationRef.current = () => {
+      canvasDirtyRef.current = true;
+      requestFrames();
+    };
+
+    const unregister = registerGauge({ frame, idle });
 
     return () => {
-      loopActive = false;
       startAnimationRef.current = null;
-      clearInterval(watchdog);
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
+      // Synchronous: the scheduler drops this gauge before another frame runs,
+      // so no callback can touch a canvas that is being torn down.
+      unregister();
     };
     // Note: `value` and `paint` are intentionally omitted — they're
     // consumed via refs so the effect only restarts when channel/range
