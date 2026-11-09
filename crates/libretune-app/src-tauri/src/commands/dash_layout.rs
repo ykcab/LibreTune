@@ -2,8 +2,8 @@
 
 use crate::paths::get_dashboards_dir;
 use libretune_core::dash::{
-    self, create_race_dashboard, create_startup_dashboard, create_telemetry_live_dashboard,
-    create_tuning_dashboard, RACE_TEMPLATE_VERSION, STARTUP_TEMPLATE_VERSION,
+    self, create_race_dashboard, create_startup_dashboard, create_tuning_dashboard,
+    RACE_TEMPLATE_VERSION, STARTUP_TEMPLATE_VERSION,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -297,7 +297,6 @@ fn default_dashboard_specs() -> Vec<(&'static str, DefaultDashBuilder)> {
         ("Startup.ltdash.xml", create_startup_dashboard),
         ("Race.ltdash.xml", create_race_dashboard),
         ("Tuning.ltdash.xml", create_tuning_dashboard),
-        ("Telemetry Live.ltdash.xml", create_telemetry_live_dashboard),
     ]
 }
 
@@ -329,6 +328,7 @@ pub(crate) fn create_default_dashboard_files(dir: &Path) -> Result<(), String> {
 /// Retired built-in dashboards that should be deleted from the user dash folder
 /// on upgrade so they no longer appear in the selector.
 const OBSOLETE_DEFAULT_DASHBOARDS: &[&str] = &[
+    "Telemetry Live.ltdash.xml",
     "Telemetry Compact.ltdash.xml",
     "Basic.ltdash.xml",
     "Racing.ltdash.xml",
@@ -424,13 +424,6 @@ pub async fn get_dashboard_templates() -> Result<Vec<DashboardTemplateInfo>, Str
             id: "tuning".to_string(),
             name: "Tuning Dashboard".to_string(),
             description: "AFR, VE, Spark advance, and correction factors".to_string(),
-        },
-        DashboardTemplateInfo {
-            id: "telemetry_live".to_string(),
-            name: "Telemetry Live".to_string(),
-            description:
-                "Dense Grafana-style live view: 22 stat tiles, 4 multi-series charts, 16 sparklines"
-                    .to_string(),
         },
     ])
 }

@@ -745,6 +745,13 @@ impl EcuDefinition {
             supports_console: self.ecu_type.supports_console()
                 && !self.controller_commands.is_empty(),
             has_knock_spectrogram: self.output_channels.contains_key("m_knockSpectrum1"),
+            has_wmi: self.constants.contains_key("isWmiEnabled")
+                && self.constants.contains_key("wmiOutputPin")
+                && self.output_channels.contains_key("wmiState"),
+            has_wmi_calibration: self
+                .controller_commands
+                .keys()
+                .any(|k| k.eq_ignore_ascii_case("cmd_test_wmi_calibrate")),
             dfu_command_name: self
                 .controller_commands
                 .keys()

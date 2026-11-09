@@ -62,23 +62,21 @@ describe('applyTableSettingsLayout', () => {
 });
 
 describe('config + live-state dialog layout', () => {
-  it('detects WMI and launch control shell dialogs', () => {
-    expect(isConfigLiveStateDialog('WmiControlDialog')).toBe(true);
+  it('detects launch control shell dialogs', () => {
     expect(isConfigLiveStateDialog('smLaunchControl')).toBe(true);
     expect(isConfigLiveStateDialog('ioTest')).toBe(false);
   });
 
   it('preserves west/east split for shell dialogs', () => {
     const components = [
-      { type: 'Panel' as const, name: 'WmiSettingsDialog', position: 'West' },
-      { type: 'Panel' as const, name: 'wmiLiveStateDialog', position: 'East' },
+      { type: 'Panel' as const, name: 'launchSettings', position: 'West' },
+      { type: 'Panel' as const, name: 'launch_control_stateDialog', position: 'East' },
     ];
-    const { useConfigLiveSplit } = applyConfigLiveStateLayout('WmiControlDialog', components);
+    const { useConfigLiveSplit } = applyConfigLiveStateLayout('smLaunchControl', components);
     expect(useConfigLiveSplit).toBe(true);
   });
 
   it('infers live-state gate expressions', () => {
-    expect(inferLiveStateGateExpression('wmiLiveStateDialog')).toBe('isWmiEnabled');
     expect(inferLiveStateGateExpression('launch_control_stateDialog')).toBe(
       'launchControlEnabled',
     );
@@ -92,15 +90,6 @@ describe('config + live-state dialog layout', () => {
       unpositioned: [],
     };
     expect(rowHasDualSettingsSplit(row)).toBe(true);
-  });
-
-  it('does not treat WMI live-state east as dual settings', () => {
-    const row = {
-      west: [{ type: 'Panel' as const, name: 'WmiSettingsDialog' }],
-      east: [{ type: 'Panel' as const, name: 'wmiLiveStateDialog' }],
-      unpositioned: [],
-    };
-    expect(rowHasDualSettingsSplit(row)).toBe(false);
   });
 
   it('groups consecutive command buttons for side-by-side layout', () => {

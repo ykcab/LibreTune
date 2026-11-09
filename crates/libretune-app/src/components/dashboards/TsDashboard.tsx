@@ -275,12 +275,6 @@ export default function TsDashboard({ initialDashPath, isConnected = false }: Ts
           return;
         }
 
-        const telemetryDash = dashes.find(d => d.name === 'Telemetry Live.ltdash.xml');
-        if (telemetryDash) {
-          setSelectedPath(telemetryDash.path);
-          return;
-        }
-
         const basicDash = dashes.find(d => d.name === 'Basic.ltdash.xml');
         if (basicDash) {
           setSelectedPath(basicDash.path);

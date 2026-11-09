@@ -627,3 +627,64 @@ curve = cltIdleRPMCurve, "Idle Target RPM"
     assert_eq!(curve.x_output_channel.as_deref(), Some("coolant"));
     assert_eq!(curve.y_bins, "cltIdleRpm");
 }
+
+#[test]
+fn test_wmi_capabilities_detected() {
+    let ini = r#"
+[MegaTune]
+signature = "Test WMI"
+
+[Constants]
+page = 1
+isWmiEnabled = bits, U32, 0, [0:0], "false", "true"
+wmiOutputPin = bits, U16, 4, [0:9], $output_pin_e_list
+
+[OutputChannels]
+wmiState = scalar, U08, 0, "state", 1, 0
+
+[ControllerCommands]
+cmd_test_wmi_calibrate = "Z\x00\x16\x00\x35"
+"#;
+
+    let def = EcuDefinition::from_str(ini).expect("parse WMI INI");
+    let caps = def.capabilities();
+    assert!(caps.has_wmi, "WMI constants and wmiState should enable WMI");
+    assert!(
+        caps.has_wmi_calibration,
+        "the 60 s calibration command should enable the wizard"
+    );
+}
+
+#[test]
+fn test_table_in_curve_editor_section_is_registered() {
+    let ini = r#"
+[MegaTune]
+signature = "Test WMI"
+
+[Constants]
+page = 1
+wmiRpmBins = array, S16, 0, [8], "RPM", 1, 0, 0, 20000, 0
+wmiMapBins = array, U08, 16, [8], "kPa", 1, 0, 0, 255, 0
+wmiTable = array, U08, 24, [8x8], "%", 1, 0, 0, 100, 0
+
+[CurveEditor]
+table = wmiTableTbl, wmiMap, "WMI pump duty (%)", 1
+    xyLabels = "RPM", "MAP"
+    xBins = wmiRpmBins, RPMValue
+    yBins = wmiMapBins, MAPValue
+    zBins = wmiTable
+
+curve = someCurve, "Some Curve"
+    xBins = wmiRpmBins, RPMValue
+    yBins = wmiTable
+"#;
+
+    let def = EcuDefinition::from_str(ini).expect("parse CurveEditor table");
+    let table = def
+        .get_table_by_name_or_map("wmiTableTbl")
+        .expect("table in CurveEditor should be registered");
+    assert_eq!(table.x_bins, "wmiRpmBins");
+    assert_eq!(table.y_bins.as_deref(), Some("wmiMapBins"));
+    assert_eq!(table.map, "wmiTable");
+    assert!(def.get_curve_by_name_or_map("someCurve").is_some());
+}

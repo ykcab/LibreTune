@@ -43,6 +43,25 @@ export async function openTargetImpl(
     return;
   }
 
+  // Native WMI view replaces the INI shell dialog when the definition supports it.
+  if (name === "wmi" || name.toLowerCase() === "wmicontroldialog") {
+    if (!iniCapabilities?.has_wmi) {
+      if (name === "wmi") {
+        showToast("Water/methanol injection is not available for this ECU definition.", "warning");
+        return;
+      }
+    } else {
+      if (tabs.some((tab) => tab.id === "wmi")) {
+        setActiveTabId("wmi");
+        return;
+      }
+      setTabs([...tabs, { id: "wmi", title: "WMI", icon: "wmi" }]);
+      setTabContents({ ...tabContents, wmi: { type: "wmi" } });
+      setActiveTabId("wmi");
+      return;
+    }
+  }
+
   // Special built-in views
   if (name === "autotune") {
     setTabs([...tabs, { id: "autotune", title: "AutoTune", icon: "autotune" }]);

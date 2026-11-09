@@ -254,6 +254,12 @@ function TabIcon({ icon }: { icon: string }) {
         <path d="M4 5h8M4 8h8M4 11h5"/>
       </svg>
     ),
+    wmi: (
+      <svg viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 1.2c2.4 3.1 4.4 5.6 4.4 8.2a4.4 4.4 0 1 1-8.8 0C3.6 6.8 5.6 4.3 8 1.2zm0 2.2C6.4 5.6 5 7.5 5 9.4a3 3 0 0 0 6 0c0-1.9-1.4-3.8-3-6z"/>
+        <path d="M6.4 9.6a1.6 1.6 0 0 0 1.6 1.6v1a2.6 2.6 0 0 1-2.6-2.6z"/>
+      </svg>
+    ),
     default: (
       <svg viewBox="0 0 16 16" fill="currentColor">
         <rect x="2" y="2" width="12" height="12" rx="1" fill="none" stroke="currentColor"/>

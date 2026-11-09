@@ -66,7 +66,7 @@ pub(crate) struct Settings {
     /// Expanded sidebar folder IDs (JSON array of strings) for session restore.
     #[serde(default)]
     pub(crate) sidebar_expanded_ids: Option<String>,
-    /// The selected dashboard file name (e.g. "Telemetry Live.ltdash.xml").
+    /// The selected dashboard file name (e.g. "Startup.ltdash.xml").
     #[serde(default)]
     pub(crate) selected_dashboard: Option<String>,
     /// Serialized open tabs (id, title, icon, type, data) for session restore.

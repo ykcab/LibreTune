@@ -27,6 +27,7 @@ const BUILT_IN_TOOLS: { name: string; type: TabContent['type'] }[] = [
   { name: 'tooth-logger', type: 'tooth-logger' },
   { name: 'composite-logger', type: 'composite-logger' },
   { name: 'och-status', type: 'och-status' },
+  { name: 'wmi', type: 'wmi' },
 ];
 
 function deps() {
@@ -43,6 +44,7 @@ function deps() {
     iniCapabilities: {
       has_datalog_entries: true,
       has_output_channels: true,
+      has_wmi: true,
     } as OpenTargetDeps['iniCapabilities'],
     setTabs: (t) => { state.tabs = t; },
     setTabContents: (c) => { state.contents = c; },
@@ -68,6 +70,17 @@ test.each(BUILT_IN_TOOLS)('opening %s gives a tab of the right type', async ({ n
   expect(state.contents[name]?.type).toBe(type);
   expect(state.tabs.map((t) => t.id)).toContain(name);
   // A built-in view must never have gone looking for a table of its own name.
+  expect(invoke).not.toHaveBeenCalled();
+  expect(state.toasts).toEqual([]);
+});
+
+test('the INI WMI dialog opens the native WMI tab', async () => {
+  const { d, state } = deps();
+  await openTargetImpl(d, 'WmiControlDialog');
+
+  expect(state.active).toBe('wmi');
+  expect(state.contents.wmi?.type).toBe('wmi');
+  expect(state.tabs.map((t) => t.id)).toContain('wmi');
   expect(invoke).not.toHaveBeenCalled();
   expect(state.toasts).toEqual([]);
 });

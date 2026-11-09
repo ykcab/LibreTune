@@ -617,6 +617,7 @@ function AppContent() {
                "composite-logger": { title: "Composite Logger", icon: "scope", type: "composite-logger" },
                "knock-spectrogram": { title: "Knock Spectrogram", icon: "scope", type: "knock-spectrogram" },
                "och-status": { title: "Output Channel Status", icon: "dashboard", type: "och-status" },
+               "wmi": { title: "WMI", icon: "wmi", type: "wmi" },
                "lua-console": { title: "Lua Console", icon: "terminal", type: "lua-console" },
                "settings": { title: "Settings", icon: "settings", type: "settings" },
              };

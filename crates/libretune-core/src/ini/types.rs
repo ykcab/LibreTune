@@ -125,6 +125,10 @@ pub struct IniCapabilities {
     pub supports_console: bool,
     /// True when OCH publishes `m_knockSpectrum1` (rusEFI-family spectrogram).
     pub has_knock_spectrogram: bool,
+    /// True when the definition exposes the WMI control surface.
+    pub has_wmi: bool,
+    /// True when the definition exposes the 60 s nozzle calibration command.
+    pub has_wmi_calibration: bool,
     /// Name of the `cmd_dfu` controller command when defined in the INI.
     pub dfu_command_name: Option<String>,
     /// Name of the `cmd_openblt` controller command when defined in the INI.

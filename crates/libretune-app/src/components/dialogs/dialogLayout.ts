@@ -158,9 +158,8 @@ export function isReferenceGaugePanel(panelName: string | undefined): boolean {
   return /^injTest_r$/i.test(panelName);
 }
 
-/** Shell dialogs: settings West, live state East (WMI, launch control, …). */
+/** Shell dialogs: settings West, live state East (launch control, …). */
 const CONFIG_LIVE_STATE_DIALOGS = new Set([
-  'wmicontroldialog',
   'smlaunchcontrol',
 ]);
 
@@ -171,11 +170,7 @@ export function isConfigLiveStateDialog(dialogName: string): boolean {
 /** Gate expression for live-state side panels when the INI omits a panel condition. */
 export function inferLiveStateGateExpression(panelName: string): string | null {
   const lower = panelName.toLowerCase();
-  if (lower === 'wmilivestatedialog') return 'isWmiEnabled';
   if (lower === 'launch_control_statedialog') return 'launchControlEnabled';
-  if (lower.endsWith('livestatedialog')) {
-    if (lower.includes('wmi')) return 'isWmiEnabled';
-  }
   if (lower.endsWith('_statedialog') || lower.endsWith('statedialog')) {
     const base = panelName.replace(/Dialog$/i, '');
     if (/launch/i.test(base)) return 'launchControlEnabled';
@@ -203,7 +198,7 @@ export function rowHasDualSettingsSplit(row: DialogComponentRow): boolean {
 
 /**
  * Preserve West/East layout for config + live-state shell dialogs.
- * Strips Center-only noise so WMI / launch control render as a two-column split.
+ * Strips Center-only noise so launch control renders as a two-column split.
  */
 export function applyConfigLiveStateLayout(
   dialogName: string,

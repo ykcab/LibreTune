@@ -536,7 +536,7 @@ export const FLAGS: FlagSpec[] = [
   { id: 'fan', keys: ['fan', 'fanOn', 'fan1'], label: 'FAN', tone: 'info', title: 'Cooling fan commanded on' },
   { id: 'pump', keys: ['fuelPump', 'fuelPumpOn'], label: 'PUMP', tone: 'info', title: 'Fuel pump relay commanded on' },
   { id: 'closedLoop', keys: ['closedLoop', 'isClosedLoop', 'lambdaClosedLoop'], label: 'CLOSED LOOP', tone: 'ok', title: 'Closed-loop fuelling active' },
-  { id: 'wmi', keys: ['wmiArmed'], label: 'WMI ARMED', tone: 'info', title: 'Water/meth injection armed' },
+  { id: 'wmi', keys: ['wmiActive'], label: 'WMI ACTIVE', tone: 'info', title: 'Water/meth corrections are live' },
 ];
 
 /* ------------------------------------------------------- source-unit handling */

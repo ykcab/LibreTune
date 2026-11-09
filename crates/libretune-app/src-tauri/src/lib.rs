@@ -143,7 +143,8 @@ use commands::pin_conflicts::check_pin_conflicts;
 use commands::project_lifecycle::{create_project, open_project};
 use commands::project_listing::{get_projects_path, list_projects};
 use commands::project_mgmt::{
-    close_project, get_current_project, update_project_auto_connect, update_project_connection,
+    close_project, get_current_project, get_wmi_wf_target, update_project_auto_connect,
+    update_project_connection, update_wmi_wf_target,
 };
 use commands::project_misc::{delete_project, get_msq_info};
 use commands::project_tune_sync::{
@@ -472,6 +473,8 @@ pub fn run() {
             get_current_project,
             update_project_connection,
             update_project_auto_connect,
+            get_wmi_wf_target,
+            update_wmi_wf_target,
             // Restore points commands
             create_restore_point,
             list_restore_points,

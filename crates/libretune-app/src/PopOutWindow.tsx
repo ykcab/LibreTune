@@ -41,6 +41,8 @@ import type { CurveData, SimpleGaugeInfo } from './components/curves/CurveEditor
 const CurveEditor = lazy(() => import('./components/curves/CurveEditor'));
 import type { DialogDefinition as RendererDialogDef } from './components/dialogs/DialogRenderer';
 const DialogRenderer = lazy(() => import('./components/dialogs/DialogRenderer'));
+const WmiView = lazy(() => import('./components/wmi/WmiView'));
+import type { IniCapabilities } from './types/app';
 import { AgentDock } from './components/agent/AgentDock';
 import { ensureRealtimeListener } from './services/realtimeListener';
 import { initRenderSettings } from './components/gauges/renderSettings';
@@ -77,7 +79,7 @@ interface BackendCurveData {
 
 interface PopOutData {
   tabId: string;
-  type: 'dashboard' | 'table' | 'curve' | 'dialog' | 'settings' | 'autotune' | 'datalog' | 'agent';
+  type: 'dashboard' | 'table' | 'curve' | 'dialog' | 'settings' | 'autotune' | 'datalog' | 'agent' | 'wmi';
   title: string;
   data?: TunerTableData | CurveData | RendererDialogDef | string;
   gauge?: SimpleGaugeInfo | null;
@@ -89,11 +91,26 @@ export default function PopOutWindow() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [iniCapabilities, setIniCapabilities] = useState<IniCapabilities | null>(null);
 
   // Dashboard render settings (refresh-rate cap, right-aligned values) apply
   // to gauges in pop-out windows too (issue #82).
   useEffect(() => {
     void initRenderSettings();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<IniCapabilities>('get_ini_capabilities')
+      .then((caps) => {
+        if (!cancelled) setIniCapabilities(caps);
+      })
+      .catch((e) => {
+        console.warn('[PopOutWindow] Failed to fetch INI capabilities:', e);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Track connection status so the popped-out dashboard behaves the same as
@@ -400,6 +417,15 @@ export default function PopOutWindow() {
           />
         );
       
+      case 'wmi':
+        return (
+          <WmiView
+            isConnected={isConnected}
+            hasWmi={iniCapabilities?.has_wmi ?? true}
+            hasCalibration={iniCapabilities?.has_wmi_calibration ?? false}
+          />
+        );
+
       case 'autotune':
         return (
           <AutoTune

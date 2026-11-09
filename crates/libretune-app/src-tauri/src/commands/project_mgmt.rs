@@ -2,6 +2,14 @@
 
 use crate::state::AppState;
 use crate::{ConnectionSettingsResponse, CurrentProjectInfo};
+use libretune_core::project::ProjectSettings;
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WmiWfTargetBand {
+    pub min: f64,
+    pub max: f64,
+}
 
 /// Close the current project and clear state.
 ///
@@ -101,6 +109,55 @@ pub async fn update_project_auto_connect(
         .ok_or_else(|| "No project open".to_string())?;
 
     project.config.settings.auto_connect = auto_connect;
+    project
+        .save_config()
+        .map_err(|e| format!("Failed to save project config: {}", e))?;
+
+    Ok(())
+}
+
+/// Read the W/F target band from the current project.
+///
+/// The band is calibration-software state: it is never written to the ECU.
+/// With no project open, return the same defaults a new project gets.
+#[tauri::command]
+pub async fn get_wmi_wf_target(
+    state: tauri::State<'_, AppState>,
+) -> Result<WmiWfTargetBand, String> {
+    let proj_guard = state.current_project.lock().await;
+    let settings = proj_guard
+        .as_ref()
+        .map(|project| &project.config.settings)
+        .cloned()
+        .unwrap_or_else(ProjectSettings::default);
+
+    Ok(WmiWfTargetBand {
+        min: settings.wmi_wf_target_min,
+        max: settings.wmi_wf_target_max,
+    })
+}
+
+/// Persist the W/F target band in the current project's project.json.
+#[tauri::command]
+pub async fn update_wmi_wf_target(
+    state: tauri::State<'_, AppState>,
+    min: f64,
+    max: f64,
+) -> Result<(), String> {
+    if !min.is_finite() || !max.is_finite() {
+        return Err("W/F target band must be finite".to_string());
+    }
+    if min < 0.0 || max <= min || max > 10.0 {
+        return Err("W/F target band must satisfy 0 <= min < max <= 10".to_string());
+    }
+
+    let mut proj_guard = state.current_project.lock().await;
+    let project = proj_guard
+        .as_mut()
+        .ok_or_else(|| "No project open".to_string())?;
+
+    project.config.settings.wmi_wf_target_min = min;
+    project.config.settings.wmi_wf_target_max = max;
     project
         .save_config()
         .map_err(|e| format!("Failed to save project config: {}", e))?;

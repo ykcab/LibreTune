@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useChannels, useIsReceivingData } from '../../stores/realtimeStore';
+import { wmiStateInfo } from '../wmi/wmiFormat';
 import './RaceMonitor.css';
 
 export interface RaceMonitorProps {
@@ -51,18 +52,6 @@ export function formatSigned(value: number | undefined, digits: number): string 
   if (value === undefined || Number.isNaN(value)) return '—';
   const n = value.toFixed(digits);
   return value > 0 ? `+${n}` : n;
-}
-
-/** 0=OFF, 1=ARMED, ≥2 or pump duty = ON (rusEFI wmiState / isWmiEnabled). */
-export function formatWmi(
-  state: number | undefined,
-  duty?: number,
-): { label: string; cls: string } {
-  if (duty !== undefined && !Number.isNaN(duty) && duty > 1) return { label: 'ON', cls: 'ok' };
-  if (state === undefined || Number.isNaN(state)) return { label: '—', cls: 'dim' };
-  if (state >= 1.5) return { label: 'ON', cls: 'ok' };
-  if (state >= 0.5) return { label: 'ARMED', cls: 'ok' };
-  return { label: 'OFF', cls: 'dim' };
 }
 
 function pick(channels: Record<string, number>, name: string): number | undefined {
@@ -117,7 +106,7 @@ export default function RaceMonitor({ isConnected }: RaceMonitorProps) {
   const channels = useChannels([
     'rpm', 'speed', 'gear', 'tps', 'map', 'boost', 'afr', 'afrTarget', 'lambda',
     'coolant', 'iat', 'oilPressure', 'oilTemp', 'battery', 'dutyCycle',
-    'advance', 'fuelLevel', 'wmiArmed', 'wmiDuty', 'launch', 'egt', 'gLat', 'gLong',
+    'advance', 'fuelLevel', 'wmiState', 'wmiPumpDuty', 'launch', 'egt', 'gLat', 'gLong',
   ]);
 
   const rpm = pick(channels, 'rpm');
@@ -131,8 +120,8 @@ export default function RaceMonitor({ isConnected }: RaceMonitorProps) {
     : undefined);
   const afrT = pick(channels, 'afrTarget');
   const fuel = pick(channels, 'fuelLevel');
-  const wmi = pick(channels, 'wmiArmed');
-  const wmiDuty = pick(channels, 'wmiDuty');
+  const wmi = pick(channels, 'wmiState');
+  const wmiDuty = pick(channels, 'wmiPumpDuty');
   const gLat = pick(channels, 'gLat');
   const gLong = pick(channels, 'gLong');
   const launch = pick(channels, 'launch');
@@ -152,9 +141,16 @@ export default function RaceMonitor({ isConnected }: RaceMonitorProps) {
   const gearTxt = formatRaceGear(gear);
   const gearTone = gearTxt === 'N' || gearTxt === 'R' ? ' special' : '';
 
-  const wmiTxt = formatWmi(wmi, wmiDuty);
+  const wmiInfo = wmiStateInfo(wmi);
+  const wmiCls = wmiInfo.tone === 'crit'
+    ? 'crit'
+    : wmiInfo.tone === 'warn'
+      ? 'warn'
+      : wmiInfo.tone === 'dim'
+        ? 'dim'
+        : 'ok';
   const flankL = wmi !== undefined || wmiDuty !== undefined
-    ? { k: 'WMI', v: wmiTxt.label, cls: `stat ${wmiTxt.cls}` }
+    ? { k: 'WMI', v: wmiInfo.shortLabel, cls: `stat ${wmiCls}` }
     : launch !== undefined
       ? { k: 'LC', v: Math.abs(launch) > 0.5 ? 'ON' : 'OFF', cls: `stat ${Math.abs(launch) > 0.5 ? 'ok' : 'dim'}` }
       : { k: 'AFR', v: fmt(afr, 1), cls: tone(afr, { lo: 11.5, hi: 16.5 }) };

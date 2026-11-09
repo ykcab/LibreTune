@@ -462,12 +462,47 @@ fn parse_ini_internal(content: &str, ctx: &mut IncludeContext) -> Result<EcuDefi
                             &mut state.current_table,
                         );
                     } else if section_lower.contains("curveeditor") {
-                        parse_curve_editor_entry(
-                            &mut definition,
-                            key,
-                            value,
-                            &mut state.current_curve,
-                        );
+                        // Some INIs place a `table = ...` definition in the
+                        // CurveEditor section (the pre-fix epicEFI WMI table was
+                        // one). Register it as a table so table lookup works,
+                        // and route its xBins/yBins/zBins back here.
+                        let key_lc = key.to_lowercase();
+                        if key.eq_ignore_ascii_case("table") {
+                            parse_table_editor_entry(
+                                &mut definition,
+                                key,
+                                value,
+                                &mut state.current_table,
+                            );
+                        } else if key.eq_ignore_ascii_case("curve") {
+                            // A new curve ends any table started in this section.
+                            state.current_table = None;
+                            parse_curve_editor_entry(
+                                &mut definition,
+                                key,
+                                value,
+                                &mut state.current_curve,
+                            );
+                        } else if state.current_table.is_some()
+                            && matches!(
+                                key_lc.as_str(),
+                                "xbins" | "ybins" | "zbins" | "xylabels" | "gridheight" | "topichelp"
+                            )
+                        {
+                            parse_table_editor_entry(
+                                &mut definition,
+                                key,
+                                value,
+                                &mut state.current_table,
+                            );
+                        } else {
+                            parse_curve_editor_entry(
+                                &mut definition,
+                                key,
+                                value,
+                                &mut state.current_curve,
+                            );
+                        }
                     } else if !current_section.is_empty()
                         && !is_known_passive_section(&section_lower)
                     {

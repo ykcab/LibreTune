@@ -66,6 +66,7 @@ const KnockSpectrogramView = lazy(() =>
     default: m.KnockSpectrogramView,
   })),
 );
+const WmiView = lazy(() => import("./wmi/WmiView"));
 const EcuConsole = lazy(() =>
   import("./console/EcuConsole").then((m) => ({ default: m.EcuConsole })),
 );
@@ -336,6 +337,15 @@ export function TabContentRouter(props: TabContentRouterProps) {
         );
       case "och-status":
         return <OutputChannelStatus />;
+      case "wmi":
+        return (
+          <WmiView
+            isConnected={status.state === "Connected"}
+            hasWmi={iniCapabilities?.has_wmi ?? false}
+            hasCalibration={iniCapabilities?.has_wmi_calibration ?? false}
+            openTarget={openTarget}
+          />
+        );
       case "console":
         return (
           <EcuConsole

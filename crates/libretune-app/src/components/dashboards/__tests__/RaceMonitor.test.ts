@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   formatRaceGear,
   formatSigned,
-  formatWmi,
   greenLedsOn,
   isRaceMonitorPath,
   rpmBarPct,
 } from '../RaceMonitor';
+import { wmiStateInfo } from '../../wmi/wmiFormat';
 
 describe('RaceMonitor', () => {
   it('matches the Race dashboard path', () => {
@@ -36,11 +36,12 @@ describe('RaceMonitor', () => {
     expect(formatSigned(undefined, 2)).toBe('—');
   });
 
-  it('formats WMI off / armed / on', () => {
-    expect(formatWmi(0)).toEqual({ label: 'OFF', cls: 'dim' });
-    expect(formatWmi(1)).toEqual({ label: 'ARMED', cls: 'ok' });
-    expect(formatWmi(2)).toEqual({ label: 'ON', cls: 'ok' });
-    expect(formatWmi(1, 40)).toEqual({ label: 'ON', cls: 'ok' });
-    expect(formatWmi(undefined)).toEqual({ label: '—', cls: 'dim' });
+  it('formats WMI off / armed / on / fault', () => {
+    expect(wmiStateInfo(0).shortLabel).toBe('OFF');
+    expect(wmiStateInfo(1).shortLabel).toBe('ARMED');
+    expect(wmiStateInfo(2).shortLabel).toBe('ON');
+    expect(wmiStateInfo(3).shortLabel).toBe('ON');
+    expect(wmiStateInfo(4).shortLabel).toBe('FAULT');
+    expect(wmiStateInfo(undefined).shortLabel).toBe('—');
   });
 });

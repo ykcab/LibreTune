@@ -120,14 +120,6 @@ const REALTIME_CHANNEL_ALIASES: &[(&str, &[&str])] = &[
     ("oilPressure", &["oilPressure", "OilPressure", "oilpress"]),
     ("oilTemp", &["oilTemp", "OilTemp", "oilTemperature"]),
     (
-        "wmiArmed",
-        &["isWmiEnabled", "wmiState", "wmiArmed", "wmiEnabled", "wmi"],
-    ),
-    (
-        "wmiDuty",
-        &["wmiPumpDuty", "wmiDuty", "wmiPump", "methDuty"],
-    ),
-    (
         "gLat",
         &["gLat", "accelY", "accY", "lateralG", "latG", "imuY"],
     ),

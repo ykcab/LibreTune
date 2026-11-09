@@ -21,20 +21,10 @@ function usesStatusTiles(indicators: IndicatorDef[]): boolean {
   );
 }
 
-function tileStyle(ind: IndicatorDef, isOn: boolean, accentOnly = false): React.CSSProperties {
-  const accent =
+function tileStyle(ind: IndicatorDef, isOn: boolean): React.CSSProperties {
+  const background =
     resolveIndicatorColor(isOn ? ind.color_on_fg : ind.color_off_fg) ??
     (isOn ? 'var(--success)' : 'var(--border-strong)');
-
-  if (accentOnly) {
-    return {
-      background: '#111525',
-      color: '#e8eaf0',
-      boxShadow: `inset 0 3px 0 ${accent}`,
-    };
-  }
-
-  const background = accent;
   const color =
     resolveIndicatorColor(isOn ? ind.color_on_bg : ind.color_off_bg) ?? '#000';
 
@@ -49,11 +39,9 @@ function tileStyle(ind: IndicatorDef, isOn: boolean, accentOnly = false): React.
 export function IndicatorPanelRenderer({
   panel,
   context,
-  panelName,
 }: {
   panel: IndicatorPanel;
   context: Record<string, number>;
-  panelName?: string;
 }) {
   const usedVars = useMemo(
     () => extractExpressionVariables(panel.indicators.map((ind) => ind.expression)),
@@ -124,7 +112,6 @@ export function IndicatorPanelRenderer({
     () => usesStatusTiles(panel.indicators),
     [panel.indicators],
   );
-  const rasdashTiles = !!panelName && panelName.toLowerCase().includes('wmi');
 
   const columns = panel.columns || 2;
   const gridStyle: React.CSSProperties = useMemo(() => {
@@ -140,7 +127,7 @@ export function IndicatorPanelRenderer({
   }, [statusTiles, columns, panel.indicators.length]);
 
   return (
-    <div className={`indicator-panel${statusTiles ? ' indicator-panel--tiles' : ''}${rasdashTiles ? ' indicator-panel--rasdash' : ''}`}>
+    <div className={`indicator-panel${statusTiles ? ' indicator-panel--tiles' : ''}`}>
       <div className="indicator-panel-grid" style={gridStyle}>
         {panel.indicators.map((ind, i) => {
           const isOn = indicatorValues[ind.expression] || false;
@@ -152,7 +139,7 @@ export function IndicatorPanelRenderer({
               <div
                 key={i}
                 className="indicator-tile"
-                style={tileStyle(ind, isOn, rasdashTiles)}
+                style={tileStyle(ind, isOn)}
                 title={label}
               >
                 <span className="indicator-tile-label">{label}</span>

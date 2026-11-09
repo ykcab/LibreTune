@@ -68,10 +68,27 @@ pub struct ProjectSettings {
     /// Maximum number of restore points to keep (0 = unlimited)
     #[serde(default = "default_max_restore_points")]
     pub max_restore_points: u32,
+
+    /// Lower bound of the W/F target band, shown by the native WMI view.
+    /// This is calibration-software state, never an ECU constant.
+    #[serde(default = "default_wmi_wf_target_min")]
+    pub wmi_wf_target_min: f64,
+
+    /// Upper bound of the W/F target band, shown by the native WMI view.
+    #[serde(default = "default_wmi_wf_target_max")]
+    pub wmi_wf_target_max: f64,
 }
 
 fn default_max_restore_points() -> u32 {
     20
+}
+
+fn default_wmi_wf_target_min() -> f64 {
+    0.10
+}
+
+fn default_wmi_wf_target_max() -> f64 {
+    0.25
 }
 
 impl Default for ProjectSettings {
@@ -81,6 +98,8 @@ impl Default for ProjectSettings {
             auto_save_tune: true,
             auto_connect: false,
             max_restore_points: default_max_restore_points(),
+            wmi_wf_target_min: default_wmi_wf_target_min(),
+            wmi_wf_target_max: default_wmi_wf_target_max(),
         }
     }
 }
@@ -768,6 +787,20 @@ mod tests {
         assert_eq!(dated, "2026-08-09T10:00:00Z");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_project_settings_defaults_wmi_target_band_for_old_projects() {
+        // A project.json written before the W/F band existed must still load.
+        let json = r#"{
+            "auto_load_tune": true,
+            "auto_save_tune": true,
+            "auto_connect": false,
+            "max_restore_points": 20
+        }"#;
+        let settings: ProjectSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.wmi_wf_target_min, 0.10);
+        assert_eq!(settings.wmi_wf_target_max, 0.25);
     }
 
     #[test]

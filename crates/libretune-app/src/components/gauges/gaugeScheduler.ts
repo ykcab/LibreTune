@@ -3,8 +3,8 @@
  * dashboard, instead of one of each per gauge.
  *
  * The previous design gave every `<TsGauge>` its own `requestAnimationFrame`
- * loop and its own 100 ms `setInterval` watchdog (`useGaugeRenderer`). On the
- * 42-gauge `Telemetry Live` dashboard that is 42 loops and 42 timers: 42
+ * loop and its own 100 ms `setInterval` watchdog (`useGaugeRenderer`). On a
+ * large dashboard that is dozens of loops and timers: dozens of
  * callbacks per frame, 420 timer wake-ups a second, 42 independent store reads,
  * and no way for the dashboard as a whole to be idle — one time-series gauge
  * (LineGraph, Histogram, MultiChannelTrend) kept its own 60 Hz loop running

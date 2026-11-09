@@ -69,6 +69,8 @@ export interface IniCapabilities {
   has_gamma_e: boolean;
   supports_console: boolean;
   has_knock_spectrogram: boolean;
+  has_wmi: boolean;
+  has_wmi_calibration: boolean;
   dfu_command_name?: string | null;
   openblt_command_name?: string | null;
   lua_script_constant?: string | null;
@@ -202,7 +204,7 @@ export interface PortEditorConfig {
 
 // Tab content types
 export interface TabContent {
-  type: "dashboard" | "table" | "curve" | "dialog" | "portEditor" | "settings" | "project" | "autotune" | "datalog" | "datalog-viewer" | "virtual-dyno" | "tooth-logger" | "composite-logger" | "knock-spectrogram" | "console" | "lua-console" | "och-status";
+  type: "dashboard" | "table" | "curve" | "dialog" | "portEditor" | "settings" | "project" | "autotune" | "datalog" | "datalog-viewer" | "virtual-dyno" | "tooth-logger" | "composite-logger" | "knock-spectrogram" | "console" | "lua-console" | "och-status" | "wmi";
   data?: TunerTableData | RendererDialogDef | PortEditorConfig | CurveData | string;
   gauge?: SimpleGaugeInfo | null; // For curve tabs with associated gauges
   /** Search term to highlight within the content (e.g., matching field labels in dialogs) */
