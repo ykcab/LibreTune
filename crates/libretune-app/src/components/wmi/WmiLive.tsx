@@ -183,7 +183,7 @@ export function WmiLive({
           {!enabled ? (
             <WmiCallout tone="warn">
               <span>WMI is disabled in this tune. Enable it in Hardware before running the pump.</span>
-              <WmiButton onClick={() => onGoTo('hardware')}>Open Hardware</WmiButton>
+              <WmiButton onClick={() => onGoTo('setup')}>Open Hardware</WmiButton>
             </WmiCallout>
           ) : null}
 
@@ -217,6 +217,12 @@ export function WmiLive({
               detail={flowMonitored ? 'Hall meter' : 'no sensor'}
               tone={flowTone}
             />
+            <WmiTile
+              label="Cooling ratio"
+              value={formatNumber(live.wmiCoolingRatio, 0, '%')}
+              detail={`${formatNumber(methanolPct, 0, '%')} methanol · IAT-scaled`}
+              tone="info"
+            />
           </div>
 
           <section className={`wmi-band-card${wfValue === undefined ? ' is-inactive' : ''}`}>
@@ -245,6 +251,11 @@ export function WmiLive({
               <span>target {formatNumber(bandMin, 2)}–{formatNumber(bandMax, 2)}</span>
               <span>{bandScaleMax.toFixed(2)}</span>
             </div>
+            <p className="wmi-note">
+              Target 0.40–0.70 at WOT. Below ~0.4 the pumping penalty outweighs the knock
+              benefit; above ~0.8–1.0 power often drops. Tune to the knock limit after every
+              duty change, not at fixed spark.
+            </p>
           </section>
 
           <WmiFlowGraph />
@@ -322,7 +333,7 @@ export function WmiLive({
           <section className="wmi-panel">
             <div className="wmi-panel__head">
               <span>SETUP</span>
-              <button type="button" className="wmi-panel__link" onClick={() => onGoTo('hardware')}>
+              <button type="button" className="wmi-panel__link" onClick={() => onGoTo('setup')}>
                 Edit
               </button>
             </div>

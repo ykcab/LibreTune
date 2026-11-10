@@ -61,6 +61,8 @@ export function WmiCallout({
   return <div className={`wmi-callout wmi-tone-${tone}`}>{children}</div>;
 }
 
+import { Button } from '../common/Button';
+
 export function WmiButton({
   children,
   onClick,
@@ -73,13 +75,14 @@ export function WmiButton({
   variant?: 'primary' | 'danger' | 'ghost';
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant={variant}
       className={`wmi-btn wmi-btn--${variant}`}
       onClick={onClick}
       disabled={disabled}
     >
       {children}
-    </button>
+    </Button>
   );
 }

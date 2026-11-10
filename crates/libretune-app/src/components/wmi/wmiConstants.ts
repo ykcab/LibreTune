@@ -64,7 +64,7 @@ export const WMI_ACTION_LABEL: Record<WmiAction, string> = {
   cancel: 'Cancel',
 };
 
-export type WmiTab = 'live' | 'calibration' | 'activation' | 'safety' | 'hardware';
+export type WmiTab = 'live' | 'calibration' | 'setup' | 'safety';
 
 /** Native editors that own the WMI tables and curves. */
 export const WMI_EDITOR_LINKS = [

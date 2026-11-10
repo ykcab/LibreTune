@@ -11,6 +11,8 @@ export interface WmiFieldProps {
   disabled?: boolean;
   variant?: 'number' | 'select' | 'toggle';
   onCommit: (name: string, value: number) => Promise<void>;
+  /** INI metadata, preloaded by useWmiConfig. When omitted, fetched on mount. */
+  meta?: Constant | null;
 }
 
 function bitLabel(option: string): string {
@@ -31,9 +33,15 @@ export function WmiField({
   disabled = false,
   variant = 'number',
   onCommit,
+  meta: metaProp,
 }: WmiFieldProps) {
-  const [meta, setMeta] = useState<Constant | null>(null);
+  // When metadata is preloaded (useWmiConfig), use it directly and skip the
+  // per-field fetch. Otherwise fall back to the legacy on-mount fetch so the
+  // component stays usable standalone.
+  const [fetchedMeta, setFetchedMeta] = useState<Constant | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const meta = metaProp !== undefined ? metaProp : fetchedMeta;
+
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,15 +50,16 @@ export function WmiField({
   const unavailable = missing.has(name) || loadFailed;
 
   useEffect(() => {
+    if (metaProp !== undefined) return; // externally supplied
     if (missing.has(name)) {
-      setMeta(null);
+      setFetchedMeta(null);
       return;
     }
     let cancelled = false;
     setLoadFailed(false);
     invoke<Constant>('get_constant', { name })
       .then((constant) => {
-        if (!cancelled) setMeta(constant);
+        if (!cancelled) setFetchedMeta(constant);
       })
       .catch(() => {
         if (!cancelled) setLoadFailed(true);
@@ -58,13 +67,27 @@ export function WmiField({
     return () => {
       cancelled = true;
     };
-  }, [name, missing]);
+  }, [name, missing, metaProp]);
 
   useEffect(() => {
     if (value !== undefined) setText(String(value));
   }, [value]);
 
-  if (unavailable) return null;
+  if (unavailable) {
+    return (
+      <div className="wmi-field wmi-field--unavailable" aria-disabled="true">
+        <div className="wmi-field__head">
+          <span className="wmi-field__label">{label ?? name}</span>
+        </div>
+        <div className="wmi-field__control">
+          <span className="wmi-input wmi-input--disabled" aria-hidden="true">—</span>
+        </div>
+        <p className="wmi-field__hint">
+          Not exposed by this ECU definition — nothing to edit.
+        </p>
+      </div>
+    );
+  }
 
   if (!meta) {
     return (

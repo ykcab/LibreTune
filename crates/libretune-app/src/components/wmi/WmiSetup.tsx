@@ -3,15 +3,17 @@ import { useChannels } from '../../stores/realtimeStore';
 import { WMI_CONSTANTS, WMI_EDITOR_LINKS, type WmiTab } from './wmiConstants';
 import { WmiButton, WmiCallout, WmiSection, WmiTile } from './WmiLayout';
 import { WmiField } from './WmiField';
+import type { Constant } from '../dialogs/types';
 import { formatNumber, isOn } from './wmiFormat';
 import type { WmiTargetBand } from './useWmi';
 
-export type WmiSetupSection = 'activation' | 'hardware';
+export type WmiSetupSection = 'setup';
 
 export interface WmiSetupProps {
-  section: WmiSetupSection;
+  section?: WmiSetupSection;
   values: Record<string, number>;
   missing: Set<string>;
+  meta: Record<string, Constant>;
   onCommit: (name: string, value: number) => Promise<void>;
   onGoTo: (tab: WmiTab) => void;
   openTarget?: (target: string) => void;
@@ -122,9 +124,9 @@ function WmiTargetBandEditor({
 }
 
 export function WmiSetup({
-  section,
   values,
   missing,
+  meta,
   onCommit,
   onGoTo,
   openTarget,
@@ -141,8 +143,8 @@ export function WmiSetup({
   ]);
   const enabled = isOn(values[WMI_CONSTANTS.enabled]);
   const correctionsActive = isOn(live.wmiActive);
-  const showHardware = section === 'hardware';
-  const showActivation = section === 'activation';
+  const showHardware = true;
+  const showActivation = true;
   const fluidPin = values[WMI_CONSTANTS.fluidPin] ?? 0;
   const enablePin = values[WMI_CONSTANTS.enablePin] ?? 0;
   const flowPin = values[WMI_CONSTANTS.flowPin] ?? 0;
@@ -161,6 +163,7 @@ export function WmiSetup({
       hint={hint}
       values={values}
       missing={missing}
+      meta={meta[name] ?? null}
       onCommit={onCommit}
       variant={variant}
       disabled={disabled || !enabled}
@@ -182,6 +185,7 @@ export function WmiSetup({
                 hint="When off, the pump output is released and no WMI corrections are applied."
                 values={values}
                 missing={missing}
+                meta={meta[WMI_CONSTANTS.enabled] ?? null}
                 onCommit={onCommit}
                 variant="toggle"
               />
@@ -266,6 +270,14 @@ export function WmiSetup({
                 ? `Saved nozzle: ${nozzle.toFixed(0)} cc/min. W/F uses the water mass fraction only.`
                 : 'No nozzle calibration yet. Modeled flow and W/F stay unavailable until you run the wizard.'}
             </p>
+            <WmiCallout tone="info">
+              <span>
+                Bench tests (prime/test/calibrate) require ignition voltage and an engine that is
+                not spinning; the firmware refuses them otherwise. Cancel is instantaneous.
+                Calibrate runs 60 s at 100 % into a measuring container — enter the jug result
+                as nozzle flow, not the catalogue rating.
+              </span>
+            </WmiCallout>
           </WmiSection>
         </>
       ) : null}
@@ -275,7 +287,7 @@ export function WmiSetup({
           {!enabled ? (
             <WmiCallout tone="info">
               <span>Enable WMI in Hardware to expose activation thresholds.</span>
-              <WmiButton onClick={() => onGoTo('hardware')}>Open Hardware</WmiButton>
+              <WmiButton onClick={() => onGoTo('setup')}>Open Hardware</WmiButton>
             </WmiCallout>
           ) : null}
 
@@ -322,6 +334,13 @@ export function WmiSetup({
                 '0 = pump off on any required-sensor fault.',
               )}
             </div>
+            <WmiCallout tone="info">
+              <span>
+                Reference: min CLT 70–90 °C (oil-dilution guard), activation delay 300–800 ms
+                (pump-to-nozzle lag), fluid debounce 1000–3000 ms (vibration immunity), IAT scale
+                70–145 %. Target W/F 0.4–0.7 at WOT; above ~0.8–1.0 power usually drops.
+              </span>
+            </WmiCallout>
           </WmiSection>
 
           <WmiSection

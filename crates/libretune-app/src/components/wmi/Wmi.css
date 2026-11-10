@@ -1,26 +1,38 @@
-/* Native WMI view — live dashboard, calibration wizard, setup and safety. */
+/* Focus rings — keyboard users must see where they are. */
+.wmi-tab:focus-visible,
+.wmi-btn:focus-visible,
+.wmi-input:focus-visible,
+.wmi-link:focus-visible {
+  outline: 2px solid var(--wmi-accent);
+  outline-offset: 2px;
+}
+
 
 .wmi-view {
   --wmi-accent: #3b82f6;
   --wmi-accent-strong: #2563eb;
   --wmi-amber: #f59e0b;
   --wmi-pink: #fb7185;
-  --wmi-ok: #4ade80;
-  --wmi-danger: #f87171;
-  --bg-primary: #050b0f;
-  --bg-secondary: #0b141b;
-  --bg-elevated: #0e1a22;
-  --bg-hover: #13222b;
-  --bg-input: #081017;
-  --text-primary: #e8f0f3;
-  --text-secondary: #c7d3da;
-  --text-muted: #7f909a;
-  --border-color: #1a2b34;
-  --wmi-line: rgba(232, 240, 243, 0.08);
-  --wmi-line-strong: rgba(232, 240, 243, 0.16);
-  --success: #4ade80;
-  --warning: #f59e0b;
-  --error: #f87171;
+  --wmi-ok: var(--success);
+  --wmi-danger: var(--error);
+  /* Theme tokens — sourced from the app's design system (themes/variables.css)
+     so WMI tracks dark/light themes and glass-card styling like every other
+     view. Previously these were hardcoded hex, which is why WMI looked like a
+     different app. */
+  --bg-primary: var(--bg-app);
+  --bg-secondary: var(--bg-surface);
+  --bg-elevated: var(--bg-elevated);
+  --bg-hover: var(--bg-hover);
+  --bg-input: var(--bg-darker);
+  --text-primary: var(--text-primary);
+  --text-secondary: var(--text-secondary);
+  --text-muted: var(--text-muted);
+  --border-color: var(--border-default);
+  --wmi-line: var(--border-subtle);
+  --wmi-line-strong: var(--border-strong);
+  --success: var(--success);
+  --warning: var(--warning);
+  --error: var(--error);
   display: flex;
   flex-direction: column;
   height: 100%;

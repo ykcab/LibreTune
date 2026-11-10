@@ -5,10 +5,13 @@ import {
   WMI_CONSTANT_NAMES,
   type WmiAction,
 } from './wmiConstants';
+import type { Constant } from '../dialogs/types';
 
 export interface WmiConfigState {
   values: Record<string, number>;
   missing: Set<string>;
+  /** INI metadata for every constant, fetched once during refresh. */
+  meta: Record<string, Constant>;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -19,6 +22,7 @@ export interface WmiConfigState {
 export function useWmiConfig(): WmiConfigState {
   const [values, setValues] = useState<Record<string, number>>({});
   const [missing, setMissing] = useState<Set<string>>(new Set());
+  const [meta, setMeta] = useState<Record<string, Constant>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,28 +30,36 @@ export function useWmiConfig(): WmiConfigState {
     setLoading(true);
     setError(null);
     try {
+      // Fetch value + metadata together so WmiField doesn't issue its own
+      // get_constant request per field (N round-trips for N fields).
       const entries = await Promise.all(
         WMI_CONSTANT_NAMES.map(async (name) => {
           try {
-            const value = await invoke<number>('get_constant_value', { name });
-            return { name, value };
+            const [value, constant] = await Promise.all([
+              invoke<number>('get_constant_value', { name }),
+              invoke<Constant>('get_constant', { name }),
+            ]);
+            return { name, value, constant };
           } catch {
-            return { name, value: undefined };
+            return { name, value: undefined, constant: undefined };
           }
         }),
       );
 
       const nextValues: Record<string, number> = {};
       const nextMissing = new Set<string>();
+      const nextMeta: Record<string, Constant> = {};
       for (const entry of entries) {
         if (entry.value === undefined) {
           nextMissing.add(entry.name);
         } else {
           nextValues[entry.name] = entry.value;
+          if (entry.constant) nextMeta[entry.name] = entry.constant;
         }
       }
       setValues(nextValues);
       setMissing(nextMissing);
+      setMeta(nextMeta);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -70,7 +82,7 @@ export function useWmiConfig(): WmiConfigState {
     });
   }, []);
 
-  return { values, missing, loading, error, refresh, commit };
+  return { values, missing, meta, loading, error, refresh, commit };
 }
 
 export interface WmiTargetBand {
@@ -151,9 +163,15 @@ export interface WmiRunState {
  * The ECU is still the authority: this only drives the countdown and keeps the
  * UI from firing a second command while the pump is running.
  */
+// Module-level run state so a tab switch (which unmounts WmiView) doesn't
+// lose an in-flight pump run. The ECU is still the authority; this only keeps
+// the countdown alive across remounts.
+let _persistentRun: WmiRun | null = null;
+let _persistentLastCompleted: WmiRun | null = null;
+
 export function useWmiRun(): WmiRunState {
-  const [run, setRun] = useState<WmiRun | null>(null);
-  const [lastCompleted, setLastCompleted] = useState<WmiRun | null>(null);
+  const [run, setRun] = useState<WmiRun | null>(_persistentRun);
+  const [lastCompleted, setLastCompleted] = useState<WmiRun | null>(_persistentLastCompleted);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -166,6 +184,8 @@ export function useWmiRun(): WmiRunState {
     if (!run) return;
     const elapsed = (now - run.startedAt) / 1000;
     if (elapsed >= run.durationSec) {
+      _persistentLastCompleted = run;
+      _persistentRun = null;
       setLastCompleted(run);
       setRun(null);
     }
@@ -175,10 +195,20 @@ export function useWmiRun(): WmiRunState {
     const startedAt = Date.now();
     setNow(startedAt);
     setLastCompleted(null);
-    setRun({ action, startedAt, durationSec: WMI_ACTION_SECONDS[action] });
+    _persistentLastCompleted = null;
+    const newRun = { action, startedAt, durationSec: WMI_ACTION_SECONDS[action] };
+    _persistentRun = newRun;
+    setRun(newRun);
   }, []);
 
-  const clear = useCallback(() => setRun(null), []);
+  const clear = useCallback(() => {
+    _persistentRun = null;
+    setRun(null);
+  }, []);
+
+  // Sync state changes back to the module-level store so a remount picks them up.
+  useEffect(() => { _persistentRun = run; }, [run]);
+  useEffect(() => { _persistentLastCompleted = lastCompleted; }, [lastCompleted]);
 
   const remaining = run
     ? Math.max(0, run.durationSec - (now - run.startedAt) / 1000)

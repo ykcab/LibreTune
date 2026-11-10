@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useChannel } from '../../stores/realtimeStore';
 import { WMI_COMMANDS, type WmiAction, type WmiTab } from './wmiConstants';
@@ -13,9 +13,8 @@ import './Wmi.css';
 const TABS: Array<{ id: WmiTab; label: string }> = [
   { id: 'live', label: 'Dashboard' },
   { id: 'calibration', label: 'Calibration' },
-  { id: 'activation', label: 'Activation' },
+  { id: 'setup', label: 'Setup' },
   { id: 'safety', label: 'Safety' },
-  { id: 'hardware', label: 'Hardware' },
 ];
 
 export interface WmiViewProps {
@@ -34,13 +33,25 @@ export function WmiView({
   const [tab, setTab] = useState<WmiTab>('live');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const { values, missing, loading, error, commit } = useWmiConfig();
+  const { values, missing, meta, loading, error, commit } = useWmiConfig();
   const { run, lastCompleted, remaining, start, clear } = useWmiRun();
   const targetBand = useWmiTargetBand();
   const rpm = useChannel('rpm');
-  const battery = useChannel('battery') ?? useChannel('batteryVoltage');
+  const batteryPrimary = useChannel('battery');
+  const batteryFallback = useChannel('batteryVoltage');
+  const battery = batteryPrimary ?? batteryFallback;
   const engineRunning = rpm !== undefined && rpm > 100;
   const state = wmiStateInfo(useChannel('wmiState'));
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const index = TABS.findIndex((t) => t.id === tab);
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      setTab(TABS[(index + 1) % TABS.length].id);
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setTab(TABS[(index - 1 + TABS.length) % TABS.length].id);
+    }
+  };
   const headerPill = tab === 'calibration'
     ? (isConnected ? 'CONNECTED' : 'OFFLINE')
     : state.key === 'priming' || state.key === 'active'
@@ -98,14 +109,16 @@ export function WmiView({
             <p>{tab === 'calibration' ? 'Nozzle & flow setup' : 'Water/Methanol Injection'}</p>
           </div>
         </div>
-        <nav className="wmi-tabs" aria-label="WMI sections">
+        <nav className="wmi-tabs" role="tablist" aria-label="WMI sections">
           {TABS.map((item) => (
             <button
               key={item.id}
               type="button"
+              role="tab"
+              aria-selected={tab === item.id}
               className={`wmi-tab${tab === item.id ? ' is-active' : ''}`}
-              aria-current={tab === item.id ? 'page' : undefined}
               onClick={() => setTab(item.id)}
+              onKeyDown={handleTabKeyDown}
             >
               {item.label}
             </button>
@@ -174,26 +187,12 @@ export function WmiView({
             />
           ) : null}
 
-          {tab === 'activation' ? (
+          {tab === 'setup' ? (
             <WmiSetup
-              section="activation"
+              section="setup"
               values={values}
               missing={missing}
-              onCommit={commit}
-              onGoTo={setTab}
-              openTarget={openTarget}
-              targetBand={targetBand.band}
-              onSaveTargetBand={targetBand.save}
-              targetBandLoading={targetBand.loading}
-              targetBandError={targetBand.error}
-            />
-          ) : null}
-
-          {tab === 'hardware' ? (
-            <WmiSetup
-              section="hardware"
-              values={values}
-              missing={missing}
+              meta={meta}
               onCommit={commit}
               onGoTo={setTab}
               openTarget={openTarget}
@@ -205,7 +204,7 @@ export function WmiView({
           ) : null}
 
           {tab === 'safety' ? (
-            <WmiSafety values={values} missing={missing} onCommit={commit} />
+            <WmiSafety values={values} missing={missing} meta={meta} onCommit={commit} />
           ) : null}
         </main>
       )}

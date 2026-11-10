@@ -2,15 +2,17 @@ import { useChannels } from '../../stores/realtimeStore';
 import { WMI_CONSTANTS } from './wmiConstants';
 import { WmiCallout, WmiSection, WmiTile } from './WmiLayout';
 import { WmiField } from './WmiField';
+import type { Constant } from '../dialogs/types';
 import { isOn, type WmiTone } from './wmiFormat';
 
 export interface WmiSafetyProps {
   values: Record<string, number>;
   missing: Set<string>;
+  meta: Record<string, Constant>;
   onCommit: (name: string, value: number) => Promise<void>;
 }
 
-export function WmiSafety({ values, missing, onCommit }: WmiSafetyProps) {
+export function WmiSafety({ values, missing, meta, onCommit }: WmiSafetyProps) {
   const live = useChannels([
     'wmiFluidOk',
     'wmiFlowFault',
@@ -46,6 +48,7 @@ export function WmiSafety({ values, missing, onCommit }: WmiSafetyProps) {
       hint={hint}
       values={values}
       missing={missing}
+      meta={meta[name] ?? null}
       onCommit={onCommit}
       variant={variant}
       disabled={disabled || !enabled}
