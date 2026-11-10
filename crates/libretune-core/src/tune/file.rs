@@ -991,33 +991,43 @@ impl TuneFile {
             xml.push_str("/>\n");
         }
 
-        // Add INI metadata for version tracking (LibreTune 1.1+)
-        if let Some(ref metadata) = self.ini_metadata {
-            xml.push_str(&format!(
-                "  <iniMetadata signature=\"{}\" name=\"{}\" hash=\"{}\" specVersion=\"{}\" savedAt=\"{}\"/>\n",
-                xml_escape(&metadata.signature),
-                xml_escape(&metadata.name),
-                xml_escape(&metadata.hash),
-                xml_escape(&metadata.spec_version),
-                xml_escape(&metadata.saved_at)
-            ));
-        }
-
-        // Add constant manifest for migration detection (LibreTune 1.1+)
-        if let Some(ref manifest) = self.constant_manifest {
-            xml.push_str("  <constantManifest>\n");
-            for entry in manifest {
-                xml.push_str(&format!(
-                    "    <entry name=\"{}\" type=\"{}\" page=\"{}\" offset=\"{}\" scale=\"{}\" translate=\"{}\"/>\n",
-                    xml_escape(&entry.name),
-                    xml_escape(&entry.data_type),
-                    entry.page,
-                    entry.offset,
-                    entry.scale,
-                    entry.translate
+        // LibreTune's migration metadata is kept for LibreTune, but it must be
+        // invisible to TunerStudio. TunerStudio treats the value-less
+        // `<entry name=...>` nodes as empty constants, which zeroes every table
+        // (including the injector dead-time vBATT axis) and produces the
+        // "Invalid table data in Constant" / settings-error dialog. XML
+        // comments are ignored by both parsers; LibreTune still finds the
+        // metadata with its string-based reader.
+        if self.ini_metadata.is_some() || self.constant_manifest.is_some() {
+            let mut metadata = String::new();
+            if let Some(ref ini) = self.ini_metadata {
+                metadata.push_str(&format!(
+                    "  <iniMetadata signature=\"{}\" name=\"{}\" hash=\"{}\" specVersion=\"{}\" savedAt=\"{}\"/>\n",
+                    xml_escape(&ini.signature),
+                    xml_escape(&ini.name),
+                    xml_escape(&ini.hash),
+                    xml_escape(&ini.spec_version),
+                    xml_escape(&ini.saved_at)
                 ));
             }
-            xml.push_str("  </constantManifest>\n");
+            if let Some(ref manifest) = self.constant_manifest {
+                metadata.push_str("  <constantManifest>\n");
+                for entry in manifest {
+                    metadata.push_str(&format!(
+                        "    <entry name=\"{}\" type=\"{}\" page=\"{}\" offset=\"{}\" scale=\"{}\" translate=\"{}\"/>\n",
+                        xml_escape(&entry.name),
+                        xml_escape(&entry.data_type),
+                        entry.page,
+                        entry.offset,
+                        entry.scale,
+                        entry.translate
+                    ));
+                }
+                metadata.push_str("  </constantManifest>\n");
+            }
+            xml.push_str("  <!-- LibreTune metadata (ignored by TunerStudio)\n");
+            xml.push_str(&xml_comment_escape(&metadata));
+            xml.push_str("  -->\n");
         }
 
         // Group constants by page number (preserve page structure)
@@ -1903,6 +1913,69 @@ mod msq_metadata_tests {
             Some(TuneValue::Scalar(v)) => assert!((v - 14.7).abs() < f64::EPSILON),
             other => panic!("stoich did not round trip: {other:?}"),
         }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// LibreTune's migration metadata must not be visible to TunerStudio.
+    ///
+    /// TunerStudio reads the value-less `<entry name=...>` nodes as empty
+    /// constants, zeroing every table and producing the injector dead-time
+    /// vBATT-axis error. The metadata is therefore emitted inside an XML
+    /// comment; LibreTune's string-based reader still finds and round-trips it.
+    #[test]
+    fn msq_metadata_is_inside_a_comment_for_tunerstudio() {
+        let mut tune = TuneFile::new("speeduino 202501");
+        tune.ini_metadata = Some(IniMetadata {
+            signature: "speeduino 202501".to_string(),
+            name: "speeduino.ini".to_string(),
+            hash: "abc123".to_string(),
+            spec_version: "3.64".to_string(),
+            saved_at: "2026-10-30T00:00:00Z".to_string(),
+        });
+        tune.constant_manifest = Some(vec![ConstantManifestEntry {
+            name: "injector_battLagCorrBattBins".to_string(),
+            data_type: "U08".to_string(),
+            page: 0,
+            offset: 0x1234,
+            scale: 1.0,
+            translate: 0.0,
+        }]);
+        tune.set_constant(
+            "injector_battLagCorrBattBins",
+            TuneValue::Array(vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]),
+        );
+
+        let dir = std::env::temp_dir().join(format!("lt_msq_meta_{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("metadata.msq");
+        tune.save(&path).expect("save");
+        let written = fs::read_to_string(&path).expect("read");
+
+        let comment_start = written
+            .find("<!-- LibreTune metadata")
+            .expect("metadata comment missing");
+        let comment_end = written[comment_start..]
+            .find("-->")
+            .expect("metadata comment end missing")
+            + comment_start;
+        for needle in ["<iniMetadata", "<constantManifest>"] {
+            let at = written.find(needle).expect("metadata block missing");
+            assert!(
+                comment_start < at && at < comment_end,
+                "{needle} is outside the LibreTune metadata comment:\n{written}"
+            );
+        }
+
+        let reloaded = TuneFile::load(&path).expect("reload");
+        assert_eq!(
+            reloaded.ini_metadata.expect("metadata").name,
+            "speeduino.ini"
+        );
+        assert_eq!(
+            reloaded.constant_manifest.expect("manifest")[0].name,
+            "injector_battLagCorrBattBins"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
