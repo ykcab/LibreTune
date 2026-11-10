@@ -6,7 +6,6 @@ import { listen } from "@tauri-apps/api/event";
 import { subscribeTauri } from "./utils/subscribeTauri";
 import { ThemeProvider, useTheme } from "./themes";
 import { initializeHotkeyManager } from "./services/hotkeyService";
-import { revealWindowWhenPainted } from "./services/revealWindow";
 import i18n from "./i18n";
 import { useRealtimeStore } from "./stores/realtimeStore";
 import { LANGUAGE_STORAGE_KEY } from "./i18n/languages";
@@ -446,8 +445,11 @@ function AppContent() {
   useEffect(() => {
     if (isTauri) {
       // The window is created hidden so start-up can never show an unpainted
-      // surface; this is the frame that earns the reveal.
-      revealWindowWhenPainted();
+      // surface; this command runs after React commits the shell, and the Rust
+      // side maps the window from there. It is a custom command (not the
+      // ACL-gated `WebviewWindow::show()`) because the JS API was refused and
+      // a hidden WebKitGTK window never ran the timer/rAF fallbacks either.
+      void invoke("frontend_ready").catch((e) => console.warn("frontend_ready failed:", e));
       initializeApp();
       const statusInterval = setInterval(checkStatus, 1000);
       return () => clearInterval(statusInterval);

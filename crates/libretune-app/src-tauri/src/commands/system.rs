@@ -7,11 +7,68 @@ use libretune_core::protocol::serial::{list_ports, list_ports_unprobed};
 use serde::Serialize;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
+use tauri::Manager;
 
 #[derive(Serialize)]
 pub struct BuildInfo {
     pub version: String,
     pub build_id: String,
+}
+
+/// Reveal the main window once the frontend has painted its first frame.
+///
+/// The window is created hidden (`"visible": false` in `tauri.conf.json`) so
+/// start-up can never show an unpainted surface. The frontend calls this from
+/// its mount effect, by which point React has committed the shell (menu bar,
+/// toolbar, sidebar, status bar) to the DOM, and the first frame the compositor
+/// produces after `show()` contains the real UI.
+///
+/// A custom command is used rather than `WebviewWindow::show()` from JS because
+/// that path is ACL-gated (the frontend's call was refused with
+/// "Command plugin:window|show not allowed by ACL") and because a hidden
+/// WebKitGTK window throttles `requestAnimationFrame`/`setTimeout` to the point
+/// where a JS-driven reveal never fired and the Rust 8 s safety net was doing
+/// the work — which is why the app looked like it took 8 s to open.
+#[tauri::command]
+pub async fn frontend_ready(app: tauri::AppHandle) -> Result<(), String> {
+    // The window is created hidden (`"visible": false` in `tauri.conf.json`) so
+    // start-up can never show an unpainted surface. The frontend calls this from
+    // its mount effect, by which point React has committed the shell (menu bar,
+    // toolbar, sidebar, status bar) to the DOM, and the first frame the
+    // compositor produces after `show()` contains the real UI.
+    //
+    // A custom command is used rather than `WebviewWindow::show()` from JS
+    // because that path is ACL-gated (the frontend's call was refused with
+    // "Command plugin:window|show not allowed by ACL") and because a hidden
+    // WebKitGTK window throttles `requestAnimationFrame`/`setTimeout` to the
+    // point where a JS-driven reveal never fired and the Rust 8 s safety net was
+    // doing the work — which is why the app looked like it took 8 s to open.
+    //
+    // The window may not be registered in Tauri's manager yet when the first
+    // JS runs (the webview starts executing during window creation), so retry
+    // briefly instead of giving up and waiting for the 8 s safety net.
+    for _ in 0..20 {
+        let windows: Vec<_> = app.webview_windows().into_values().collect();
+        if !windows.is_empty() {
+            for window in windows {
+                if matches!(window.is_visible(), Ok(false)) {
+                    let _ = window.show();
+                }
+            }
+            return Ok(());
+        }
+        if let Some(window) = app.get_webview_window("main") {
+            if matches!(window.is_visible(), Ok(false)) {
+                let _ = window.show();
+            }
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+    }
+    Ok(())
 }
 
 /// Get application build information (version + nightly build ID).

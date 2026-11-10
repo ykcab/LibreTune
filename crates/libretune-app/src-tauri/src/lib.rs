@@ -11,6 +11,12 @@ use libretune_core::project::OnlineIniRepository;
 use tauri::Manager;
 use tokio::sync::Mutex;
 
+// Embed the frontend dist hash at compile time so cargo tracks the
+// frontend as a build input: tauri_build::build() alone does not, which left
+// the binary carrying a stale embedded frontend across rebuilds.
+#[allow(dead_code)]
+const _FRONTEND_DIST_MARKER: &str = include_str!("../../dist/index.html");
+
 mod commands;
 mod live_window;
 mod mcp;
@@ -168,7 +174,7 @@ use commands::start_autotune::start_autotune;
 use commands::sync_ecu_data::{
     get_tune_mismatch_page_diff, get_tune_mismatch_page_readable_diff, sync_ecu_data,
 };
-use commands::system::{get_build_info, get_serial_ports, list_local_tcp_ecus};
+use commands::system::{frontend_ready, get_build_info, get_serial_ports, list_local_tcp_ecus};
 use commands::table_compare::compare_tables;
 use commands::table_file_io::{export_table_to_file, import_table_from_file};
 use commands::table_ops::{
@@ -340,6 +346,7 @@ pub fn run() {
             get_ini_capabilities,
             get_ve_analyze_config,
             get_help_topic,
+            frontend_ready,
             get_build_info,
             get_constant,
             get_constant_value,

@@ -22,6 +22,9 @@ fn get_git_short_sha() -> Option<String> {
 fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs/heads");
+    println!("cargo:rerun-if-changed=../dist");
+
+    eprintln!("BUILD_SCRIPT_RUNNING: embedding frontend from ../dist");
 
     let date = Utc::now().format("%Y.%m.%d").to_string();
     let sha = get_git_short_sha().unwrap_or_else(|| "unknown".to_string());
