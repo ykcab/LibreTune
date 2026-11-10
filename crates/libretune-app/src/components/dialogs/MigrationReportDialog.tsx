@@ -34,6 +34,7 @@ export interface ConstantChange {
   new_offset?: number;
   old_translate?: number;
   new_translate?: number;
+  change_description?: string;
 }
 
 export interface MigrationReport {
@@ -138,6 +139,12 @@ export default function MigrationReportDialog({
     }
   };
 
+  const reviewReason = report?.type_changed.length
+    ? 'Type changes may alter how values are interpreted — review before burning.'
+    : report?.missing_in_ini.length
+      ? 'Constants were removed from the INI; their tune values are preserved but no longer defined.'
+      : null;
+
   const getSeverityText = () => {
     switch (report?.severity) {
       case "high":
@@ -215,7 +222,7 @@ export default function MigrationReportDialog({
                         <li key={c.name}>
                           <code>{c.name}</code>
                           <span className="change-detail">
-                            {c.old_type} → {c.new_type}
+                            {c.change_description ?? `${c.old_type} → ${c.new_type}`}
                           </span>
                         </li>
                       ))}
@@ -248,8 +255,11 @@ export default function MigrationReportDialog({
                         <li key={c.name}>
                           <code>{c.name}</code>
                           <span className="change-detail">
-                            scale: {c.old_scale?.toFixed(4)} →{" "}
-                            {c.new_scale?.toFixed(4)}
+                            {c.change_description ??
+                              `scale: ${c.old_scale?.toFixed(4)} → ${c.new_scale?.toFixed(4)}`}
+                            {c.old_translate !== c.new_translate
+                              ? ` · translate: ${c.old_translate?.toFixed(4)} → ${c.new_translate?.toFixed(4)}`
+                              : ''}
                           </span>
                         </li>
                       ))}
@@ -282,8 +292,8 @@ export default function MigrationReportDialog({
                         <li key={c.name}>
                           <code>{c.name}</code>
                           <span className="change-detail">
-                            page {c.old_page}/offset {c.old_offset} → page {c.new_page}
-                            /offset {c.new_offset}
+                            {c.change_description ??
+                              `page ${c.old_page}/offset ${c.old_offset} → page ${c.new_page}/offset ${c.new_offset}`}
                           </span>
                         </li>
                       ))}
@@ -366,12 +376,12 @@ export default function MigrationReportDialog({
       </Dialog.Body>
 
       <Dialog.Footer className="migration-footer">
-        {report?.requires_user_review && (
+        {reviewReason ? (
           <div className="review-warning">
             <AlertTriangle size={14} />
-            <span>Review type changes before burning to ECU</span>
+            <span>{reviewReason}</span>
           </div>
-        )}
+        ) : null}
         <div className="footer-buttons">
           <Button variant="secondary" onClick={handleDismiss}>Dismiss</Button>
           <Button variant="primary" onClick={handleProceed} leadingIcon={<Check size={14} />}>

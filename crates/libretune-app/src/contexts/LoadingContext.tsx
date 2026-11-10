@@ -58,10 +58,19 @@ interface LoadingOverlayProps {
 
 function LoadingOverlay({ message }: LoadingOverlayProps) {
   return (
-    <div className="loading-overlay" role="status" aria-live="polite">
-      <div className="loading-content">
-        <div className="loading-spinner" aria-hidden="true" />
-        <div className="loading-message">{message}</div>
+    <div className="loading-overlay" role="status" aria-live="polite" aria-busy="true">
+      <div className="loading-skeleton">
+        <div className="loading-skeleton__menubar" />
+        <div className="loading-skeleton__body">
+          <div className="loading-skeleton__sidebar" />
+          <div className="loading-skeleton__content">
+            <div className="loading-skeleton__bar loading-skeleton__bar--title" />
+            <div className="loading-skeleton__bar" />
+            <div className="loading-skeleton__bar loading-skeleton__bar--short" />
+            <div className="loading-skeleton__bar loading-skeleton__bar--tiny" />
+            <div className="loading-skeleton__message">{message}</div>
+          </div>
+        </div>
       </div>
     </div>
   );
