@@ -159,7 +159,8 @@ export function WmiSchematic({
             stroke={running ? FLOW : IDLE}
           />
           <text x="424" y="128" className="wmi-schem__label" textAnchor="middle">NOZZLE</text>
-          <text x="424" y="182" className="wmi-schem__sub" textAnchor="middle">
+          {/* Rating sits clear of the intake duct so it cannot be read as part of it. */}
+          <text x="556" y="128" className="wmi-schem__sub" textAnchor="end">
             {nozzleCc > 0 ? `${nozzleCc.toFixed(0)} cc/min` : 'NOT CALIBRATED'}
           </text>
         </g>

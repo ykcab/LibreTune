@@ -248,15 +248,20 @@ export function WmiCalibration({
   };
 
   const stepState = (index: 1 | 2 | 3): StepState => {
-    if (blocked) return 'blocked';
-    if (index === 1) return allChecked ? 'done' : 'current';
-    if (index === 2) {
-      if (!allChecked) return 'todo';
-      if (run) return 'current';
-      return lastRun ? 'done' : 'current';
+    if (index === 1) {
+      // A run can only start from a confirmed checklist, so once one is in
+      // flight preparation is history, whatever the local boxes say now.
+      if (run) return 'done';
+      return allChecked ? 'done' : 'current';
     }
-    if (lastRun || nozzleCalibrated) return nozzleCalibrated ? 'done' : 'current';
-    return allChecked ? 'current' : 'todo';
+    if (index === 2) {
+      if (run) return 'current';
+      if (lastRun) return 'done';
+      if (blocked) return 'blocked';
+      return allChecked ? 'current' : 'todo';
+    }
+    if (nozzleCalibrated) return 'done';
+    return lastRun ? 'current' : 'todo';
   };
 
   const progress = run
@@ -299,7 +304,7 @@ export function WmiCalibration({
           number="01"
           title="Prepare"
           state={stepState(1)}
-          meta={`${checkedCount}/${CHECKS.length} checked`}
+          meta={run ? 'Confirmed' : `${checkedCount}/${CHECKS.length} checked`}
         >
           <p className="wmi-step__lead">
             Every box must be confirmed. The ECU still enforces its own bench guards, such as
@@ -353,7 +358,7 @@ export function WmiCalibration({
               </div>
               <p className="wmi-panel__note">{runHint}</p>
 
-              <div className="wmi-readouts wmi-readouts--two">
+              <div className="wmi-readouts wmi-readouts--three">
                 <div className="wmi-readout">
                   <span className="wmi-readout__label">ECU duty</span>
                   <strong className="wmi-readout__value">
@@ -364,12 +369,19 @@ export function WmiCalibration({
                   </span>
                 </div>
                 <div className="wmi-readout">
+                  <span className="wmi-readout__label">Commanded</span>
+                  <strong className="wmi-readout__value">
+                    {run.action === 'test' ? '50%' : '100%'}
+                  </strong>
+                  <span className="wmi-readout__detail">From this bench run</span>
+                </div>
+                <div className="wmi-readout">
                   <span className="wmi-readout__label">Pump state</span>
                   <strong className={`wmi-readout__value wmi-tone-${liveState.tone}`}>
                     {isConnected ? liveState.label : '—'}
                   </strong>
                   <span className="wmi-readout__detail">
-                    {isConnected ? liveState.description : 'Connect to read the state'}
+                    {isConnected ? 'The ECU’s own state channel' : 'Connect to read the state'}
                   </span>
                 </div>
               </div>
@@ -516,10 +528,18 @@ export function WmiCalibration({
             <div className="wmi-readout">
               <span className="wmi-readout__label">Nozzle flow</span>
               <strong className={`wmi-readout__value${nozzleValid ? '' : ' wmi-tone-dim'}`}>
-                {nozzleFromJug > 0 ? formatNumber(nozzleFromJug, 0, ' cc/min') : '—'}
+                {nozzleFromJug > 0
+                  ? formatNumber(nozzleFromJug, 0, ' cc/min')
+                  : nozzleCalibrated
+                    ? `${currentNozzle.toFixed(0)} cc/min`
+                    : '—'}
               </strong>
               <span className="wmi-readout__detail">
-                {nozzleFromJug > 2000 ? 'Outside the accepted range' : basisOption.short}
+                {nozzleFromJug > 2000
+                  ? 'Outside the accepted range'
+                  : nozzleFromJug > 0
+                    ? basisOption.short
+                    : nozzleCalibrated ? 'Saved value' : 'No measurement yet'}
               </span>
             </div>
             <div className="wmi-readout">
@@ -532,7 +552,9 @@ export function WmiCalibration({
               <strong className="wmi-readout__value">
                 {nozzlePreview > 0 ? formatNumber(preview.mixture100, 2) : '—'}
               </strong>
-              <span className="wmi-readout__detail">g/s total</span>
+              <span className="wmi-readout__detail">
+                {nozzleFromJug > 0 ? 'g/s total · this run' : 'g/s total · saved nozzle'}
+              </span>
             </div>
             <div className="wmi-readout">
               <span className="wmi-readout__label">Water at 100%</span>
@@ -540,7 +562,9 @@ export function WmiCalibration({
                 {nozzlePreview > 0 ? formatNumber(preview.water100, 2) : '—'}
               </strong>
               <span className="wmi-readout__detail">
-                g/s · {(preview.waterFraction * 100).toFixed(1)}% of mass
+                {nozzlePreview > 0
+                  ? `g/s · ${(preview.waterFraction * 100).toFixed(1)}% of mass`
+                  : 'g/s · needs a nozzle flow'}
               </span>
             </div>
           </div>

@@ -45,12 +45,14 @@ function WmiActivation({
   meta,
   live,
   state,
+  faulted,
   isConnected,
 }: {
   values: Record<string, number>;
   meta: Record<string, Constant>;
   live: LiveValues;
   state: WmiStateInfo;
+  faulted: boolean;
   isConnected: boolean;
 }) {
   const conditions = activationConditions(values);
@@ -104,11 +106,13 @@ function WmiActivation({
       <p className="wmi-panel__note">
         {!isConnected
           ? 'Connect to the ECU to compare live values with the thresholds.'
-          : state.key === 'priming'
-            ? `Pump is running; corrections begin${delay !== undefined ? ` after ${delay.toFixed(0)} ms` : ' after the activation delay'}.`
-            : allMet
-              ? 'All conditions are met; corrections follow the activation delay.'
-              : `The pump starts when every condition is met.${delay !== undefined ? ` Corrections begin ${delay.toFixed(0)} ms after the pump starts.` : ''}`}
+          : faulted
+            ? 'A guard has tripped; corrections stay off until it clears, even with every threshold met.'
+            : state.key === 'priming'
+              ? `Pump is running; corrections begin${delay !== undefined ? ` after ${delay.toFixed(0)} ms` : ' after the activation delay'}.`
+              : allMet
+                ? 'All conditions are met; corrections follow the activation delay.'
+                : `The pump starts when every condition is met.${delay !== undefined ? ` Corrections begin ${delay.toFixed(0)} ms after the pump starts.` : ''}`}
         {enablePin > 0 ? ' The external enable input must also be on.' : ''}
       </p>
     </WmiPanel>
@@ -132,6 +136,7 @@ export function WmiStatus({
 }: WmiStatusProps) {
   const live = useChannels([
     'wmiState',
+    'wmiPumpDuty',
     'wmiFluidOk',
     'wmiActive',
     'wmiFuelAdder',
@@ -253,7 +258,7 @@ export function WmiStatus({
     ? rawWf
     : undefined;
 
-  const showActivation = enabled && !faulted;
+  const showActivation = enabled;
 
   return (
     <div className="wmi-status">
@@ -285,8 +290,16 @@ export function WmiStatus({
           className="wmi-panel--schematic"
           meta={
             <span className="wmi-live-meta">
-              <WmiDot tone={!isConnected ? 'dim' : pumping ? 'ok' : enabled ? 'info' : 'dim'} />
-              {!isConnected ? 'Offline' : pumping ? 'Spraying' : enabled ? 'Armed' : 'Disabled'}
+              <WmiDot
+                tone={!isConnected ? 'dim' : faulted ? 'crit' : pumping ? 'ok' : enabled ? 'info' : 'dim'}
+              />
+              {!isConnected
+                ? 'Offline'
+                : faulted
+                  ? 'Fault'
+                  : pumping
+                    ? 'Spraying'
+                    : enabled ? 'Armed' : 'Disabled'}
             </span>
           }
         >
@@ -312,6 +325,7 @@ export function WmiStatus({
             meta={meta}
             live={live}
             state={state}
+            faulted={faulted}
             isConnected={isConnected}
           />
         ) : null}

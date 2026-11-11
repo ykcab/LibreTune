@@ -17,15 +17,10 @@ function niceCeil(value: number): number {
   const exponent = Math.floor(Math.log10(value));
   const base = 10 ** exponent;
   const normalized = value / base;
-  const step = normalized <= 1
-    ? 1
-    : normalized <= 2
-      ? 2
-      : normalized <= 2.5
-        ? 2.5
-        : normalized <= 5
-          ? 5
-          : 10;
+  // Finer steps than 1/2/5 so a 5.6 g/s trace does not get a 10 g/s axis and
+  // waste half the plot height.
+  const steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  const step = steps.find((candidate) => normalized <= candidate) ?? 10;
   return step * base;
 }
 
@@ -129,7 +124,11 @@ export function WmiHistory({
     const flowModeled = tail(modeled, flowCount);
     const flowMeasured = tail(measured, flowCount);
     const flow = flowMeasured.length > 0 ? flowMeasured : flowModeled;
-    const flowMax = niceCeil(Math.max(0.5, ...flow, live.wmiModeledFlowGps ?? 0) * 1.15);
+    const currentMeasured = live.wmiEstimatedFlowGps;
+    const currentModeled = live.wmiModeledFlowGps;
+    const flowMax = niceCeil(
+      Math.max(0.5, ...flow, currentMeasured ?? 0, currentModeled ?? 0) * 1.15,
+    );
 
     const wfMax = niceCeil(
       Math.max(0.05, targetBand.max, ...wf, live.wmiWfRatio ?? 0) * 1.12,
@@ -161,9 +160,22 @@ export function WmiHistory({
     targetBand.max,
   ]);
 
-  const currentFlow = flowMonitored
-    ? live.wmiEstimatedFlowGps ?? live.wmiModeledFlowGps
-    : live.wmiModeledFlowGps;
+  const currentFlow = !isConnected
+    ? undefined
+    : flowMonitored
+      ? live.wmiEstimatedFlowGps ?? live.wmiModeledFlowGps
+      : live.wmiModeledFlowGps;
+
+  // The band is a LibreTune project setting, so an out-of-band reading is
+  // flagged as guidance, not as a fault.
+  const wfValue = isConnected ? live.wmiWfRatio : undefined;
+  const wfDirection = wfValue === undefined || !Number.isFinite(wfValue) || wfValue <= 0
+    ? null
+    : wfValue > targetBand.max
+      ? 'above'
+      : wfValue < targetBand.min
+        ? 'below'
+        : null;
 
   return (
     <WmiPanel

@@ -36,15 +36,15 @@ function WmiTargetBandEditor({
   loadError?: string | null;
   onSave: (min: number, max: number) => Promise<void>;
 }) {
-  const [minText, setMinText] = useState(String(band.min));
-  const [maxText, setMaxText] = useState(String(band.max));
+  const [minText, setMinText] = useState(band.min.toFixed(2));
+  const [maxText, setMaxText] = useState(band.max.toFixed(2));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setMinText(String(band.min));
-    setMaxText(String(band.max));
+    setMinText(band.min.toFixed(2));
+    setMaxText(band.max.toFixed(2));
   }, [band.min, band.max]);
 
   const parsedMin = Number.parseFloat(minText);

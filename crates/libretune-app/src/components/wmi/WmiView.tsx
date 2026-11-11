@@ -160,7 +160,7 @@ export function WmiView({
           </span>
           <span className="wmi-chip wmi-chip--mono" title="Ignition voltage">
             <span className="wmi-chip__key">BATT</span>
-            {battery !== undefined && Number.isFinite(battery)
+            {isConnected && battery !== undefined && Number.isFinite(battery) && battery > 0
               ? `${battery.toFixed(1)} V`
               : '—'}
           </span>
