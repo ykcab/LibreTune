@@ -96,6 +96,23 @@ export function formatOnOff(value: number | undefined, on = 'On', off = 'Off'): 
   return value >= 0.5 ? on : off;
 }
 
+/** m:ss countdown for a pump run. */
+export function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/** Signed value with an explicit sign, for correction amounts. */
+export function formatSigned(
+  value: number | undefined,
+  digits: number,
+  unit = '',
+): string {
+  if (value === undefined || !Number.isFinite(value)) return '—';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(digits)}${unit}`;
+}
+
 export function isOn(value: number | undefined): boolean {
   return value !== undefined && Number.isFinite(value) && value >= 0.5;
 }

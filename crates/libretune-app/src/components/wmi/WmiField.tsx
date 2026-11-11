@@ -13,6 +13,8 @@ export interface WmiFieldProps {
   onCommit: (name: string, value: number) => Promise<void>;
   /** INI metadata, preloaded by useWmiConfig. When omitted, fetched on mount. */
   meta?: Constant | null;
+  /** Optional control rendered next to the field label (e.g. a live check). */
+  trailing?: ReactNode;
 }
 
 function bitLabel(option: string): string {
@@ -23,7 +25,57 @@ function bitLabel(option: string): string {
   return text.replace(/^"|"$/g, '').trim() || 'Not assigned';
 }
 
-/** One WMI tune constant with its INI metadata. Missing constants render nothing. */
+function cleanUnits(units: string | undefined): string {
+  if (!units) return '';
+  return units.startsWith('{') ? '' : units;
+}
+
+/** Square track switch shared by settings rows and compact flags. */
+export function WmiSwitch({
+  checked,
+  onChange,
+  disabled = false,
+  busy = false,
+  labelledBy,
+  describedBy,
+  showState = true,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+  busy?: boolean;
+  labelledBy?: string;
+  describedBy?: string;
+  showState?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      className={`wmi-switch${checked ? ' is-on' : ''}`}
+      disabled={disabled || busy}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="wmi-switch__track" aria-hidden="true">
+        <span className="wmi-switch__thumb" />
+      </span>
+      {showState ? (
+        <span className="wmi-switch__state">{checked ? 'On' : 'Off'}</span>
+      ) : null}
+    </button>
+  );
+}
+
+/**
+ * One WMI tune constant, rendered as a settings row.
+ *
+ * Missing constants render nothing: the view only shows things this ECU
+ * definition actually exposes. The section that owns the field reports how
+ * many optional settings are hidden.
+ */
 export function WmiField({
   name,
   label,
@@ -34,23 +86,28 @@ export function WmiField({
   variant = 'number',
   onCommit,
   meta: metaProp,
+  trailing,
 }: WmiFieldProps) {
+  const fieldId = `wmi-field-${name}`;
+  const labelId = `${fieldId}-label`;
+  const hintId = `${fieldId}-hint`;
+
   // When metadata is preloaded (useWmiConfig), use it directly and skip the
   // per-field fetch. Otherwise fall back to the legacy on-mount fetch so the
   // component stays usable standalone.
   const [fetchedMeta, setFetchedMeta] = useState<Constant | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
-  const meta = metaProp !== undefined ? metaProp : fetchedMeta;
+  const meta = metaProp !== undefined && metaProp !== null ? metaProp : fetchedMeta;
 
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const value = values[name];
-  const unavailable = missing.has(name) || loadFailed;
+  const unavailable = missing.has(name);
 
   useEffect(() => {
-    if (metaProp !== undefined) return; // externally supplied
+    if (metaProp !== undefined) return; // externally supplied (or explicitly unavailable)
     if (missing.has(name)) {
       setFetchedMeta(null);
       return;
@@ -73,33 +130,38 @@ export function WmiField({
     if (value !== undefined) setText(String(value));
   }, [value]);
 
-  if (unavailable) {
+  if (unavailable) return null;
+
+  if (loadFailed || metaProp === null) {
     return (
-      <div className="wmi-field wmi-field--unavailable" aria-disabled="true">
-        <div className="wmi-field__head">
-          <span className="wmi-field__label">{label ?? name}</span>
+      <div className="wmi-row wmi-row--unavailable">
+        <div className="wmi-row__text">
+          <span className="wmi-row__label">{label ?? name}</span>
+          <p className="wmi-row__hint">This setting could not be read from the ECU definition.</p>
         </div>
-        <div className="wmi-field__control">
-          <span className="wmi-input wmi-input--disabled" aria-hidden="true">—</span>
+        <div className="wmi-row__control">
+          <span className="wmi-input wmi-input--muted">—</span>
         </div>
-        <p className="wmi-field__hint">
-          Not exposed by this ECU definition — nothing to edit.
-        </p>
       </div>
     );
   }
 
   if (!meta) {
     return (
-      <div className="wmi-field wmi-field--loading" aria-busy="true">
-        <span className="wmi-field__label">{label ?? name}</span>
-        <span className="wmi-field__skeleton" />
+      <div className="wmi-row wmi-row--loading" aria-busy="true">
+        <div className="wmi-row__text">
+          <span className="wmi-row__label">{label ?? name}</span>
+        </div>
+        <div className="wmi-row__control">
+          <span className="wmi-row__skeleton" />
+        </div>
       </div>
     );
   }
 
   const displayLabel = label ?? meta.label ?? meta.name;
-  const units = meta.units?.startsWith('{') ? '' : meta.units;
+  const units = cleanUnits(meta.units);
+  const descriptionId = hint ? hintId : undefined;
 
   const commit = async (next: number) => {
     setBusy(true);
@@ -108,6 +170,7 @@ export function WmiField({
       await onCommit(name, next);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setText(String(value ?? meta.min));
     } finally {
       setBusy(false);
     }
@@ -120,27 +183,24 @@ export function WmiField({
   if (isToggle) {
     const on = (value ?? 0) >= 0.5;
     control = (
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        className={`wmi-switch${on ? ' is-on' : ''}`}
-        disabled={disabled || busy}
-        onClick={() => void commit(on ? 0 : 1)}
-      >
-        <span className="wmi-switch__track">
-          <span className="wmi-switch__thumb" />
-        </span>
-        <span className="wmi-switch__text">{on ? 'On' : 'Off'}</span>
-      </button>
+      <WmiSwitch
+        checked={on}
+        onChange={(next) => void commit(next ? 1 : 0)}
+        disabled={disabled}
+        busy={busy}
+        labelledBy={labelId}
+        describedBy={descriptionId}
+      />
     );
   } else if (isSelect) {
     const selected = Math.round(value ?? 0);
     control = (
       <select
-        className="wmi-input"
+        id={fieldId}
+        className="wmi-input wmi-input--select"
         value={selected}
         disabled={disabled || busy}
+        aria-describedby={descriptionId}
         onChange={(event) => void commit(Number(event.target.value))}
       >
         {(meta.bit_options ?? []).map((option, index) => (
@@ -152,15 +212,21 @@ export function WmiField({
     );
   } else {
     control = (
-      <div className="wmi-input-wrap">
+      <div className="wmi-input-group">
         <input
+          id={fieldId}
           className="wmi-input"
           type="text"
           inputMode="decimal"
           value={text}
           disabled={disabled || busy}
+          aria-describedby={descriptionId}
+          aria-invalid={error ? true : undefined}
           onChange={(event) => {
-            if (/^-?\d*\.?\d*$/.test(event.target.value)) setText(event.target.value);
+            if (/^-?\d*\.?\d*$/.test(event.target.value)) {
+              setText(event.target.value);
+              if (error) setError(null);
+            }
           }}
           onBlur={() => {
             const parsed = Number.parseFloat(text);
@@ -176,20 +242,31 @@ export function WmiField({
             if (event.key === 'Enter') event.currentTarget.blur();
           }}
         />
-        {units ? <span className="wmi-input__unit">{units}</span> : null}
+        {units ? <span className="wmi-input-group__unit">{units}</span> : null}
       </div>
     );
   }
 
   return (
-    <div className={`wmi-field${disabled ? ' is-disabled' : ''}`}>
-      <div className="wmi-field__head">
-        <span className="wmi-field__label">{displayLabel}</span>
-        {units && !isToggle && !isSelect ? <span className="wmi-field__unit">{units}</span> : null}
+    <div
+      className={`wmi-row${disabled ? ' is-disabled' : ''}${busy ? ' is-busy' : ''}`}
+      aria-busy={busy || undefined}
+    >
+      <div className="wmi-row__text">
+        {isToggle ? (
+          <span id={labelId} className="wmi-row__label">{displayLabel}</span>
+        ) : (
+          <label id={labelId} htmlFor={fieldId} className="wmi-row__label">
+            {displayLabel}
+          </label>
+        )}
+        {hint ? <p id={hintId} className="wmi-row__hint">{hint}</p> : null}
       </div>
-      <div className="wmi-field__control">{control}</div>
-      {hint ? <p className="wmi-field__hint">{hint}</p> : null}
-      {error ? <p className="wmi-field__error">{error}</p> : null}
+      <div className="wmi-row__control">
+        {trailing}
+        {control}
+      </div>
+      {error ? <p className="wmi-row__error">{error}</p> : null}
     </div>
   );
 }

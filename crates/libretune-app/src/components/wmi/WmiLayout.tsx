@@ -1,88 +1,146 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { WmiTone } from './wmiFormat';
+import { Button, type ButtonVariant } from '../common/Button';
 
-export function WmiSection({
+/** Flat panel used for every block in the WMI view. */
+export function WmiPanel({
+  id,
   title,
-  description,
+  meta,
   actions,
   children,
   className = '',
+  bodyClassName = '',
 }: {
+  id?: string;
   title: string;
-  description?: string;
+  meta?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
+  bodyClassName?: string;
 }) {
+  const titleId = useId();
   return (
-    <section className={`wmi-section ${className}`.trim()}>
-      <div className="wmi-section__head">
-        <div>
-          <h3 className="wmi-section__title">{title}</h3>
-          {description ? <p className="wmi-section__desc">{description}</p> : null}
-        </div>
-        {actions ? <div className="wmi-section__actions">{actions}</div> : null}
-      </div>
-      <div className="wmi-section__body">{children}</div>
+    <section
+      id={id}
+      className={`wmi-panel ${className}`.trim()}
+      aria-labelledby={titleId}
+    >
+      <header className="wmi-panel__head">
+        <h2 id={titleId} className="wmi-panel__title">{title}</h2>
+        {meta ? <div className="wmi-panel__meta">{meta}</div> : null}
+        {actions ? <div className="wmi-panel__actions">{actions}</div> : null}
+      </header>
+      <div className={`wmi-panel__body ${bodyClassName}`.trim()}>{children}</div>
     </section>
   );
 }
 
-export function WmiTile({
-  label,
-  value,
-  detail,
-  tone = 'dim',
-  children,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-  tone?: WmiTone;
-  children?: ReactNode;
-}) {
+/** Inline status indicator: text is always present, colour is supplementary. */
+export function WmiDot({ tone, className = '' }: { tone: WmiTone; className?: string }) {
   return (
-    <div className={`wmi-tile wmi-tone-${tone}`}>
-      <span className="wmi-tile__label">{label}</span>
-      <strong className="wmi-tile__value">{value}</strong>
-      {detail ? <span className="wmi-tile__detail">{detail}</span> : null}
-      {children}
-    </div>
+    <span
+      className={`wmi-dot wmi-tone-${tone} ${className}`.trim()}
+      aria-hidden="true"
+    />
   );
 }
 
-export function WmiCallout({
+export function WmiNotice({
   tone = 'info',
+  title,
   children,
+  action,
+  onDismiss,
+  className = '',
 }: {
   tone?: WmiTone;
+  title?: ReactNode;
   children: ReactNode;
+  action?: ReactNode;
+  onDismiss?: () => void;
+  className?: string;
 }) {
-  return <div className={`wmi-callout wmi-tone-${tone}`}>{children}</div>;
+  return (
+    <div
+      className={`wmi-notice wmi-tone-${tone} ${className}`.trim()}
+      role={tone === 'crit' ? 'alert' : 'status'}
+    >
+      <span className="wmi-notice__rule" aria-hidden="true" />
+      <div className="wmi-notice__body">
+        {title ? <strong className="wmi-notice__title">{title}</strong> : null}
+        <div className="wmi-notice__text">{children}</div>
+      </div>
+      {action ? <div className="wmi-notice__action">{action}</div> : null}
+      {onDismiss ? (
+        <button
+          type="button"
+          className="wmi-notice__dismiss"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+        >
+          ×
+        </button>
+      ) : null}
+    </div>
+  );
 }
-
-import { Button } from '../common/Button';
 
 export function WmiButton({
   children,
   onClick,
   disabled = false,
-  variant = 'ghost',
+  variant = 'secondary',
+  className = '',
 }: {
   children: ReactNode;
   onClick: () => void;
   disabled?: boolean;
-  variant?: 'primary' | 'danger' | 'ghost';
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
+  className?: string;
 }) {
   return (
     <Button
       type="button"
-      variant={variant}
-      className={`wmi-btn wmi-btn--${variant}`}
+      size="sm"
+      variant={variant as ButtonVariant}
+      className={`wmi-btn wmi-btn--${variant} ${className}`.trim()}
       onClick={onClick}
       disabled={disabled}
     >
       {children}
     </Button>
+  );
+}
+
+/** Label/value row used by the guard, correction and calibration panels. */
+export function WmiKvRow({
+  label,
+  value,
+  detail,
+  tone = 'dim',
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  tone?: WmiTone;
+}) {
+  return (
+    <div className="wmi-kv__row">
+      <WmiDot tone={tone} />
+      <span className="wmi-kv__label">{label}</span>
+      <span className={`wmi-kv__value wmi-tone-${tone}`}>{value}</span>
+      {detail ? <span className="wmi-kv__detail">{detail}</span> : null}
+    </div>
+  );
+}
+
+export function WmiEmpty({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="wmi-empty">
+      <h2>{title}</h2>
+      <p>{children}</p>
+    </div>
   );
 }

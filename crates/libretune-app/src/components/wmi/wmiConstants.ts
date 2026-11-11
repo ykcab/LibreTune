@@ -60,11 +60,18 @@ export const WMI_ACTION_SECONDS: Record<WmiAction, number> = {
 export const WMI_ACTION_LABEL: Record<WmiAction, string> = {
   prime: 'Prime line',
   test: 'Test pump',
-  calibrate: 'Calibrate nozzle',
+  calibrate: 'Nozzle calibration',
   cancel: 'Cancel',
 };
 
-export type WmiTab = 'live' | 'calibration' | 'setup' | 'safety';
+export const WMI_ACTION_DETAIL: Record<WmiAction, string> = {
+  prime: '5 s · 100% duty',
+  test: '5 s · 50% duty',
+  calibrate: '60 s · 100% duty',
+  cancel: '',
+};
+
+export type WmiTab = 'status' | 'setup' | 'bench';
 
 /** Native editors that own the WMI tables and curves. */
 export const WMI_EDITOR_LINKS = [
