@@ -825,6 +825,17 @@
   color: var(--wmi-wf);
 }
 
+.wmi-chart--wf .wmi-chart__legend strong.is-off-target {
+  color: var(--warning);
+}
+
+.wmi-chart__flag {
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--warning);
+}
+
 .wmi-chart__band rect {
   fill: var(--success);
   opacity: 0.08;

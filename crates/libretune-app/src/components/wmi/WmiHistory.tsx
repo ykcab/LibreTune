@@ -237,7 +237,12 @@ export function WmiHistory({
             <span>
               target {formatNumber(targetBand.min, 2)}–{formatNumber(targetBand.max, 2)}
             </span>
-            <strong>{formatWf(live.wmiWfRatio)}</strong>
+            <strong className={wfDirection ? 'is-off-target' : undefined}>
+              {formatWf(wfValue)}
+            </strong>
+            {wfDirection ? (
+              <span className="wmi-chart__flag">{wfDirection} target</span>
+            ) : null}
           </span>
         </div>
         <div className="wmi-chart__body">
